@@ -1,0 +1,43 @@
+# Entornos virtuales y Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Variables de entorno secretas
+.env
+.env.local
+.env.*.local
+
+# Bases de datos y almacenamiento local
+*.sqlite3
+*.db
+uploads/
+*.pdf
+*.log
+
+# Docker y caches
+.docker/
+docker-compose.override.yml
+
+# Testing y Cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema Operativo
+.DS_Store
+Thumbs.db
