@@ -13,6 +13,7 @@ Toda la documentación técnica requerida antes de comenzar a desarrollar se enc
    * [Catálogo de Requerimientos Funcionales (RF-01 a RF-25)](Docs/01-requisitos/02-requerimientos-funcionales.md)
    * [Requerimientos No Funcionales (RNF)](Docs/01-requisitos/03-requerimientos-no-funcionales.md)
    * [Reglas de Negocio, Procesos de Control y Máquinas de Estado](Docs/01-requisitos/04-reglas-de-negocio-y-control.md)
+   * [Historias de Usuario (US-01 a US-22)](Docs/01-requisitos/05-historias-de-usuario.md)
 
 2. **[02. Arquitectura de Software](Docs/02-arquitectura/):**
    * [Diagramas C4 (Contexto, Contenedores y Componentes)](Docs/02-arquitectura/01-diseno-arquitectonico-c4.md)
