@@ -281,7 +281,7 @@ Registro de pagos de una cotización: adelanto (`ADVANCE`, con ciclo de verifica
 | `quote_id` | `UUID` | NO | - | FK (`quotes.id`), INDEX | Cotización a la que pertenece el pago. |
 | `event_id` | `UUID` | SÍ | `NULL` | FK (`events.id`), INDEX | Evento asociado; nulo mientras el adelanto no se valida (el evento aún no existe). |
 | `concept` | `VARCHAR(20)` | NO | - | CHECK in (`ADVANCE`, `BALANCE`, `EXTENSION`) | Concepto del pago. |
-| `payment_method` | `VARCHAR(30)` | NO | - | CHECK in (`YAPE`, `PLIN`, `TRANSFERENCIA`, `EFECTIVO`) | Medio de pago utilizado. |
+| `payment_method` | `VARCHAR(30)` | NO | - | CHECK in (`YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`) | Medio de pago utilizado. UI: «Yape», «Plin», «Transferencia bancaria», «Efectivo». |
 | `amount` | `NUMERIC(10,2)` | NO | - | CHECK (`amount > 0`) | Monto pagado en Soles (PEN). |
 | `evidence_path` | `VARCHAR(255)` | NO | - | - | Ruta de la evidencia: captura del comprobante (`ADVANCE`) o foto tomada in situ de la pantalla de Yape/Plin o del efectivo (`BALANCE`, `EXTENSION`). |
 | `transaction_reference` | `VARCHAR(60)` | SÍ | `NULL` | - | Número de operación bancaria o de Yape. |
@@ -309,6 +309,7 @@ Elencos y proveedores freelance asignables a eventos.
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del elenco. |
+| `user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), UNIQUE | Usuario `OPERADOR` que opera en nombre del elenco; define los eventos propios que puede ver y operar. Nulo si el elenco no usa el sistema. |
 | `leader_name` | `VARCHAR(120)` | NO | - | - | Nombre del líder o responsable del elenco. |
 | `phone` | `VARCHAR(20)` | NO | - | - | Teléfono de contacto del líder. |
 | `service_category` | `VARCHAR(30)` | NO | - | CHECK in (`SHOW`, `DJ`, `DECORATION`, `TENTS`) | Tipo de servicio que presta el elenco; enumeración `service_category` compartida con `packages`. |

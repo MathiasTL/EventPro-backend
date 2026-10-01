@@ -92,14 +92,14 @@ Este slice expone un botón y un modal que permite al encargado modificar el mon
 
   export interface OverrideMobilityParams {
     quoteId: string;
-    manualAmount: number;
+    manualMobilityAmount: number;
     reason: string;
   }
 
-  export async function overrideMobilityApi({ quoteId, manualAmount, reason }: OverrideMobilityParams) {
+  export async function overrideMobilityApi({ quoteId, manualMobilityAmount, reason }: OverrideMobilityParams) {
     const { data } = await apiClient.patch(`/api/v1/overrides/quotes/${quoteId}/mobility`, {
-      manual_amount: manualAmount,
-      justification: reason,
+      manual_mobility_amount: manualMobilityAmount,
+      reason,
     });
     return data;
   }

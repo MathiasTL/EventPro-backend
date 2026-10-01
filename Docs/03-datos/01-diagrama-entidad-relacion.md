@@ -37,6 +37,7 @@ erDiagram
     EVENTS ||--o{ INVENTORY_RESERVATIONS : reserves
     INVENTORY_ITEMS ||--o{ INVENTORY_RESERVATIONS : reserved_in
 
+    USERS |o--o| CREWS : operates
     CREWS ||--o{ CREW_ASSIGNMENTS : participates
     USERS |o--o{ PAYMENTS : verifies_registers_audits
     USERS |o--o{ AUDIT_LOGS : performs
@@ -224,7 +225,7 @@ erDiagram
         uuid quote_id FK "FK (quotes.id), INDEX"
         uuid event_id FK "NULL; FK (events.id), INDEX"
         varchar(20) concept "CHECK in (ADVANCE, BALANCE, EXTENSION)"
-        varchar(30) payment_method "CHECK in (YAPE, PLIN, TRANSFERENCIA, EFECTIVO)"
+        varchar(30) payment_method "CHECK in (YAPE, PLIN, BANK_TRANSFER, CASH)"
         numeric(10_2) amount "CHECK (amount > 0)"
         varchar(255) evidence_path
         varchar(60) transaction_reference "NULL"
@@ -242,6 +243,7 @@ erDiagram
 
     CREWS {
         uuid id PK "default gen_random_uuid()"
+        uuid user_id FK, UK "NULL; FK (users.id), UNIQUE"
         varchar(120) leader_name
         varchar(20) phone
         varchar(30) service_category "CHECK in (SHOW, DJ, DECORATION, TENTS)"
