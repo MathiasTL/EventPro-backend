@@ -39,7 +39,7 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 * **Motor de Cotización y Cálculo de Movilidad:** Integración con Google Maps Platform (Distance Matrix / Directions) para el cálculo de distancia y tiempo (ida y vuelta) con recargo comercial (+15%) y posibilidad de exención si el cliente provee movilidad.
 * **Control de Disponibilidad y Reglas de Despacho:** Validación de elencos freelance e inventario de mobiliario; cálculo de tiempos de traslado entre eventos y aprobación manual cuando se supere el umbral de shows simultáneos (solapamiento real de intervalos, por defecto más de 3 eventos con adelanto validado).
 * **Gestión de Pagos y Comprobantes:** Registro de anticipos (10% sobre servicios base) mediante billeteras digitales (Yape / Plin) o transferencias bancarias; subida de capturas y flujo de verificación con reintentos.
-* **Contratos Inteligentes en PDF y Firma Digital:** Emisión automatizada del contrato PDF con desglose estricto de conceptos y soporte para modo manual de respaldo; integración de firma digital.
+* **Contratos Inteligentes en PDF y Firma Electrónica:** Emisión automatizada del contrato PDF con desglose estricto de conceptos y soporte para modo manual de respaldo; firma electrónica propia (enlace por WhatsApp, OTP, firma manuscrita y sello PAdES).
 * **Cronograma Operativo Centralizado:** Tablero calendarizado con filtros temporales y visualización prominente de observaciones del cliente por evento.
 * **Protocolo de Ejecución y Liquidación en Vivo:** Regla estricta de cobro del saldo pendiente antes de iniciar el show, registro de extensiones de tiempo post-evento y cierre contable de servicio.
 * **Módulo Financiero y Dashboard Analítico:** Consolidación semanal y mensual de ingresos, costos fijos directos y margen de utilidad neta.
@@ -55,7 +55,7 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 
 | Actor | Tipo | Descripción y Responsabilidades |
 | :--- | :--- | :--- |
-| **Cliente** | Externo (Humano) | Usuario interesado en contratar servicios. Interactúa mediante WhatsApp para consultar catálogo, cotizar, subir comprobantes de pago y firmar digitalmente el contrato. |
+| **Cliente** | Externo (Humano) | Usuario interesado en contratar servicios. Interactúa mediante WhatsApp para consultar catálogo, cotizar, subir comprobantes de pago y firmar electrónicamente el contrato. |
 | **Chatbot / WhatsApp Service** | Automatizado (Sistema) | Servicio conversacional que procesa webhooks de WhatsApp, guía al cliente a través del flujo guiado y recopila parámetros del evento. |
 | **Encargado / Administrador** | Interno (Humano) | Uno de los 2 responsables del negocio. Cuenta con privilegios completos para aprobar shows simultáneos, aplicar *overrides* de movilidad o tiempo de traslado, emitir contratos en modo manual y auditar métricas financieras. |
 | **Personal de Elenco / Operador** | Interno / Freelance | Artistas, animadores, DJs y armadores de toldos. Ejecutan el servicio en campo, reportan cobro del saldo in-situ e informan extensiones de tiempo de show. |

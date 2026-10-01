@@ -9,7 +9,7 @@
 | **Super Administrador** | `SUPERADMIN` | Acceso irrestricto. Configuración de parámetros globales, gestión de usuarios, auditoría de logs y anulaciones especiales. |
 | **Encargado del Negocio** | `ENCARGADO` | Acceso operativo y gerencial. Gestión de catálogo, emisión de cotizaciones y contratos, aplicación de *overrides*, aprobación de shows simultáneos y consulta de dashboards financieros. |
 | **Operador de Elenco / Campo** | `OPERADOR` | Acceso móvil restringido al cronograma operativo. Visualización de notas/observaciones, confirmación de cobro de saldo in-situ y reporte de extensiones de show. |
-| **Cliente / Invitado** | `CLIENTE` | Acceso público acotado por token temporal criptográfico de un solo uso para visualización de cotización y firma digital de su contrato específico. |
+| **Cliente / Invitado** | `CLIENTE` | Acceso público acotado por token temporal criptográfico de un solo uso para visualización de cotización y firma electrónica de su contrato específico. |
 
 ---
 
@@ -27,7 +27,7 @@ Convención: `C` = Create, `R` = Read, `U` = Update, `D` = Delete, `-` = Sin Acc
 | **Pagos y Comprobantes** | `/api/v1/payments` | C, R, U, D | C, R, U | C (In-situ) | C (Sube adelanto) |
 | **Validación de Pagos** | `/api/v1/payments/{id}/verify`| C, U | C, U | - | - |
 | **Contratos (Emisión y PDF)**| `/api/v1/contracts` | C, R, U, D | C, R, U | R | R (Su contrato) |
-| **Firma Digital** | `/api/v1/contracts/sign` | U | U | - | U (Su contrato) |
+| **Firma Electrónica** | `/api/v1/contracts/sign` | U | U | - | U (Su contrato) |
 | **Cronograma Operativo** | `/api/v1/events/schedule`| C, R, U, D | C, R, U, D | R | - |
 | **Cobro Pre-Show y Check-in**| `/api/v1/events/{id}/check-in` | U | U | U | - |
 | **Extensiones de Show** | `/api/v1/events/{id}/extensions`| C, U | C, U | C | - |

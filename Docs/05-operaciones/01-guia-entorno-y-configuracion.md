@@ -57,3 +57,8 @@ A continuación se detalla cada una de las variables requeridas por el sistema:
 ### 2.7 Repositorio de Archivos y Documentos
 * `STORAGE_BACKEND`: Tipo de almacenamiento (`local` o `s3`).
 * `LOCAL_STORAGE_PATH`: Directorio en disco para comprobantes y contratos PDF (por defecto `./uploads`).
+
+### 2.8 Arranque del Usuario `SUPERADMIN`
+Variables leídas únicamente por el comando de arranque `python -m app.infrastructure.persistence.bootstrap_superadmin` (ver [Estrategia de Migraciones y Seeds, sección 4](../03-datos/03-estrategia-migraciones-y-seeds.md#4-comando-de-arranque-del-usuario-superadmin)):
+* `SUPERADMIN_EMAIL`: Correo de inicio de sesión del primer usuario `SUPERADMIN`.
+* `SUPERADMIN_PASSWORD`: Contraseña inicial (mínimo 12 caracteres, se almacena como hash Argon2id). Debe retirarse del entorno tras el primer arranque.

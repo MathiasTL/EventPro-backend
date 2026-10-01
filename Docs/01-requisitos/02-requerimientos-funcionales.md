@@ -135,7 +135,8 @@
 * **Entradas:** Fecha, intervalo horario [inicio, fin), tipo de paquete, extras solicitados y requerimientos de infraestructura (toldos/decoración).
 * **Procesamiento:**
   1. Para shows y animación: Comprobar disponibilidad de artistas freelance registrados en la categoría requerida.
-  2. Para toldos y decoración: Comprobar que el inventario físico de estructuras y telas no se encuentre asignado a otro evento en la misma ventana de tiempo.
+  2. Para toldos y decoración: Comprobar que el stock de `inventory_items` (estructuras y telas) no se encuentre comprometido por `inventory_reservations` activas de otros eventos en la misma ventana de tiempo: `total_stock` menos las unidades reservadas solapadas debe cubrir las unidades que consume el paquete de cada ítem. La comprobación abarca TODOS los ítems que el paquete consume (filas de `package_inventory_items`); si algún ítem no tiene stock suficiente, el resultado es `CONFLICT`.
+  3. Al validar el adelanto y crear el evento, registrar las reservas de inventario del evento (`inventory_reservations`, una por cada fila de `package_inventory_items` del paquete, con la cantidad copiada y ventana `starts_at`–`ends_at`); se liberan (`RELEASED`) si el evento se cancela.
 * **Salidas:** Resultado de disponibilidad (`AVAILABLE`, `CONFLICT`, `THRESHOLD_EXCEEDED`). Este resultado no es un estado de ciclo de vida; `THRESHOLD_EXCEEDED` indica que se superó `SIMULTANEOUS_SHOWS_THRESHOLD` (ver RN-04).
 * **Reglas Asociadas:** RN-04, PC-01.
 * **Prioridad:** Alta.
@@ -180,7 +181,7 @@
     1. **Revalidación autoritativa y atómica de disponibilidad** bajo bloqueo distribuido (Redis lock, ADR-06) sobre la fecha y el intervalo solicitados, antes de confirmar.
     2. Si hay cupo: cambiar el pago a `VERIFIED`, la cotización a `CONVERTED`, crear el evento en estado `AWAITING_SIGNATURE` y disparar la generación del contrato.
     3. Si el cupo está lleno al validar: el encargado decide entre **aprobar el sobrecupo** (se continúa como en el paso anterior) o **rechazar con devolución** (el pago pasa a `REFUND_PENDING`, no se crea evento y se notifica al cliente con opción de otra fecha u horario).
-  * Si es rechazado por comprobante inválido o ilegible: cambiar el pago a `REJECTED` y enviar mensaje vía WhatsApp con el motivo del rechazo y botón/instrucción de reintento (el reintento crea un nuevo registro de pago).
+  * Si es rechazado por comprobante inválido o ilegible (el pago puede estar en `PENDING_VERIFICATION` o en `REQUIRES_MANUAL_APPROVAL`): cambiar el pago a `REJECTED` y enviar mensaje vía WhatsApp con el motivo del rechazo y botón/instrucción de reintento (el reintento crea un nuevo registro de pago).
   * Una vez efectuada la devolución, el pago pasa a `REFUNDED`.
 * **Salidas:** Estado actualizado y notificación de WhatsApp emitida.
 * **Reglas Asociadas:** RN-04, RN-09, PC-03, PC-06, PC-11.
@@ -188,7 +189,7 @@
 
 ---
 
-## 6. Módulo M06: Generación de Contratos y Firma Digital
+## 6. Módulo M06: Generación de Contratos y Firma Electrónica
 
 ### RF-13: Generación Automatizada del Contrato en PDF
 * **Descripción:** Una vez validado el adelanto, el sistema debe compilar automáticamente el contrato de prestación de servicios en formato PDF estándar.
@@ -210,15 +211,24 @@
 
 ---
 
-### RF-15: Registro de Firma Digital / Electrónica
-* **Descripción:** El sistema debe proveer una interfaz web responsiva y segura para que el cliente visualice el contrato generado y plasme su firma electrónica manuscrita.
-* **Entradas:** Trazado de firma manuscrita en formato vectorial/PNG, dirección IP y metadatos de confirmación del cliente.
+### RF-15: Registro de Firma Electrónica del Contrato
+* **Descripción:** El sistema debe proveer una interfaz web responsiva y segura para que el cliente revise el contrato y lo firme electrónicamente, y sellar el PDF resultante con un mecanismo propio (ADR-07, puerto `SignaturePort`). Flujo:
+  1. El cliente recibe por WhatsApp un enlace de un solo uso con expiración (`signature_token_expires_at`).
+  2. Revisa el PDF del contrato en el enlace.
+  3. El sistema envía por WhatsApp un código OTP de 6 dígitos (con expiración y límite de intentos fallidos); el cliente lo ingresa para continuar.
+  4. El cliente traza su firma manuscrita y acepta los términos.
+  5. El backend estampa la firma y sella el PDF con **PAdES** usando **pyHanko** y un certificado **PKCS#12** (`.p12`), con marca de tiempo **RFC 3161** opcional.
+  6. Se calcula el **SHA-256** del PDF sellado y se registra, junto con los metadatos de la firma, en la bitácora de auditoría.
+* **Entradas:** Token del enlace, código OTP, trazado de firma manuscrita (PNG), aceptación de términos, dirección IP y agente de usuario del cliente.
 * **Procesamiento:**
-  1. Estampar la imagen de la firma en la sección de firmas del contrato PDF.
-  2. Registrar marca temporal (*timestamp*), dirección IP, cambiar el contrato a `SIGNED` y el evento a `SCHEDULED`.
-  3. Despachar copia del contrato firmado al WhatsApp del cliente.
-* **Salidas:** Contrato PDF final firmado y copia enviada al cliente.
+  1. Validar token (hash, expiración, un solo uso) y OTP (hash, expiración, `otp_attempts`).
+  2. Estampar la imagen de la firma en la sección de firmas del contrato PDF y sellarlo con PAdES.
+  3. Registrar `signed_at`, `signer_ip`, `signer_user_agent`, `sealed_pdf_sha256` y la ruta del PDF sellado; cambiar el contrato a `SIGNED` y el evento a `SCHEDULED`; registrar la acción `CONTRACT_SIGNED` en `audit_logs`.
+  4. Despachar copia del contrato firmado al WhatsApp del cliente (vía `outbox_messages`).
+* **Salidas:** Contrato PDF sellado y copia enviada al cliente.
+* **Reglas Asociadas:** PC-05 (modo manual), RN-06.
 * **Prioridad:** Alta.
+> **Nota terminológica:** se usa «firma electrónica» y no «firma digital» porque, según la Ley 27269 (Perú), la firma digital exige un certificado emitido por una entidad acreditada ante INDECOPI. El certificado `.p12` de desarrollo es autofirmado; incorporar uno acreditado por INDECOPI más adelante no requiere cambios en el dominio, solo reemplazar el certificado del adaptador de `SignaturePort`.
 
 ---
 
@@ -245,24 +255,28 @@
 
 ### RF-18: Protocolo de Cobro Pre-Show y Bloqueo de Inicio
 * **Descripción:** El sistema debe registrar la confirmación del cobro del saldo pendiente total (saldo de servicios + movilidad) al llegar a la locación. El sistema debe bloquear el pase a estado «En Ejecución» si no se confirma la recepción de este saldo.
-* **Entradas:** Registro de cobro presencial (medio de pago: Yape, transferencia o efectivo; monto recibido; identificador de usuario que confirma).
+* **Entradas:** Registro de cobro presencial (medio de pago: Yape, Plin, transferencia o efectivo; monto recibido; **evidencia obligatoria**: fotografía de la pantalla de Yape/Plin o del efectivo recibido, tomada con la cámara del teléfono; identificador del usuario que confirma).
 * **Procesamiento:**
-  1. Validar que el monto cobrado complete el 100% del saldo pendiente.
-  2. Actualizar estado del evento a `IN_PROGRESS` (desde `AWAITING_BALANCE`).
-* **Salidas:** Evento habilitado operativamente y registro contable de ingreso in-situ.
-* **Reglas Asociadas:** RN-06, PC-07.
+  1. Validar que el monto cobrado complete el 100% del saldo pendiente y que se adjunte la evidencia.
+  2. Registrar el cobro como un pago de concepto `BALANCE` directamente en `VERIFIED` (sin esperar a un encargado), con `audit_status = UNREVIEWED`.
+  3. Actualizar estado del evento a `IN_PROGRESS` (desde `AWAITING_BALANCE`).
+  4. El encargado audita el cobro después (`REVIEWED` o `FLAGGED`).
+* **Salidas:** Evento habilitado operativamente y registro contable de ingreso in-situ con su evidencia.
+* **Reglas Asociadas:** RN-06, PC-07, PC-12.
 * **Prioridad:** Alta (Crítica).
 
 ---
 
 ### RF-19: Registro de Extensiones en Vivo y Liquidación Post-Evento
 * **Descripción:** El sistema debe permitir registrar cargos adicionales solicitados por el cliente durante el evento (horas extra de show, tiempo extra de espera o servicios adicionales en caliente) y consolidar el cierre definitivo del evento.
-* **Entradas:** Minutos/horas de extensión, tarifa pactada, medio de pago del extra.
+* **Entradas:** Minutos/horas de extensión, tarifa pactada, medio de pago del extra y evidencia obligatoria (fotografía de la pantalla de Yape/Plin o del efectivo).
 * **Procesamiento:**
   1. Sumar el recargo extraordinario al total facturado del evento.
-  2. Registrar el cobro y transicionar el estado del evento a `EXTENDED` (si hubo extensión) y luego a `SETTLED`.
+  2. Registrar el cobro como un pago de concepto `EXTENSION` directamente en `VERIFIED` con `audit_status = UNREVIEWED`, y la extensión en `event_extensions` vinculada a ese pago.
+  3. Transicionar el estado del evento a `EXTENDED` (si hubo extensión) y luego a `SETTLED`.
+  4. El encargado audita el cobro después (`REVIEWED` o `FLAGGED`).
 * **Salidas:** Estado de evento `SETTLED` y cierre de caja del servicio.
-* **Reglas Asociadas:** RN-07, PC-08.
+* **Reglas Asociadas:** RN-07, PC-08, PC-12.
 * **Prioridad:** Alta.
 
 ---
@@ -307,7 +321,7 @@
 ### RF-23: Modo Manual de Creación de Contratos
 * **Descripción:** El sistema debe ofrecer un módulo administrativo para crear y emitir contratos directamente desde un formulario web sin requerir la interacción previa del cliente por el bot de WhatsApp.
 * **Entradas:** Formulario administrativo con datos del cliente, paquete, temática, extras, fecha, horario, dirección, montos acordados y observaciones.
-* **Procesamiento:** Generar directamente el contrato en estado `DRAFT` o `ISSUED`, calculando liquidación económica y permitiendo su descarga o envío por enlace.
+* **Procesamiento:** Registrar al cliente (`clients`, por teléfono) y crear una cotización con `source = MANUAL` que captura los montos acordados; el evento (`events.quote_id` sigue siendo obligatorio) y el contrato se crean cuando el adelanto es registrado y validado, que el encargado puede hacer en el mismo formulario. Generar el contrato en estado `DRAFT` o `ISSUED` (`is_manual_mode = true`), calculando liquidación económica y permitiendo su descarga o envío por enlace de firma. Registrar la acción `MANUAL_CONTRACT` en `audit_logs`.
 * **Salidas:** Contrato generado mediante flujo manual de respaldo.
 * **Reglas Asociadas:** PC-05.
 * **Prioridad:** Alta.

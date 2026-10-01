@@ -30,7 +30,9 @@ INSERT INTO roles (id, code, name, description) VALUES
 ### 2.2 Catálogo de Paquetes Base (`packages`)
 *Nota: Los costos fijos representan la tarifa acordada con el personal freelance.*
 
-| Nombre del Paquete | Categoría | Precio Venta (S/.) | Costo Fijo (S/.) | Duración |
+*Nota: la «Jornada» se siembra como `duration_minutes = 480` (8 horas). Es un supuesto de negocio pendiente de confirmar; al ser un dato de catálogo, se ajusta sin cambiar el esquema. Los paquetes de categoría `TENTS` se vinculan a ítems de inventario mediante filas en `package_inventory_items` (ver sección 2.5).*
+
+| Nombre del Paquete | `service_category` | Precio Venta (S/.) | Costo Fijo (S/.) | Duración |
 | :--- | :--- | :---: | :---: | :---: |
 | **Hora Loca Básica** | `SHOW` | S/. 450.00 | S/. 250.00 | 45 min |
 | **Hora Loca Medium** | `SHOW` | S/. 750.00 | S/. 400.00 | 60 min |
@@ -38,7 +40,7 @@ INSERT INTO roles (id, code, name, description) VALUES
 | **Show Infantil Divertido** | `SHOW` | S/. 650.00 | S/. 350.00 | 90 min |
 | **Paquete Baby Shower Especial** | `SHOW` | S/. 550.00 | S/. 300.00 | 90 min |
 | **Servicio de DJ y Luces Pro** | `DJ` | S/. 600.00 | S/. 350.00 | 240 min |
-| **Ambientación y Toldos Estándar** | `TOLDOS` | S/. 900.00 | S/. 450.00 | Jornada |
+| **Ambientación y Toldos Estándar** | `TENTS` | S/. 900.00 | S/. 450.00 | Jornada (480 min) |
 | **Combo Full Fiesta (Hora Loca + DJ)** | `SHOW` | S/. 1,300.00 | S/. 700.00 | 240 min |
 
 ---
@@ -66,6 +68,41 @@ INSERT INTO roles (id, code, name, description) VALUES
 
 ---
 
+### 2.5 Inventario Inicial (`inventory_items`)
+*Valores de arranque supuestos; el encargado debe ajustar el stock real antes de operar. Respaldan la verificación de disponibilidad de RF-09.*
+
+| Nombre del Ítem | `service_category` | Stock total | Descripción |
+| :--- | :---: | :---: | :--- |
+| **Toldo Estándar 3x3 m** | `TENTS` | 10 | Estructura con cobertura para eventos en exteriores. |
+| **Kit de Ambientación Estándar** | `DECORATION` | 6 | Telas, globos y elementos decorativos del paquete de ambientación. |
+
+El paquete «Ambientación y Toldos Estándar» se siembra con dos filas en `package_inventory_items`: 1 unidad del «Toldo Estándar 3x3 m» y 1 unidad del «Kit de Ambientación Estándar» (`quantity = 1` en ambas). Los paquetes `SHOW` y `DJ` no tienen filas y, por tanto, no consumen inventario.
+
+---
+
 ## 3. Script Idempotente de Sembrado (`seed.py`)
 
 Se implementará un script ejecutable (`python -m app.infrastructure.persistence.seed`) que verifica la existencia de registros previos antes de insertar, permitiendo su ejecución segura en cualquier entorno sin duplicar datos.
+
+---
+
+## 4. Comando de Arranque del Usuario `SUPERADMIN`
+
+Los roles se siembran, pero ningún usuario. El primer `SUPERADMIN` se crea con un comando explícito que lee sus credenciales desde variables de entorno, de modo que ninguna contraseña queda escrita en código, en el repositorio ni en los *seeds*:
+
+```bash
+SUPERADMIN_EMAIL=admin@eventpro.pe SUPERADMIN_PASSWORD='<contraseña-segura>' \
+  python -m app.infrastructure.persistence.bootstrap_superadmin
+```
+
+| Variable | Obligatoria | Descripción |
+| :--- | :---: | :--- |
+| `SUPERADMIN_EMAIL` | SÍ | Correo de inicio de sesión del usuario `SUPERADMIN`. |
+| `SUPERADMIN_PASSWORD` | SÍ | Contraseña inicial (mínimo 12 caracteres); se almacena como hash Argon2id en `users.hashed_password`. |
+
+Reglas del comando:
+1. **Idempotente:** si ya existe un usuario con `SUPERADMIN_EMAIL`, no hace nada y termina con código `0`.
+2. **Falla cerrada:** si falta una variable, la contraseña es débil o el rol `SUPERADMIN` aún no fue sembrado, termina con código distinto de `0` sin crear nada.
+3. **Valores por defecto:** `full_name = 'Super Administrador'` y `phone = '+51000000000'` (marcador de posición; el usuario lo edita después desde el panel, porque `users.phone` es obligatorio y único).
+4. **Sin trazas sensibles:** nunca imprime ni registra la contraseña.
+5. **Higiene operativa:** tras el primer arranque, retirar `SUPERADMIN_PASSWORD` del entorno y cambiar la contraseña desde el panel.

@@ -133,6 +133,9 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Dado que** un cliente solicita una fecha y un horario,
   * **Cuando** el sistema consulta la base de recursos,
   * **Entonces** si la capacidad está colmada, alerta al cliente ofreciendo otros horarios o derivando el caso al encargado.
+  * **Dado que** la fecha solicitada requiere toldos o decoración,
+  * **Cuando** el sistema consulta el stock de `inventory_items` contra las `inventory_reservations` activas en esa ventana,
+  * **Entonces** informa `CONFLICT` si las unidades restantes no cubren el paquete, y al validar el adelanto registra la reserva de inventario del evento.
 
 ---
 
@@ -200,6 +203,9 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Dado que** un comprobante es rechazado por el encargado con el motivo "Monto incompleto",
   * **Cuando** el sistema procesa el rechazo,
   * **Entonces** el pago pasa a `REJECTED` y se despacha un mensaje por WhatsApp al cliente informando el motivo y habilitando un botón para subir un nuevo comprobante.
+  * **Dado que** un pago en `REQUIRES_MANUAL_APPROVAL` tiene un comprobante inválido o ilegible,
+  * **Cuando** el encargado lo rechaza,
+  * **Entonces** el pago pasa a `REJECTED` y se habilita el reintento, igual que desde `PENDING_VERIFICATION`.
   * **Dado que** el encargado aprueba un comprobante,
   * **Cuando** el sistema ejecuta la revalidación autoritativa y atómica (bloqueo Redis) y hay cupo,
   * **Entonces** el pago pasa a `VERIFIED`, la cotización a `CONVERTED` y se crea el evento en `AWAITING_SIGNATURE`.
@@ -209,7 +215,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 
 ---
 
-## 5. Épica 4: Contratos Inteligentes y Firma Digital
+## 5. Épica 4: Contratos Inteligentes y Firma Electrónica
 
 ### US-13: Compilación Automatizada del Contrato en PDF
 * **Mapeo:** RF-13, RF-14
@@ -235,7 +241,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 * **Criterios de Aceptación:**
   * **Dado que** el encargado ingresa a la opción "Nuevo Contrato Manual",
   * **Cuando** completa los datos y montos pactados y presiona "Emitir",
-  * **Entonces** el sistema genera el contrato PDF con bandera `is_manual_mode: true` y lo agenda en el cronograma.
+  * **Entonces** el sistema registra al cliente, crea una cotización con `source = MANUAL`, genera el contrato PDF con bandera `is_manual_mode: true` y lo agenda en el cronograma una vez registrado y validado el adelanto.
 
 ---
 
@@ -244,12 +250,18 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 * **Prioridad:** Must have | **Estimación:** 5 SP
 * **Narrativa:**
   * **Como** cliente,
-  * **Quiero** abrir un enlace seguro en mi teléfono, revisar el contrato y trazar mi firma con el dedo,
+  * **Quiero** recibir un enlace por WhatsApp, revisar el contrato, confirmar mi identidad con un código y trazar mi firma con el dedo,
   * **Para** formalizar el acuerdo de inmediato sin imprimir papel.
 * **Criterios de Aceptación:**
-  * **Dado que** el cliente abre el enlace de firma,
-  * **Cuando** visualiza el PDF, dibuja su firma manuscrita y acepta los términos,
-  * **Entonces** el sistema sella el PDF con la firma, registra la IP y fecha/hora, y envía la copia final firmada a su chat.
+  * **Dado que** el cliente abre el enlace de firma recibido por WhatsApp y revisa el PDF,
+  * **Cuando** ingresa el código OTP de 6 dígitos que recibe por WhatsApp, dibuja su firma manuscrita y acepta los términos,
+  * **Entonces** el sistema sella el PDF con PAdES (pyHanko + PKCS#12, con marca de tiempo RFC 3161 opcional), registra el SHA-256 del PDF sellado, la IP, el agente de usuario y las marcas de tiempo en la bitácora de auditoría, y envía la copia final firmada a su chat.
+  * **Dado que** el OTP expiró o se superó el máximo de intentos fallidos,
+  * **Cuando** el cliente intenta continuar,
+  * **Entonces** el sistema rechaza la firma y permite solicitar un nuevo OTP sin invalidar el enlace.
+  * **Dado que** el enlace de firma expiró,
+  * **Cuando** el cliente lo abre,
+  * **Entonces** el sistema informa la expiración y el encargado puede reemitir el contrato.
 
 ---
 
@@ -279,7 +291,10 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 * **Criterios de Aceptación:**
   * **Dado que** el elenco llega a la locación y el evento está en `SCHEDULED` o `AWAITING_BALANCE`,
   * **Cuando** el operador intenta cambiar el estado a `IN_PROGRESS` sin registrar el cobro del saldo,
-  * **Entonces** el sistema bloquea la acción con un mensaje de error exigiendo confirmar el medio y monto del cobro in-situ.
+  * **Entonces** el sistema bloquea la acción con un mensaje de error exigiendo confirmar el medio, el monto y la evidencia (fotografía) del cobro in-situ.
+  * **Dado que** el operador registra el cobro con medio de pago y fotografía de la pantalla de Yape/Plin o del efectivo,
+  * **Cuando** confirma el cobro,
+  * **Entonces** el pago `BALANCE` se registra directamente en `VERIFIED` con `audit_status = UNREVIEWED`, el evento pasa a `IN_PROGRESS` sin esperar al encargado, y este puede auditarlo después como `REVIEWED` o `FLAGGED`.
 
 ---
 
@@ -294,6 +309,9 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Dado que** un show culminó pero el cliente pagó por media hora más,
   * **Cuando** se ingresa el cargo por tiempo extra,
   * **Entonces** se actualiza el ingreso total del evento y se transiciona su estado a `EXTENDED` y, al registrar el cobro, a `SETTLED`.
+  * **Dado que** el operador registra el cobro de la extensión con medio de pago y fotografía como evidencia,
+  * **Cuando** confirma el registro,
+  * **Entonces** el pago `EXTENSION` queda en `VERIFIED` con `audit_status = UNREVIEWED` y el encargado lo audita después (`REVIEWED` o `FLAGGED`).
 
 ---
 
@@ -375,7 +393,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 | **RF-12** | Validación de Pago y Flujo de Reintento | **US-12** | Épica 3: Pagos y Validación | Must have |
 | **RF-13** | Generación Automatizada del Contrato en PDF | **US-13** | Épica 4: Contratos y Firma | Must have |
 | **RF-14** | Registro de Observaciones Especiales del Cliente | **US-13, US-16** | Épica 4 / Épica 5 | Must have |
-| **RF-15** | Registro de Firma Digital / Electrónica | **US-15** | Épica 4: Contratos y Firma | Must have |
+| **RF-15** | Registro de Firma Electrónica del Contrato | **US-15** | Épica 4: Contratos y Firma | Must have |
 | **RF-16** | Tablero de Cronograma y Filtros de Búsqueda | **US-16** | Épica 5: Cronograma y Operación | Must have |
 | **RF-17** | Visualización Rápida de Observaciones | **US-16** | Épica 5: Cronograma y Operación | Must have |
 | **RF-18** | Protocolo de Cobro Pre-Show y Bloqueo de Inicio | **US-17** | Épica 5: Cronograma y Operación | Must have |

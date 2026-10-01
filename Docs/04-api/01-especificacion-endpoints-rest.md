@@ -68,7 +68,7 @@
     {
       "id": "e4b2d5a1-...",
       "name": "Hora Loca Medium",
-      "category": "SHOW",
+      "service_category": "SHOW",
       "description": "Show completo con 4 bailarines, animador, DJ y cotillón.",
       "base_price": 750.00,
       "duration_minutes": 60,
@@ -195,7 +195,7 @@
 
 ---
 
-### 2.6 Módulo: Contratos y Firma Digital (`/contracts`)
+### 2.6 Módulo: Contratos y Firma Electrónica (`/contracts`)
 
 #### `GET /contracts/{id}/pdf`
 * **Descripción:** Descarga el archivo PDF compilado del contrato (RF-13).

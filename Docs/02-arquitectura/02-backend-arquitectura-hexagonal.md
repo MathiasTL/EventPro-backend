@@ -59,6 +59,7 @@ app/
 │   │       ├── whatsapp_port.py          # IWhatsAppServicePort (envío de mensajes y plantillas)
 │   │       ├── pdf_port.py               # IPdfGeneratorPort (compilación de contratos)
 │   │       ├── storage_port.py           # IFileStoragePort (guardar imágenes y PDFs)
+│   │       ├── signature_port.py         # SignaturePort (sello PAdES, hash y marca de tiempo del contrato)
 │   │       └── cache_lock_port.py        # ICacheLockPort (locks distribuidos y caché)
 │   ├── use_cases/                        # Implementaciones concretas de los casos de uso
 │   │   ├── quote/
@@ -109,6 +110,8 @@ app/
 │   │       │       └── whatsapp_cloud_adapter.py
 │   │       ├── documents/                # Generador de contratos
 │   │       │   └── weasyprint_adapter.py # Compilador HTML/Jinja2 a PDF
+│   │       ├── signature/                # Sello de firma electrónica
+│   │       │   └── pades_signature_adapter.py # Adaptador propio PAdES (pyHanko + PKCS#12)
 │   │       ├── storage/                  # Adaptador de almacenamiento
 │   │       │   └── local_storage_adapter.py (o S3StorageAdapter)
 │   │       └── cache/                    # Adaptador de Redis
@@ -157,6 +160,15 @@ Contiene las implementaciones técnicas concretas de los puertos.
   * `SqlAlchemyQuoteRepository`: Implementa la interfaz `IQuoteRepository` usando transacciones de PostgreSQL.
   * `GoogleMapsAdapter`: Implementa `IMapsServicePort` llamando a la API REST de Google Maps con cliente asíncrono `httpx`.
   * `WeasyPrintAdapter`: Implementa `IPdfGeneratorPort` tomando plantillas Jinja2 y convirtiéndolas a PDF descargable.
+  * `PadesSignatureAdapter`: Implementa `SignaturePort` (ver sección 3.4).
+
+### 3.4 Puerto de Firma Electrónica (`SignaturePort`)
+`SignaturePort` es un **puerto de salida** (*driven port*) que encapsula el sellado del contrato. El caso de uso `sign_contract` valida el enlace y el OTP, y delega el sellado al puerto; el dominio solo conoce el resultado (PDF sellado, SHA-256 y metadatos), nunca la librería criptográfica.
+
+* **Responsabilidades:** estampar la firma manuscrita en el PDF, sellarlo con PAdES, adjuntar una marca de tiempo RFC 3161 opcional y devolver el SHA-256 del PDF sellado.
+* **Adaptador por defecto:** `PadesSignatureAdapter` (propio, ADR-07), basado en **pyHanko** y un certificado **PKCS#12** (`.p12`). En desarrollo se usa un `.p12` autofirmado; incorporar un certificado acreditado por INDECOPI es un cambio de configuración, no de dominio.
+* **Adaptadores futuros documentados (opciones, no implementados):** Documenso (autoalojado), BoldSign y Llama.pe (proveedor acreditado). Cualquiera se integra implementando `SignaturePort` sin tocar el dominio ni los casos de uso.
+* **Fuera del puerto:** el envío del enlace y del OTP por WhatsApp usa `IWhatsAppServicePort` (vía `outbox_messages`), y el almacenamiento de PDFs usa `IFileStoragePort`.
 
 ---
 
