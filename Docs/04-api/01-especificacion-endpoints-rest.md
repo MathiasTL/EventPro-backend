@@ -68,7 +68,7 @@
     {
       "id": "e4b2d5a1-...",
       "name": "Hora Loca Medium",
-      "category": "SHOW",
+      "service_category": "SHOW",
       "description": "Show completo con 4 bailarines, animador, DJ y cotillón.",
       "base_price": 750.00,
       "duration_minutes": 60,
@@ -131,7 +131,8 @@
       "services_balance_due": 900.00,
       "mobility_due": 80.50
     },
-    "status": "COTIZADO"
+    "status": "SENT",
+    "expires_at": "2026-09-24T20:15:00Z"
   }
   ```
 
@@ -161,22 +162,24 @@
   * `payment_method`: `YAPE`, `PLIN` o `TRANSFERENCIA`.
   * `amount`: `100.00`
   * `receipt_file`: Archivo binario (JPEG/PNG/PDF).
+* **Descripción adicional:** Al recibir el comprobante se ejecuta la revalidación temprana de disponibilidad (RN-09). Si no hay cupo o se supera el umbral de shows simultáneos, `validation_status` es `REQUIRES_MANUAL_APPROVAL` en lugar de `PENDING_VERIFICATION`.
 * **Response `201 Created`:**
   ```json
   {
     "payment_id": "pay-11a2...",
-    "validation_status": "PENDIENTE",
+    "validation_status": "PENDING_VERIFICATION",
     "message": "Comprobante recibido con éxito. En cola de validación."
   }
   ```
 
 #### `PATCH /payments/{id}/verify`
-* **Descripción:** El encargado aprueba o rechaza el comprobante (RF-12, PC-06).
+* **Descripción:** El encargado aprueba o rechaza el comprobante (RF-12, PC-06). Al aprobar se ejecuta la revalidación autoritativa y atómica de disponibilidad con bloqueo Redis (RN-09); si el cupo está lleno, el pago pasa a `REQUIRES_MANUAL_APPROVAL` y se resuelve con el endpoint de aprobación de sobrecupo.
+* **Valores de `status` aceptados:** `VERIFIED` o `REJECTED`.
 * **Seguridad:** Requiere rol `ENCARGADO` o `SUPERADMIN`.
 * **Request Body:**
   ```json
   {
-    "status": "VERIFICADO",
+    "status": "VERIFIED",
     "rejection_reason": null
   }
   ```
@@ -184,15 +187,15 @@
   ```json
   {
     "payment_id": "pay-11a2...",
-    "validation_status": "VERIFICADO",
+    "validation_status": "VERIFIED",
     "event_created_id": "evt-77a8...",
-    "contract_status": "EMITIDO"
+    "contract_status": "ISSUED"
   }
   ```
 
 ---
 
-### 2.6 Módulo: Contratos y Firma Digital (`/contracts`)
+### 2.6 Módulo: Contratos y Firma Electrónica (`/contracts`)
 
 #### `GET /contracts/{id}/pdf`
 * **Descripción:** Descarga el archivo PDF compilado del contrato (RF-13).
@@ -213,7 +216,7 @@
   ```json
   {
     "contract_number": "CTR-2026-0042",
-    "status": "FIRMADO",
+    "status": "SIGNED",
     "signed_at": "2026-09-23T20:15:00Z",
     "message": "Contrato firmado satisfactoriamente. Se ha enviado una copia a su WhatsApp."
   }
@@ -229,7 +232,7 @@
 
 #### `GET /events/schedule`
 * **Descripción:** Consulta el calendario operativo con filtros avanzados (RF-16, RF-17).
-* **Query Params:** `from_date=2026-10-01`, `to_date=2026-10-31`, `district=Miraflores`, `status=AGENDADO`
+* **Query Params:** `from_date=2026-10-01`, `to_date=2026-10-31`, `district=Miraflores`, `status=SCHEDULED`
 * **Response `200 OK`:**
   ```json
   [
@@ -244,7 +247,7 @@
       "package_name": "Hora Loca Medium",
       "theme_name": "Selva",
       "client_observations": "MÚSICA PROHIBIDA: Reggaetón. Salida sorpresa del gorila al min 45.",
-      "status": "AGENDADO",
+      "status": "SCHEDULED",
       "pending_balance_to_collect": 980.50
     }
   ]
@@ -265,7 +268,7 @@
   ```json
   {
     "event_id": "evt-77a8...",
-    "status": "EN_EJECUCION",
+    "status": "IN_PROGRESS",
     "show_started_at": "2026-10-15T21:35:00Z"
   }
   ```
@@ -273,11 +276,11 @@
 #### `POST /events/{id}/extensions`
 * **Descripción:** Registra extensiones de tiempo de show en caliente (RF-19, PC-08).
 * **Request Body:** `{"extra_minutes": 30, "agreed_rate": 100.00, "payment_method": "EFECTIVO"}`
-* **Response `201 Created`:** `{"event_id": "...", "status": "CON_EXTENSION"}`
+* **Response `201 Created`:** `{"event_id": "...", "status": "EXTENDED"}`
 
 #### `POST /events/{id}/settle`
-* **Descripción:** Cierra definitivamente el evento marcándolo como `LIQUIDADO`.
-* **Response `200 OK`:** `{"event_id": "...", "status": "LIQUIDADO"}`
+* **Descripción:** Cierra definitivamente el evento marcándolo como `SETTLED`.
+* **Response `200 OK`:** `{"event_id": "...", "status": "SETTLED"}`
 
 ---
 
@@ -294,10 +297,10 @@
   ```
 * **Response `200 OK`:** Retorna la cotización recalculada con el nuevo total y saldo.
 
-#### `POST /overrides/events/{id}/approve-simultaneous`
-* **Descripción:** Aprobación manual de un evento que excede el umbral de 3 shows simultáneos (RF-20, PC-03).
-* **Request Body:** `{"action": "APROBADO", "notes": "Se contrató elenco adicional freelance."}`
-* **Response `200 OK`:** `{"status": "AGENDADO", "is_manually_approved": true}`
+#### `POST /overrides/payments/{id}/approve-simultaneous`
+* **Descripción:** Resolución manual de un pago en estado `REQUIRES_MANUAL_APPROVAL`, ya sea por superar el umbral `SIMULTANEOUS_SHOWS_THRESHOLD` (3 por defecto) o por cupo lleno al validar (RF-20, RN-04, RN-09, PC-03). La aprobación es un estado del pago, no del evento.
+* **Request Body:** `{"action": "APPROVE", "notes": "Se contrató elenco adicional freelance."}` o `{"action": "REJECT", "notes": "Sin elenco de respaldo."}`
+* **Response `200 OK`:** con `APPROVE`: `{"payment_id": "...", "validation_status": "VERIFIED", "event_created_id": "evt-77a8..."}`; con `REJECT`: `{"payment_id": "...", "validation_status": "REFUND_PENDING"}`
 
 ---
 

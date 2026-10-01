@@ -24,7 +24,7 @@
 * **Estado:** Aceptado.
 * **Fecha:** 2026-09-23.
 * **Contexto:**
-  El frontend de EventPro debe atender dos audiencias distintas: los 2 encargados (panel administrativo complejo, cronograma con visualización de observaciones, overrides de movilidad, balances financieros) y los clientes finales (interfaz móvil ligera para revisión de cotización y firma digital de contratos). Estructuras convencionales por tipo técnico (`/components`, `/hooks`, `/pages`) provocan espagueti de dependencias e inconsistencias.
+  El frontend de EventPro debe atender dos audiencias distintas: los 2 encargados (panel administrativo complejo, cronograma con visualización de observaciones, overrides de movilidad, balances financieros) y los clientes finales (interfaz móvil ligera para revisión de cotización y firma electrónica de contratos). Estructuras convencionales por tipo técnico (`/components`, `/hooks`, `/pages`) provocan espagueti de dependencias e inconsistencias.
 * **Decisión:**
   Adoptar **Feature-Sliced Design (FSD v2.1)** organizando el código en 6 capas jerárquicas estrictas (`app`, `pages`, `widgets`, `features`, `entities`, `shared`) con regla de importación unidireccional de arriba hacia abajo.
 * **Consecuencias:**
@@ -56,7 +56,7 @@
 * **Decisión:**
   Utilizar **PostgreSQL** como motor de base de datos relacional y **SQLAlchemy 2.0** como ORM, encapsulado dentro de adaptadores de repositorio (`SqlAlchemyEventRepository`) que implementan puertos del dominio (`IEventRepository`).
 * **Consecuencias:**
-  * *Positivas:* Garantía de integridad referencial, soporte para bloqueos de fila (`SELECT ... FOR UPDATE`), soporte nativo para campos JSONB (para configuraciones dinámicas de paquetes).
+  * *Positivas:* Garantía de integridad referencial, soporte para bloqueos de fila (`SELECT ... FOR UPDATE`), restricciones `CHECK` e índices únicos parciales para modelar las reglas de negocio en el esquema. `JSONB` se usa únicamente en la bitácora de auditoría (`audit_logs`) y en la cola de mensajes (`outbox_messages`); los paquetes y el catálogo son columnas relacionales.
   * *Negativas:* Es necesario mantener mappers para transformar modelos ORM de SQLAlchemy a entidades puras de dominio y viceversa.
 
 ---
@@ -68,7 +68,7 @@
 * **Contexto:**
   Tanto la API de WhatsApp como Google Maps son servicios externos sujetos a latencia de red, límites de cuota (rate limits) y costos por consumo.
 * **Decisión:**
-  Aislar el consumo de estas APIs tras puertos secundarios abstractos (`IWhatsAppServicePort`, `IMapsServicePort`).
+  Aislar el consumo de estas APIs tras puertos secundarios abstractos (`IWhatsAppServicePort`, `IMapsServicePort`). Los mensajes de WhatsApp se encolan en `outbox_messages` con reintentos, de modo que una caída de Meta no bloquea las transacciones de negocio.
   * Implementar caché (Redis / en memoria) para consultas repetidas de rutas en Google Maps en un lapso de 24 horas.
   * Implementar política de contingencia: si Google Maps no responde o falla la red, el sistema activa un modo de tarifa plana de contingencia o deriva a cotización manual sin bloquear al usuario.
 * **Consecuencias:**
@@ -90,3 +90,28 @@
 * **Consecuencias:**
   * *Positivas:* Prevención total de sobreventa (*overbooking*) y atención rápida en chats concurrentes.
   * *Negativas:* Añade una dependencia de infraestructura en memoria que debe estar orquestada en local vía `docker-compose`.
+
+---
+
+## ADR-07: Firma Electrónica Propia con Sello PAdES (pyHanko)
+
+* **Estado:** Aceptado.
+* **Fecha:** 2026-09-30.
+* **Contexto:**
+  El contrato PDF debe ser firmado por el cliente desde su teléfono, tras recibir el enlace por WhatsApp. El negocio es una promotora pequeña de Lima con volumen bajo de contratos, por lo que el costo por firma y la dependencia de terceros pesan más que el alcance legal máximo. En Perú, la «firma digital» de la Ley 27269 exige un certificado emitido por una entidad acreditada ante INDECOPI; una firma electrónica con OTP, evidencia técnica y sello criptográfico es válida como manifestación de voluntad, pero no es una firma digital en sentido legal. Ningún SaaS extranjero evaluado declara acreditación IOFE, y el equipo ya opera un backend Python con WhatsApp como canal.
+* **Decisión:**
+  Implementar una **firma electrónica propia** detrás del puerto de salida `SignaturePort` (ver [arquitectura hexagonal, sección 3.4](02-backend-arquitectura-hexagonal.md#34-puerto-de-firma-electrónica-signatureport)):
+  1. El cliente abre un enlace de un solo uso (entregado por WhatsApp, con expiración) y revisa el PDF.
+  2. Ingresa un OTP de 6 dígitos enviado por WhatsApp (con expiración y límite de intentos).
+  3. Dibuja su firma manuscrita y acepta los términos.
+  4. El backend estampa la firma y sella el PDF con **PAdES** usando **pyHanko** y un certificado **PKCS#12** (`.p12`), con marca de tiempo **RFC 3161** opcional.
+  5. Se registra el **SHA-256** del PDF sellado, junto con OTP verificado, IP, agente de usuario y marcas de tiempo, en `contracts` y en `audit_logs`.
+
+  Terminología: en toda la documentación y la interfaz se usa «firma electrónica». En desarrollo se usa un `.p12` autofirmado; un certificado acreditado por INDECOPI puede sustituirlo más adelante sin cambios en el dominio.
+* **Alternativas consideradas:**
+  * *SaaS de firma (DocuSign, BoldSign, Firma.dev):* integración rápida y evidencia legal, pero costo recurrente por sobre, dependencia de un tercero con datos de clientes, y ninguno ofrece acreditación IOFE peruana. Descartadas por costo y por no resolver la acreditación.
+  * *Autoalojados (Documenso, DocuSeal):* sin costo por firma, pero añaden un servicio y, en el caso de Documenso, un *stack* Node; el OTP por SMS/WhatsApp del firmante no está disponible en la edición comunitaria (2FA es de pago). Descartadas por complejidad operativa y por no cubrir el OTP por WhatsApp.
+  * *Llama.pe (proveedor acreditado):* es la única vía a una firma digital con validez de la Ley 27269, pero con costo y proceso de contratación que no se justifican hoy. Se documenta como adaptador futuro.
+* **Consecuencias:**
+  * *Positivas:* Sin costo por firma ni proveedor adicional; control total del flujo y de la evidencia; OTP por el mismo canal del negocio; el puerto permite migrar a Documenso, BoldSign o Llama.pe sin tocar el dominio.
+  * *Negativas:* El equipo es responsable de la custodia segura del `.p12` (secreto fuera del repositorio y rotación), del reloj fiable (TSA RFC 3161 opcional) y de la retención de evidencia. La validez legal es la de una firma electrónica, no la de una firma digital acreditada; si un cliente o un trámite exige esta última, se activa el adaptador acreditado.

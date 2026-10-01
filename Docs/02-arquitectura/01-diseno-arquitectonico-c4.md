@@ -35,7 +35,7 @@ flowchart TD
     WhatsAppAPI -->|"Dispara eventos vía Webhook"| EventProApp
     EventProApp -->|"Envía mensajes, cotizaciones y contratos"| WhatsAppAPI
 
-    Cliente -->|"Visualiza y firma digitalmente contrato web"| EventProApp
+    Cliente -->|"Visualiza y firma electrónicamente el contrato web"| EventProApp
     Encargado -->|"Administra cronograma, contratos manuales, overrides y dashboards"| EventProApp
     Elenco -->|"Consulta observaciones y confirma cobro pre-show"| EventProApp
 
@@ -56,7 +56,7 @@ flowchart TB
     end
 
     subgraph FrontendApp["Frontend (Feature-Sliced Design)"]
-        SPA["EventPro Web App (FSD)<br/><i>[Container: TypeScript / React / Next.js]</i><br/>Panel administrativo, visor de cronograma, creación manual de contratos, firma digital de clientes y dashboards."]
+        SPA["EventPro Web App (FSD)<br/><i>[Container: TypeScript / React / Next.js]</i><br/>Panel administrativo, visor de cronograma, creación manual de contratos, firma electrónica de clientes y dashboards."]
     end
 
     subgraph BackendApp["Backend (Arquitectura Hexagonal)"]
@@ -123,6 +123,7 @@ flowchart LR
         PortPdf["IPdfGeneratorService"]
         PortStorage["IFileStorageService"]
         PortCache["ICacheLockService"]
+        PortSignature["SignaturePort"]
     end
 
     subgraph AdaptadoresSalida["Adaptadores Secundarios (Driven Adapters)"]
@@ -132,6 +133,7 @@ flowchart LR
         WeasyPrintAdapter["PDF Generation Adapter<br/><i>[WeasyPrint / Jinja2]</i>"]
         FileSystemAdapter["File Storage Adapter<br/><i>[Local / S3 Compatible]</i>"]
         RedisAdapter["Redis Cache & Lock Adapter<br/><i>[Redis-py]</i>"]
+        PadesAdapter["PAdES Signature Adapter<br/><i>[pyHanko / PKCS#12]</i>"]
     end
 
     %% Relaciones Driving
@@ -144,7 +146,7 @@ flowchart LR
     DomainServices --> Entities & ValueObjects
 
     %% Relaciones Domain/UseCases -> Driven Ports
-    UCQuote & UCPay & UCContract & UCSchedule & UCOverride & UCReport -.-> PortRepo & PortMaps & PortWhatsApp & PortPdf & PortStorage & PortCache
+    UCQuote & UCPay & UCContract & UCSchedule & UCOverride & UCReport -.-> PortRepo & PortMaps & PortWhatsApp & PortPdf & PortStorage & PortCache & PortSignature
 
     %% Relaciones Driven Ports -> Driven Adapters
     PortRepo --> SqlAlchemyRepo
@@ -153,4 +155,5 @@ flowchart LR
     PortPdf --> WeasyPrintAdapter
     PortStorage --> FileSystemAdapter
     PortCache --> RedisAdapter
+    PortSignature --> PadesAdapter
 ```

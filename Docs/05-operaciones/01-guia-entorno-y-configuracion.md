@@ -47,7 +47,9 @@ A continuación se detalla cada una de las variables requeridas por el sistema:
 * `PROMOTORA_BASE_LONGITUDE`: Longitud de la base de operaciones en Lima (`-77.0328`).
 
 ### 2.6 Parámetros Configurables de Reglas de Negocio
-* `SIMULTANEOUS_SHOWS_THRESHOLD`: Cantidad máxima de shows simultáneos antes de exigir aprobación manual del encargado (por defecto `3`).
+* `SIMULTANEOUS_SHOWS_THRESHOLD`: Cantidad máxima de shows simultáneos (solapamiento real de intervalos $[\text{inicio}, \text{fin})$, contando solo eventos con adelanto validado y no cancelados) antes de exigir aprobación manual del encargado (por defecto `3`).
+* `ADVANCE_DEADLINE_HOURS`: Horas de vigencia de la cotización para recibir el comprobante del adelanto, contadas desde su envío; al vencer, la cotización pasa a `EXPIRED` (por defecto `24`).
+* `AVAILABILITY_RECHECK_MINUTES`: Minutos transcurridos desde el envío de la cotización a partir de los cuales el bot revalida la disponibilidad antes de mostrar los datos de Yape, Plin o cuenta bancaria (por defecto `60`).
 * `MOBILITY_MARGIN_PERCENT`: Margen comercial porcentual sobre el costo base de traslado (por defecto `15`).
 * `ADVANCE_PERCENTAGE`: Porcentaje del adelanto sobre servicios base (por defecto `10`).
 * `TRANSIT_REST_BUFFER_MINUTES`: Minutos mínimos de margen para descanso y desarme entre shows sucesivos (por defecto `30`).
@@ -55,3 +57,8 @@ A continuación se detalla cada una de las variables requeridas por el sistema:
 ### 2.7 Repositorio de Archivos y Documentos
 * `STORAGE_BACKEND`: Tipo de almacenamiento (`local` o `s3`).
 * `LOCAL_STORAGE_PATH`: Directorio en disco para comprobantes y contratos PDF (por defecto `./uploads`).
+
+### 2.8 Arranque del Usuario `SUPERADMIN`
+Variables leídas únicamente por el comando de arranque `python -m app.infrastructure.persistence.bootstrap_superadmin` (ver [Estrategia de Migraciones y Seeds, sección 4](../03-datos/03-estrategia-migraciones-y-seeds.md#4-comando-de-arranque-del-usuario-superadmin)):
+* `SUPERADMIN_EMAIL`: Correo de inicio de sesión del primer usuario `SUPERADMIN`.
+* `SUPERADMIN_PASSWORD`: Contraseña inicial (mínimo 12 caracteres, se almacena como hash Argon2id). Debe retirarse del entorno tras el primer arranque.

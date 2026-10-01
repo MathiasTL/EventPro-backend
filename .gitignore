@@ -41,3 +41,6 @@ htmlcov/
 # Sistema Operativo
 .DS_Store
 Thumbs.db
+
+# Seguimiento local de tareas (ODD)
+odd/
