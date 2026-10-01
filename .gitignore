@@ -23,7 +23,11 @@ uploads/
 
 # Docker y caches
 .docker/
-docker-compose.override.yml
+
+# Secretos locales: certificado PKCS#12 de firma electronica
+secrets/
+*.p12
+*.pfx
 
 # Testing y Cobertura
 .pytest_cache/

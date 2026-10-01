@@ -17,7 +17,7 @@
 
 ## 2. Matriz de Permisos por Endpoint
 
-Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints-rest.md) describen **exactamente el mismo inventario** de endpoints (método y ruta). Todas las rutas son relativas a `/api/v1`. Cualquier endpoint nuevo debe agregarse en ambos documentos.
+Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints-rest.md) describen **exactamente el mismo inventario** de endpoints (método y ruta). Todas las rutas son relativas a `/api/v1`, con la excepción de `GET /health`, que se expone en la raíz del servicio (`/health`) para las sondas de infraestructura. Cualquier endpoint nuevo debe agregarse en ambos documentos.
 
 **Leyenda:**
 
@@ -29,6 +29,12 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `Token` | Permitido con el token de un solo uso del enlace de firma, solo para el contrato al que pertenece el token. |
 | `Público` | Sin autenticación (acceso acotado por límites de peticiones). |
 | `Meta` | Sin JWT; autenticado por la verificación de Meta (token de verificación o firma HMAC). |
+
+### 2.0 Salud del Servicio
+
+| Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE (Token) | Notas |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| `GET /health` | Público | Público | Público | Público | Sin autenticación; se sirve en `/health` (fuera de `/api/v1`). No expone datos sensibles: solo el estado de PostgreSQL y Redis. |
 
 ### 2.1 Autenticación y Cuentas
 
@@ -152,7 +158,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 
 ### 3.1 Ciclo de Vida de Tokens
 1. **Access Token:**
-   * Algoritmo: HMAC-SHA256 (`HS256`) o Asimétrico (`RS256`).
+   * Algoritmo: HMAC-SHA256 (`HS256`) o Asimétrico (`RS256`). Biblioteca: **PyJWT** (ADR-09).
    * Tiempo de vida: **60 minutos**.
    * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`.
 2. **Refresh Token:**
@@ -177,7 +183,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 ## 4. Políticas de Seguridad de la API (OWASP Top 10)
 
 1. **CORS (Cross-Origin Resource Sharing):** Restringido explícitamente a los dominios del frontend de la promotora (`https://app.eventpro.pe`) y `localhost` en desarrollo.
-2. **Rate Limiting:** Implementado a nivel de FastAPI/Redis. Un exceso responde `429` con el tipo de error `rate-limit-exceeded` y la cabecera `Retry-After`:
+2. **Rate Limiting:** Implementado con `slowapi` sobre Redis (ADR-09). Un exceso responde `429` con el tipo de error `rate-limit-exceeded` y la cabecera `Retry-After`:
 
    | Endpoint | Límite |
    | :--- | :--- |
@@ -190,6 +196,6 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 3. **Firma del Webhook de WhatsApp:** `POST /webhooks/whatsapp` exige la cabecera `X-Hub-Signature-256: sha256=<hex>`, el HMAC-SHA256 del cuerpo crudo calculado con el secreto de la aplicación de Meta. Se recalcula y se compara en tiempo constante antes de procesar el evento; sin firma válida responde `401` y no se encola nada. El `GET /webhooks/whatsapp` valida `hub.verify_token` contra `WHATSAPP_VERIFY_TOKEN`. El procesamiento es idempotente por el identificador de mensaje de Meta.
 4. **Seguridad del OTP:** código de 6 dígitos generado con un generador criptográfico, almacenado solo con hash (`otp_hash`), con vigencia de 10 minutos, intentos limitados y entrega por WhatsApp a través de `outbox_messages` (el contenido del OTP se elimina del `payload` tras el envío).
 5. **Aislamiento de Archivos Binarios:** Los comprobantes y evidencias subidos no se ejecutan ni se sirven directamente desde rutas del sistema operativo; se almacenan con extensión neutral y nombre UUID, y se descargan únicamente a través de la API con control de acceso (`GET /payments/{id}/evidence`).
-6. **Validación de Subidas:** máximo 5 MB por archivo; el tipo se valida por contenido (*magic bytes*) y no solo por extensión ni por `Content-Type`. Las evidencias de cobro in situ admiten solo imágenes (JPEG, PNG, WebP); los comprobantes de adelanto, además, PDF.
+6. **Validación de Subidas:** máximo 5 MB por archivo; el tipo se valida por contenido (*magic bytes*, biblioteca `filetype`) y no solo por extensión ni por `Content-Type`. Las evidencias de cobro in situ admiten solo imágenes (JPEG, PNG, WebP); los comprobantes de adelanto, además, PDF.
 7. **Headers de Seguridad HTTP:** Inclusión obligatoria de `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
 8. **Auditoría:** las acciones críticas (overrides, aprobación de sobrecupo, auditoría de cobros, contratos manuales y firmas) se registran en `audit_logs`, que es de solo lectura vía API (`GET /audit-logs`).
