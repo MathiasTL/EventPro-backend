@@ -114,7 +114,9 @@ erDiagram
         decimal total_amount
         decimal advance_amount "10% de subtotal servicios"
         decimal pending_balance
-        string status "BORRADOR, COTIZADO, ACEPTADO, VENCIDO"
+        string status "SENT, PAYMENT_STARTED, CONVERTED, EXPIRED, CANCELLED"
+        timestamp sent_at "Inicio del plazo ADVANCE_DEADLINE_HOURS"
+        timestamp expires_at "sent_at + ADVANCE_DEADLINE_HOURS"
         timestamp created_at
     }
 
@@ -137,10 +139,7 @@ erDiagram
         string address
         string district
         text client_observations "Notas especiales"
-        string status "AGENDADO, EN_ESPERA_COBRO, EN_EJECUCION, CON_EXTENSION, LIQUIDADO, CANCELADO"
-        boolean requires_manual_approval "Umbral > 3 shows"
-        boolean is_manually_approved
-        uuid approved_by_user_id FK
+        string status "AWAITING_SIGNATURE, SCHEDULED, AWAITING_BALANCE, IN_PROGRESS, EXTENDED, SETTLED, CANCELLED"
         decimal total_services_amount
         decimal total_mobility_amount
         decimal final_total_amount
@@ -159,7 +158,7 @@ erDiagram
         text signature_image_url
         string signer_ip
         timestamp signed_at
-        string status "BORRADOR, EMITIDO, FIRMADO, ANULADO"
+        string status "DRAFT, ISSUED, SIGNED, VOIDED"
         boolean is_manual_mode "Emitido manualmente"
         text custom_clauses
         timestamp created_at
@@ -173,7 +172,7 @@ erDiagram
         decimal amount
         string receipt_image_url
         string transaction_reference
-        string validation_status "PENDIENTE, VERIFICADO, RECHAZADO"
+        string validation_status "PENDING_VERIFICATION, REQUIRES_MANUAL_APPROVAL, VERIFIED, REJECTED, REFUND_PENDING, REFUNDED"
         string rejection_reason
         uuid verified_by_user_id FK
         timestamp verified_at

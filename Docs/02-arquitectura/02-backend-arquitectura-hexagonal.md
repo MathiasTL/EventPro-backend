@@ -39,7 +39,7 @@ app/
 │   ├── services/                         # Servicios de Dominio (lógica que involucra múltiples entidades)
 │   │   ├── financial_engine.py           # Cálculo determinístico: Total, Adelanto (10%), Saldo y Rentabilidad
 │   │   ├── travel_interval_service.py    # Cálculo de tiempos mínimos de traslado entre shows
-│   │   └── concurrency_evaluator.py      # Evaluación del umbral de eventos simultáneos (> 3 shows)
+│   │   └── concurrency_evaluator.py      # Umbral de simultaneidad: solapamiento real [inicio, fin) de eventos con adelanto validado y no cancelados
 │   └── exceptions/                       # Excepciones de negocio de dominio
 │       ├── quote_exceptions.py
 │       └── resource_exceptions.py
@@ -130,7 +130,7 @@ Es el corazón del software. Modela el negocio sin atarse a ninguna tecnología.
 * **Objetos de Valor (`value_objects`):** Inmutables y sin identidad propia, modelan características del dominio:
   * `Money(amount: Decimal, currency: str = "PEN")`: Previene errores de coma flotante en cálculos de dinero.
   * `Coordinates(latitude: float, longitude: float)`: Georreferenciación exacta.
-  * `EventStatus`: Enumeración estricta de estados (`QUOTED`, `ADVANCE_PAID`, `SCHEDULED`, `RUNNING`, `SETTLED`).
+  * `QuoteStatus`, `PaymentStatus`, `EventStatus` y `ContractStatus`: cuatro enumeraciones estrictas e independientes, una por ciclo de vida. Sus valores son códigos en inglés `UPPER_SNAKE_CASE`, definidos de forma única en [RN, sección 3](../01-requisitos/04-reglas-de-negocio-y-control.md#3-máquinas-de-estados) (por ejemplo, `EventStatus`: `AWAITING_SIGNATURE`, `SCHEDULED`, `AWAITING_BALANCE`, `IN_PROGRESS`, `EXTENDED`, `SETTLED`, `CANCELLED`).
 * **Servicios de Dominio (`services`):** Encapsulan operaciones que involucran varias entidades. Por ejemplo:
   * `FinancialEngine`: Ejecuta estrictamente las fórmulas:
     $$\text{Subtotal} = \text{Paquete} + \sum \text{Extras}$$

@@ -101,16 +101,22 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 ---
 
 ### US-07: Envío del Resumen de Cotización al WhatsApp del Cliente
-* **Mapeo:** RF-08
+* **Mapeo:** RF-08, RN-09
 * **Prioridad:** Must have | **Estimación:** 2 SP
 * **Narrativa:**
   * **Como** cliente,
-  * **Quiero** recibir en el chat un mensaje claro con el detalle de lo cotizado, el adelanto requerido y los números de cuenta para depositar,
-  * **Para** tomar una decisión inmediata y proceder con el pago.
+  * **Quiero** recibir en el chat un mensaje claro con el detalle de lo cotizado, el adelanto requerido y un botón para pagar,
+  * **Para** tomar una decisión informada y proceder con el pago cuando esté listo.
 * **Criterios de Aceptación:**
   * **Dado que** el sistema finalizó el cálculo,
   * **Cuando** se despacha la cotización,
-  * **Entonces** el cliente recibe en WhatsApp el desglose detallado de ítems, totales, número de Yape/BCP y la fecha límite de reserva.
+  * **Entonces** el cliente recibe en WhatsApp el desglose detallado de ítems y totales, el plazo para pagar el adelanto (`ADVANCE_DEADLINE_HOURS`, por defecto 24 horas), una advertencia de que la fecha y el horario solo quedan asegurados cuando el adelanto es validado, y un botón «Pagar adelanto». El mensaje **no incluye** datos de Yape, Plin ni cuentas bancarias, y la cotización queda en estado `SENT`.
+  * **Dado que** el cliente pulsa «Pagar adelanto» y han transcurrido más de `AVAILABILITY_RECHECK_MINUTES` minutos (por defecto 60) desde el envío,
+  * **Cuando** el bot revalida la disponibilidad,
+  * **Entonces** si hay cupo muestra los datos de Yape, Plin o cuenta bancaria y la cotización pasa a `PAYMENT_STARTED`; si no hay cupo ofrece otra fecha u horario o derivar a un encargado, sin revelar datos de pago.
+  * **Dado que** transcurre `ADVANCE_DEADLINE_HOURS` sin que se reciba un comprobante,
+  * **Cuando** vence el plazo,
+  * **Entonces** la cotización pasa a `EXPIRED` y no retiene cupo.
 
 ---
 
@@ -124,7 +130,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Quiero** que el sistema impida confirmar un show si no hay personal freelance disponible o si los toldos ya están comprometidos en ese horario,
   * **Para** evitar la sobreventa (*overbooking*) y no quedar mal con los clientes.
 * **Criterios de Aceptación:**
-  * **Dado que** un cliente solicita una fecha y bloque horario,
+  * **Dado que** un cliente solicita una fecha y un horario,
   * **Cuando** el sistema consulta la base de recursos,
   * **Entonces** si la capacidad está colmada, alerta al cliente ofreciendo otros horarios o derivando el caso al encargado.
 
@@ -145,23 +151,29 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 ---
 
 ### US-10: Aprobación Manual por Umbral de Más de 3 Shows Simultáneos
-* **Mapeo:** RF-20, PC-03
+* **Mapeo:** RF-20, RN-04, PC-03
 * **Prioridad:** Must have | **Estimación:** 3 SP
 * **Narrativa:**
   * **Como** encargado,
-  * **Quiero** que cuando coincidan más de 3 shows en el mismo horario el sistema me pida autorización expresa antes de confirmar,
+  * **Quiero** que cuando se solapen más de 3 shows (intervalos reales de inicio y fin) el sistema me pida autorización expresa antes de confirmar,
   * **Para** evaluar personalmente si cuento con suficientes grupos freelance de respaldo para asumir la demanda.
 * **Criterios de Aceptación:**
-  * **Dado que** ya existen 3 shows agendados en una misma franja horaria,
-  * **Cuando** entra un 4to pedido,
-  * **Entonces** el sistema marca el evento como `REQUIERE_APROBACION_MANUAL` y envía una notificación al panel del encargado para Aprobar o Rechazar.
+  * **Dado que** ya existen 3 eventos con adelanto validado y no cancelados cuyos intervalos $[\text{inicio}, \text{fin})$ se solapan con el del nuevo pedido,
+  * **Cuando** entra un 4.º pedido con comprobante de adelanto,
+  * **Entonces** el sistema lleva el pago a `REQUIRES_MANUAL_APPROVAL` (no marca el evento) y envía una notificación al panel del encargado para Aprobar o Rechazar.
+  * **Dado que** existen 3 eventos cuyos intervalos son contiguos pero no se solapan con el del nuevo pedido (por ejemplo, uno termina exactamente cuando el otro empieza),
+  * **Cuando** entra el nuevo pedido,
+  * **Entonces** no se exige aprobación manual.
+  * **Dado que** existen cotizaciones sin adelanto validado o eventos `CANCELLED` en el mismo intervalo,
+  * **Cuando** se cuenta el umbral (`SIMULTANEOUS_SHOWS_THRESHOLD`, por defecto 3),
+  * **Entonces** esos registros no se consideran.
 
 ---
 
 ## 4. Épica 3: Gestión de Pagos, Comprobantes y Validación
 
 ### US-11: Recepción de Captura del Adelanto por Yape / Transferencia
-* **Mapeo:** RF-11
+* **Mapeo:** RF-11, RN-09
 * **Prioridad:** Must have | **Estimación:** 3 SP
 * **Narrativa:**
   * **Como** cliente que depositó el 10% de adelanto,
@@ -170,12 +182,15 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 * **Criterios de Aceptación:**
   * **Dado que** el cliente tiene una cotización vigente,
   * **Cuando** adjunta una imagen o PDF del comprobante en el chat de WhatsApp,
-  * **Entonces** el sistema la asocia unívocamente a su cotización y la coloca en estado `PENDIENTE_VERIFICACION`.
+  * **Entonces** el sistema la asocia unívocamente a su cotización y registra el pago en estado `PENDING_VERIFICATION`.
+  * **Dado que** al recibir el comprobante el cupo ya no está disponible o se supera el umbral de shows simultáneos,
+  * **Cuando** el sistema ejecuta la revalidación temprana,
+  * **Entonces** el pago ingresa en estado `REQUIRES_MANUAL_APPROVAL` en lugar de `PENDING_VERIFICATION`.
 
 ---
 
 ### US-12: Verificación de Pago y Flujo de Reintento
-* **Mapeo:** RF-12, PC-06
+* **Mapeo:** RF-12, RN-09, PC-06
 * **Prioridad:** Must have | **Estimación:** 3 SP
 * **Narrativa:**
   * **Como** encargado,
@@ -184,7 +199,13 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 * **Criterios de Aceptación:**
   * **Dado que** un comprobante es rechazado por el encargado con el motivo "Monto incompleto",
   * **Cuando** el sistema procesa el rechazo,
-  * **Entonces** despacha un mensaje por WhatsApp al cliente informando el motivo y habilitando un botón para subir un nuevo comprobante.
+  * **Entonces** el pago pasa a `REJECTED` y se despacha un mensaje por WhatsApp al cliente informando el motivo y habilitando un botón para subir un nuevo comprobante.
+  * **Dado que** el encargado aprueba un comprobante,
+  * **Cuando** el sistema ejecuta la revalidación autoritativa y atómica (bloqueo Redis) y hay cupo,
+  * **Entonces** el pago pasa a `VERIFIED`, la cotización a `CONVERTED` y se crea el evento en `AWAITING_SIGNATURE`.
+  * **Dado que** al validar el pago el cupo ya está lleno,
+  * **Cuando** el encargado decide,
+  * **Entonces** puede aprobar el sobrecupo (el pago pasa a `VERIFIED`) o rechazarlo (el pago pasa a `REFUND_PENDING` y, tras la devolución, a `REFUNDED`).
 
 ---
 
@@ -256,8 +277,8 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Quiero** que el sistema impida marcar un evento en ejecución si el personal en sitio no ha confirmado el cobro del 100% del saldo restante (servicios + movilidad),
   * **Para** garantizar que ningún show inicie sin haber liquidado el pago pendiente.
 * **Criterios de Aceptación:**
-  * **Dado que** el elenco llega a la locación y el evento está en `AGENDADO`,
-  * **Cuando** el operador intenta cambiar el estado a `EN_EJECUCION` sin registrar el cobro del saldo,
+  * **Dado que** el elenco llega a la locación y el evento está en `SCHEDULED` o `AWAITING_BALANCE`,
+  * **Cuando** el operador intenta cambiar el estado a `IN_PROGRESS` sin registrar el cobro del saldo,
   * **Entonces** el sistema bloquea la acción con un mensaje de error exigiendo confirmar el medio y monto del cobro in-situ.
 
 ---
@@ -272,7 +293,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 * **Criterios de Aceptación:**
   * **Dado que** un show culminó pero el cliente pagó por media hora más,
   * **Cuando** se ingresa el cargo por tiempo extra,
-  * **Entonces** se actualiza el ingreso total del evento y se transiciona su estado a `LIQUIDADO`.
+  * **Entonces** se actualiza el ingreso total del evento y se transiciona su estado a `EXTENDED` y, al registrar el cobro, a `SETTLED`.
 
 ---
 

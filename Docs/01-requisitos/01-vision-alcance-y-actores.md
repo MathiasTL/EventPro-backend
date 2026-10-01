@@ -37,7 +37,7 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 ### 3.1 Dentro del Alcance (In Scope - MVP / Fase 1)
 * **Canal Conversacional (WhatsApp Business API & Webhook):** Saludo automático, presentación de catálogo estructurado de paquetes, temáticas y extras, captura de datos del cliente, fecha, hora y ubicación del evento.
 * **Motor de Cotización y Cálculo de Movilidad:** Integración con Google Maps Platform (Distance Matrix / Directions) para el cálculo de distancia y tiempo (ida y vuelta) con recargo comercial (+15%) y posibilidad de exención si el cliente provee movilidad.
-* **Control de Disponibilidad y Reglas de Despacho:** Validación de elencos freelance e inventario de mobiliario; cálculo de tiempos de traslado entre eventos y bloqueo/aprobación manual cuando se superen 3 eventos simultáneos.
+* **Control de Disponibilidad y Reglas de Despacho:** Validación de elencos freelance e inventario de mobiliario; cálculo de tiempos de traslado entre eventos y aprobación manual cuando se supere el umbral de shows simultáneos (solapamiento real de intervalos, por defecto más de 3 eventos con adelanto validado).
 * **Gestión de Pagos y Comprobantes:** Registro de anticipos (10% sobre servicios base) mediante billeteras digitales (Yape / Plin) o transferencias bancarias; subida de capturas y flujo de verificación con reintentos.
 * **Contratos Inteligentes en PDF y Firma Digital:** Emisión automatizada del contrato PDF con desglose estricto de conceptos y soporte para modo manual de respaldo; integración de firma digital.
 * **Cronograma Operativo Centralizado:** Tablero calendarizado con filtros temporales y visualización prominente de observaciones del cliente por evento.

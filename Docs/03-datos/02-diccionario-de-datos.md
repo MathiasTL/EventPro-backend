@@ -123,7 +123,9 @@ Registra las solicitudes de cotización generadas por WhatsApp o por panel admin
 | `total_amount` | `NUMERIC(10,2)` | NO | - | - | Subtotal de servicios + movilidad final. |
 | `advance_amount` | `NUMERIC(10,2)` | NO | - | - | 10% de subtotal de servicios. |
 | `pending_balance` | `NUMERIC(10,2)` | NO | - | - | Total menos adelanto (incluye movilidad). |
-| `status` | `VARCHAR(30)` | NO | `'COTIZADO'` | CHECK in (`BORRADOR`, `COTIZADO`, `ACEPTADO`, `VENCIDO`) | Estado de la cotización. |
+| `status` | `VARCHAR(30)` | NO | `'SENT'` | CHECK in (`SENT`, `PAYMENT_STARTED`, `CONVERTED`, `EXPIRED`, `CANCELLED`) | Estado de la cotización (ver RN, sección 3.1). |
+| `sent_at` | `TIMESTAMPTZ` | NO | - | - | Momento de envío al cliente; inicia el plazo del adelanto y el cómputo de `AVAILABILITY_RECHECK_MINUTES`. |
+| `expires_at` | `TIMESTAMPTZ` | NO | - | INDEX | `sent_at` + `ADVANCE_DEADLINE_HOURS`; al vencer sin comprobante la cotización pasa a `EXPIRED`. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de generación. |
 
 ---
@@ -156,10 +158,7 @@ Entidad principal del cronograma y ejecución operativa del servicio.
 | `address` | `VARCHAR(255)` | NO | - | - | Dirección confirmada. |
 | `district` | `VARCHAR(80)` | NO | - | INDEX | Distrito. |
 | `client_observations` | `TEXT` | SÍ | `NULL` | - | Directrices especiales del cliente (visibles en cronograma). |
-| `status` | `VARCHAR(30)` | NO | `'AGENDADO'` | CHECK in (`AGENDADO`, `EN_ESPERA_COBRO`, `EN_EJECUCION`, `CON_EXTENSION`, `LIQUIDADO`, `CANCELADO`) | Estado operativo. |
-| `requires_manual_approval`| `BOOLEAN` | NO | `FALSE` | - | Activado si supera el umbral de 3 shows simultáneos. |
-| `is_manually_approved` | `BOOLEAN` | NO | `FALSE` | - | Indica si el encargado aprobó el evento concurrente. |
-| `approved_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Encargado que autorizó el show concurrente. |
+| `status` | `VARCHAR(30)` | NO | `'AWAITING_SIGNATURE'` | CHECK in (`AWAITING_SIGNATURE`, `SCHEDULED`, `AWAITING_BALANCE`, `IN_PROGRESS`, `EXTENDED`, `SETTLED`, `CANCELLED`) | Estado operativo (ver RN, sección 3.3). El evento se crea solo cuando el adelanto es validado. La aprobación manual por umbral de simultaneidad es un estado del pago (`REQUIRES_MANUAL_APPROVAL`), no un campo del evento; el aprobador queda en `payments.verified_by_user_id`. |
 | `total_services_amount`| `NUMERIC(10,2)` | NO | - | - | Monto liquidado de servicios. |
 | `total_mobility_amount`| `NUMERIC(10,2)` | NO | - | - | Monto liquidado de movilidad. |
 | `final_total_amount` | `NUMERIC(10,2)` | NO | - | - | Total final facturado. |
@@ -183,7 +182,7 @@ Contratos formalizados en PDF con metadatos de firma electrónica.
 | `signature_image_url` | `TEXT` | SÍ | `NULL` | - | Imagen de la firma manuscrita capturada. |
 | `signer_ip` | `VARCHAR(45)` | SÍ | `NULL` | - | Dirección IPv4/IPv6 de quien firmó. |
 | `signed_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora exacta de la firma digital. |
-| `status` | `VARCHAR(30)` | NO | `'EMITIDO'` | CHECK in (`BORRADOR`, `EMITIDO`, `FIRMADO`, `ANULADO`) | Estado del contrato. |
+| `status` | `VARCHAR(30)` | NO | `'DRAFT'` | CHECK in (`DRAFT`, `ISSUED`, `SIGNED`, `VOIDED`) | Estado del contrato (ver RN, sección 3.4). |
 | `is_manual_mode` | `BOOLEAN` | NO | `FALSE` | - | Si fue confeccionado manualmente por el encargado. |
 | `custom_clauses` | `TEXT` | SÍ | `NULL` | - | Cláusulas contractuales personalizadas. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de emisión. |
@@ -202,7 +201,7 @@ Registro de comprobantes de pago (adelanto, saldo pre-show y horas extra).
 | `amount` | `NUMERIC(10,2)` | NO | - | CHECK (`amount > 0`) | Monto pagado en Soles (PEN). |
 | `receipt_image_url`| `VARCHAR(255)` | SÍ | `NULL` | - | URL o ruta de la captura del comprobante. |
 | `transaction_reference` | `VARCHAR(60)` | SÍ | `NULL` | - | Número de operación bancaria o de Yape. |
-| `validation_status`| `VARCHAR(30)` | NO | `'PENDIENTE'` | CHECK in (`PENDIENTE`, `VERIFICADO`, `RECHAZADO`) | Estado de auditoría del pago. |
+| `validation_status`| `VARCHAR(30)` | NO | `'PENDING_VERIFICATION'` | CHECK in (`PENDING_VERIFICATION`, `REQUIRES_MANUAL_APPROVAL`, `VERIFIED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED`) | Estado del pago (ver RN, sección 3.2). |
 | `rejection_reason` | `TEXT` | SÍ | `NULL` | - | Motivo de rechazo para el flujo de reintento. |
 | `verified_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Usuario que validó el pago. |
 | `verified_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha de verificación. |

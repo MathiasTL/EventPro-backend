@@ -29,7 +29,7 @@
   1. Validar que la fecha sea igual o posterior a la fecha actual.
   2. Validar que la dirección contenga datos suficientes para su resolución en el servicio de mapas.
   3. Almacenar los datos de la sesión vinculados al identificador de solicitud.
-* **Salidas:** Registro preliminar de la solicitud de evento en estado `BORRADOR`.
+* **Salidas:** Registro preliminar de la solicitud en la sesión de conversación (aún no existe cotización; la cotización nace al enviarse, ver RF-08).
 * **Prioridad:** Alta.
 
 ---
@@ -117,8 +117,13 @@
 ### RF-08: Despacho Automático de Resumen de Cotización
 * **Descripción:** El sistema debe componer un mensaje estructurado y legible con el desglose comercial de la cotización y transmitirlo automáticamente al cliente a través del chat de WhatsApp.
 * **Entradas:** Identificador de la cotización calculada y número de WhatsApp del cliente.
-* **Procesamiento:** Generar plantilla de texto con detalle de paquete, temática, extras, movilidad, monto total, monto de adelanto requerido (10%) y canales de pago disponibles (número de Yape / cuentas bancarias).
-* **Salidas:** Mensaje enviado por la API de WhatsApp con cambio de estado de la cotización a `COTIZADO`.
+* **Procesamiento:**
+  1. Generar plantilla de texto con detalle de paquete, temática, extras, movilidad, monto total y monto de adelanto requerido (10%).
+  2. El mensaje **no incluye datos de pago** (Yape, Plin ni cuentas bancarias). Incluye únicamente un botón interactivo «Pagar adelanto».
+  3. El mensaje advierte de forma explícita que **la fecha y el horario solo quedan asegurados cuando el adelanto es validado**, e informa el plazo máximo para pagarlo (`ADVANCE_DEADLINE_HOURS`, por defecto 24 horas desde el envío).
+  4. Registrar la hora de envío como inicio del plazo de vigencia de la cotización.
+* **Salidas:** Mensaje enviado por la API de WhatsApp con cambio de estado de la cotización a `SENT` (ver ciclo de vida de cotización en RN, sección 3).
+* **Reglas Asociadas:** RN-09.
 * **Prioridad:** Alta.
 
 ---
@@ -126,12 +131,12 @@
 ## 4. Módulo M04: Verificación de Disponibilidad y Capacidad
 
 ### RF-09: Verificación de Disponibilidad de Recursos e Inventario
-* **Descripción:** Antes de habilitar la aceptación de una cotización, el sistema debe comprobar la factibilidad operativa del evento contrastando los recursos solicitados contra la programación existente.
-* **Entradas:** Fecha, bloque horario, tipo de paquete, extras solicitados y requerimientos de infraestructura (toldos/decoración).
+* **Descripción:** Antes de enviar la cotización, y nuevamente en los puntos de revalidación definidos en RN-09, el sistema debe comprobar la factibilidad operativa del evento contrastando los recursos solicitados contra la programación existente. La disponibilidad **no reserva** el cupo: este solo queda asegurado cuando el adelanto es validado.
+* **Entradas:** Fecha, intervalo horario [inicio, fin), tipo de paquete, extras solicitados y requerimientos de infraestructura (toldos/decoración).
 * **Procesamiento:**
   1. Para shows y animación: Comprobar disponibilidad de artistas freelance registrados en la categoría requerida.
   2. Para toldos y decoración: Comprobar que el inventario físico de estructuras y telas no se encuentre asignado a otro evento en la misma ventana de tiempo.
-* **Salidas:** Estado de disponibilidad (`DISPONIBLE`, `CON_CONFLICTO`, `REQUIERE_APROBACION`).
+* **Salidas:** Resultado de disponibilidad (`AVAILABLE`, `CONFLICT`, `THRESHOLD_EXCEEDED`). Este resultado no es un estado de ciclo de vida; `THRESHOLD_EXCEEDED` indica que se superó `SIMULTANEOUS_SHOWS_THRESHOLD` (ver RN-04).
 * **Reglas Asociadas:** RN-04, PC-01.
 * **Prioridad:** Alta.
 
@@ -157,8 +162,12 @@
 * **Entradas:** Archivo de imagen (JPEG, PNG, WebP) o documento PDF enviado por el cliente vía WhatsApp, asociado a la cotización vigente.
 * **Procesamiento:**
   1. Almacenar el archivo en el repositorio de archivos con un identificador UUID no predecible.
-  2. Vincular el registro de pago a la cotización en estado `PAGO_EN_REVISION`.
-* **Salidas:** Comprobante almacenado y cotización en cola de verificación.
+  2. Vincular el registro de pago a la cotización (el vínculo con el evento es opcional, porque el evento solo se crea al validar el adelanto).
+  3. **Revalidación temprana de disponibilidad (RN-09):** verificar si el cupo sigue disponible. Si hay cupo, el pago ingresa en estado `PENDING_VERIFICATION`. Si el cupo está lleno o se supera `SIMULTANEOUS_SHOWS_THRESHOLD`, el pago ingresa en estado `REQUIRES_MANUAL_APPROVAL` (alerta temprana al encargado; no es la verificación autoritativa).
+  4. Si la cotización ya está `EXPIRED`, el comprobante se almacena igualmente, pero el pago ingresa en `REQUIRES_MANUAL_APPROVAL` para decisión del encargado (el cliente pudo haber pagado dentro del plazo).
+  5. La cotización pasa a `PAYMENT_STARTED` si aún estaba en `SENT`.
+* **Salidas:** Comprobante almacenado y pago en cola de verificación (`PENDING_VERIFICATION` o `REQUIRES_MANUAL_APPROVAL`).
+* **Reglas Asociadas:** RN-04, RN-09, PC-03, PC-11.
 * **Prioridad:** Alta.
 
 ---
@@ -167,10 +176,14 @@
 * **Descripción:** El sistema debe permitir validar el comprobante de pago. En caso de inconsistencia o ilegibilidad, debe emitir una notificación automática al cliente solicitando un nuevo comprobante.
 * **Entradas:** Dictamen de validación (Aprobado / Rechazado con motivo).
 * **Procesamiento:**
-  * Si es aprobado: Cambiar estado del evento a `ADELANTO_CONFIRMADO` y disparar generación de contrato.
-  * Si es rechazado: Cambiar estado a `PAGO_RECHAZADO` y enviar mensaje vía WhatsApp con el motivo del rechazo y botón/instrucción de reintento.
+  * Si es aprobado:
+    1. **Revalidación autoritativa y atómica de disponibilidad** bajo bloqueo distribuido (Redis lock, ADR-06) sobre la fecha y el intervalo solicitados, antes de confirmar.
+    2. Si hay cupo: cambiar el pago a `VERIFIED`, la cotización a `CONVERTED`, crear el evento en estado `AWAITING_SIGNATURE` y disparar la generación del contrato.
+    3. Si el cupo está lleno al validar: el encargado decide entre **aprobar el sobrecupo** (se continúa como en el paso anterior) o **rechazar con devolución** (el pago pasa a `REFUND_PENDING`, no se crea evento y se notifica al cliente con opción de otra fecha u horario).
+  * Si es rechazado por comprobante inválido o ilegible: cambiar el pago a `REJECTED` y enviar mensaje vía WhatsApp con el motivo del rechazo y botón/instrucción de reintento (el reintento crea un nuevo registro de pago).
+  * Una vez efectuada la devolución, el pago pasa a `REFUNDED`.
 * **Salidas:** Estado actualizado y notificación de WhatsApp emitida.
-* **Reglas Asociadas:** PC-06.
+* **Reglas Asociadas:** RN-04, RN-09, PC-03, PC-06, PC-11.
 * **Prioridad:** Alta.
 
 ---
@@ -202,7 +215,7 @@
 * **Entradas:** Trazado de firma manuscrita en formato vectorial/PNG, dirección IP y metadatos de confirmación del cliente.
 * **Procesamiento:**
   1. Estampar la imagen de la firma en la sección de firmas del contrato PDF.
-  2. Registrar marca temporal (*timestamp*), dirección IP y cambiar estado a `CONTRATO_FIRMADO`.
+  2. Registrar marca temporal (*timestamp*), dirección IP, cambiar el contrato a `SIGNED` y el evento a `SCHEDULED`.
   3. Despachar copia del contrato firmado al WhatsApp del cliente.
 * **Salidas:** Contrato PDF final firmado y copia enviada al cliente.
 * **Prioridad:** Alta.
@@ -235,7 +248,7 @@
 * **Entradas:** Registro de cobro presencial (medio de pago: Yape, transferencia o efectivo; monto recibido; identificador de usuario que confirma).
 * **Procesamiento:**
   1. Validar que el monto cobrado complete el 100% del saldo pendiente.
-  2. Actualizar estado del evento a `EN_EJECUCION`.
+  2. Actualizar estado del evento a `IN_PROGRESS` (desde `AWAITING_BALANCE`).
 * **Salidas:** Evento habilitado operativamente y registro contable de ingreso in-situ.
 * **Reglas Asociadas:** RN-06, PC-07.
 * **Prioridad:** Alta (Crítica).
@@ -247,8 +260,8 @@
 * **Entradas:** Minutos/horas de extensión, tarifa pactada, medio de pago del extra.
 * **Procesamiento:**
   1. Sumar el recargo extraordinario al total facturado del evento.
-  2. Registrar el cobro y transicionar el estado del evento a `LIQUIDADO`.
-* **Salidas:** Estado de evento `LIQUIDADO` y cierre de caja del servicio.
+  2. Registrar el cobro y transicionar el estado del evento a `EXTENDED` (si hubo extensión) y luego a `SETTLED`.
+* **Salidas:** Estado de evento `SETTLED` y cierre de caja del servicio.
 * **Reglas Asociadas:** RN-07, PC-08.
 * **Prioridad:** Alta.
 
@@ -257,13 +270,13 @@
 ## 8. Módulo M08: Procesos de Control y Sobrescritura (Overrides) Manuales
 
 ### RF-20: Aprobación Manual por Umbral de Eventos Simultáneos
-* **Descripción:** Si en una misma fecha y bloque horario se reciben solicitudes que superen el umbral configurable (por defecto: más de 3 shows simultáneos), el sistema debe detener la confirmación automática y exigir la autorización expresa de un encargado.
-* **Entradas:** Solicitud de cotización entrante; umbral de concurrencia configurado en el sistema ($N = 3$).
+* **Descripción:** Dos shows son simultáneos cuando sus intervalos reales $[\text{inicio}, \text{fin})$ se solapan, con $\text{fin} = \text{inicio} + \text{duración del paquete}$. Si al incorporar el show solicitado la cantidad de shows simultáneos supera el umbral configurable `SIMULTANEOUS_SHOWS_THRESHOLD` (por defecto 3), el sistema debe detener la confirmación automática y exigir la autorización expresa de un encargado. La aprobación manual es un **estado del pago** (`REQUIRES_MANUAL_APPROVAL`), no una bandera del evento.
+* **Entradas:** Pago con comprobante recibido (RF-11) o validación en curso (RF-12); intervalo $[\text{inicio}, \text{fin})$ del show solicitado; umbral de concurrencia configurado ($N = 3$ por defecto).
 * **Procesamiento:**
-  1. Contar eventos activos en el intervalo temporal solicitado.
-  2. Si $\text{eventos} > N$, marcar la solicitud como `REQUIERE_APROBACION_MANUAL` y notificar al encargado.
-* **Salidas:** Notificación de alerta en panel administrativo con acciones de Aprobar / Rechazar / Reagendar.
-* **Reglas Asociadas:** RN-04, PC-03.
+  1. Contar los eventos cuyo intervalo se solapa con el solicitado y que cumplan **ambas** condiciones: tienen adelanto validado y no están en estado `CANCELLED`. Las cotizaciones sin adelanto validado no cuentan.
+  2. Si $\text{eventos solapados} + 1 > N$, llevar el pago a `REQUIRES_MANUAL_APPROVAL` y notificar al encargado.
+* **Salidas:** Notificación de alerta en panel administrativo con acciones de Aprobar (sobrecupo) / Rechazar (el pago pasa a `REFUND_PENDING`) / Reagendar.
+* **Reglas Asociadas:** RN-04, RN-09, PC-03.
 * **Prioridad:** Alta.
 
 ---
@@ -294,7 +307,7 @@
 ### RF-23: Modo Manual de Creación de Contratos
 * **Descripción:** El sistema debe ofrecer un módulo administrativo para crear y emitir contratos directamente desde un formulario web sin requerir la interacción previa del cliente por el bot de WhatsApp.
 * **Entradas:** Formulario administrativo con datos del cliente, paquete, temática, extras, fecha, horario, dirección, montos acordados y observaciones.
-* **Procesamiento:** Generar directamente el contrato en estado `BORRADOR` o `EMITIDO`, calculando liquidación económica y permitiendo su descarga o envío por enlace.
+* **Procesamiento:** Generar directamente el contrato en estado `DRAFT` o `ISSUED`, calculando liquidación económica y permitiendo su descarga o envío por enlace.
 * **Salidas:** Contrato generado mediante flujo manual de respaldo.
 * **Reglas Asociadas:** PC-05.
 * **Prioridad:** Alta.
@@ -305,7 +318,7 @@
 
 ### RF-24: Consolidación Automática de Ingresos y Costos Fijos
 * **Descripción:** El sistema debe procesar periódicamente (semanal y mensualmente) las métricas financieras del negocio contrastando ingresos totales contra costos fijos directos tabulados.
-* **Entradas:** Base de datos de eventos en estado `LIQUIDADO` y tabla maestra de costos fijos de paquetes y extras.
+* **Entradas:** Base de datos de eventos en estado `SETTLED` y tabla maestra de costos fijos de paquetes y extras.
 * **Procesamiento:**
   1. $\text{Ingresos Brutos} = \sum \text{Total Cobrado por Eventos Liquidados}$
   2. $\text{Costos Directos} = \sum (\text{Costo Fijo Paquete} + \sum \text{Costo Fijo Extras} + \text{Costo Real Movilidad})$
