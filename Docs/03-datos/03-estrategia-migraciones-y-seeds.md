@@ -82,7 +82,7 @@ El paquete «Ambientación y Toldos Estándar» se siembra con dos filas en `pac
 
 ## 3. Script Idempotente de Sembrado (`seed.py`)
 
-Se implementará un script ejecutable (`python -m app.infrastructure.persistence.seed`) que verifica la existencia de registros previos antes de insertar, permitiendo su ejecución segura en cualquier entorno sin duplicar datos.
+Se implementará un script ejecutable (`python -m app.infrastructure.adapters.secondary.persistence.seed`) que verifica la existencia de registros previos antes de insertar, permitiendo su ejecución segura en cualquier entorno sin duplicar datos.
 
 ---
 
@@ -92,7 +92,7 @@ Los roles se siembran, pero ningún usuario. El primer `SUPERADMIN` se crea con 
 
 ```bash
 SUPERADMIN_EMAIL=admin@eventpro.pe SUPERADMIN_PASSWORD='<contraseña-segura>' \
-  python -m app.infrastructure.persistence.bootstrap_superadmin
+  python -m app.infrastructure.adapters.secondary.persistence.bootstrap_superadmin
 ```
 
 | Variable | Obligatoria | Descripción |

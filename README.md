@@ -26,21 +26,22 @@ Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisit
 
 | Capa | Tecnología | Fuente |
 | :--- | :--- | :--- |
-| Lenguaje / API | Python 3.12, FastAPI, Pydantic v2, Uvicorn | [`requirements.txt`](requirements.txt) |
+| Lenguaje / API | Python 3.12, FastAPI, Pydantic v2, Uvicorn, structlog (logs JSON) | [`requirements.txt`](requirements.txt) |
 | Datos | PostgreSQL 16 + SQLAlchemy 2 + Alembic + asyncpg | [`docker-compose.yml`](docker-compose.yml) |
-| Caché / Locks | Redis 7 | [`docker-compose.yml`](docker-compose.yml) |
+| Caché / Locks / Jobs | Redis 7 + arq (vencimiento de cotizaciones, cola WhatsApp, reportes) | [`docker-compose.yml`](docker-compose.yml), [ADR-08](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
 | PDFs / Archivos | WeasyPrint + Jinja2, storage local `./uploads` | [`Dockerfile`](Dockerfile), [`.env.example`](.env.example) |
-| Auth | python-jose (JWT) + passlib (argon2/bcrypt) | [`requirements.txt`](requirements.txt) |
-| Calidad | pytest + pytest-asyncio + pytest-cov, ruff, mypy | [`requirements.txt`](requirements.txt) |
+| Auth y seguridad | PyJWT (JWT), pwdlib (Argon2id), slowapi (rate limiting), filetype (MIME real) | [`requirements.txt`](requirements.txt), [ADR-09](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
+| Firma electrónica | pyHanko (PAdES) + certificado PKCS#12 | [ADR-07](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
+| Calidad | pytest + pytest-asyncio + pytest-cov, ruff, mypy, Testcontainers | [`requirements-dev.txt`](requirements-dev.txt) |
 | Integraciones | WhatsApp Cloud API v20, Google Maps Platform | [`.env.example`](.env.example) |
-| Infra local | Docker multi-stage + Compose (api, db, redis) | [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml) |
+| Infra local | Docker multi-stage + Compose (api, worker, db, redis) | [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml) |
 
 ## 🏛️ Arquitectura en 30 segundos
 
 - **Backend:** Arquitectura Hexagonal (Domain · Application · Ports · Adapters) en FastAPI → [ver diseño](Docs/02-arquitectura/02-backend-arquitectura-hexagonal.md)
 - **Frontend (web):** Feature-Sliced Design v2.1 → [ver diseño](Docs/02-arquitectura/03-frontend-arquitectura-fsd.md)
 - **Sistema:** Diagramas C4 (Contexto, Contenedores, Componentes) → [ver C4](Docs/02-arquitectura/01-diseno-arquitectonico-c4.md)
-- **Decisiones:** ADR-01 a ADR-06 → [ver ADRs](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md)
+- **Decisiones:** ADR-01 a ADR-09 → [ver ADRs](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md)
 
 ## 🚀 Inicio rápido
 
@@ -52,20 +53,35 @@ Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisit
 ### 1. Levantar lo que hoy sí funciona (infra)
 
 ```bash
-# 1. Variables de entorno
+# 1. Variables de entorno (completa los secretos de .env)
 cp .env.example .env
 
-# 2. Infraestructura (PostgreSQL + Redis + API)
+# 2. Certificado de firma electrónica de desarrollo (autofirmado, PKCS#12)
+mkdir -p secrets
+openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \
+  -subj "/CN=EventPro Dev/O=EventPro" \
+  -addext "keyUsage=critical,digitalSignature,nonRepudiation" \
+  -keyout secrets/dev-key.pem -out secrets/dev-cert.pem
+openssl pkcs12 -export -inkey secrets/dev-key.pem -in secrets/dev-cert.pem \
+  -out secrets/eventpro-signing.p12 -name eventpro-dev -passout pass:change-me-dev
+rm secrets/dev-key.pem secrets/dev-cert.pem
+# Usa la misma contraseña en SIGNATURE_PKCS12_PASSWORD (.env). `secrets/` no se versiona.
+
+# 3. Infraestructura (PostgreSQL + Redis + API + worker).
+#    Aplica docker-compose.override.yml: recarga en caliente y ./app montado.
 docker compose up -d --build
 
-# 3. Verificar salud
+# 4. Verificar salud
 docker compose ps
 docker compose exec db pg_isready -U eventpro_user -d eventpro_db
 docker compose exec redis redis-cli ping
+curl -s http://localhost:8000/health
 ```
 
 > [!IMPORTANT]
-> El servicio `api` espera `main:app` (CMD en [`Dockerfile`](Dockerfile)). Como `app/` aún no existe, el contenedor `api` reiniciará hasta el scaffold. `db` y `redis` sí quedan operativos — es el comportamiento esperado en esta fase.
+> Los servicios `api` y `worker` ejecutan `app.main:app` y `WorkerSettings` (ver [`Dockerfile`](Dockerfile) y [`docker-compose.yml`](docker-compose.yml)). Como `app/` aún no existe, esos contenedores reiniciarán hasta el scaffold. `db` y `redis` sí quedan operativos — es el comportamiento esperado en esta fase.
+
+Para producción o staging, sin recarga ni código montado: `docker compose -f docker-compose.yml up -d --build`. Detalle en [Docker e infraestructura local](Docs/05-operaciones/02-docker-e-infraestructura-local.md).
 
 ### 2. Cuando exista `app/` (objetivo inmediato)
 
@@ -74,7 +90,11 @@ docker compose exec redis redis-cli ping
 docker compose exec api alembic upgrade head
 
 # Datos semilla del catálogo
-docker compose exec api python -m app.infrastructure.persistence.seed
+docker compose exec api python -m app.infrastructure.adapters.secondary.persistence.seed
+
+# Primer usuario SUPERADMIN (credenciales por variables de entorno)
+docker compose exec -e SUPERADMIN_EMAIL=admin@eventpro.pe -e SUPERADMIN_PASSWORD='<contraseña-segura>' api \
+  python -m app.infrastructure.adapters.secondary.persistence.bootstrap_superadmin
 ```
 
 API: `http://localhost:8000` · Swagger: `http://localhost:8000/docs`
@@ -85,8 +105,10 @@ API: `http://localhost:8000` · Swagger: `http://localhost:8000/docs`
 
 ```text
 .
-├── Dockerfile / docker-compose.yml / requirements.txt
-├── .env.example / .gitignore
+├── Dockerfile / docker-compose.yml / docker-compose.override.yml
+├── requirements.txt / requirements-dev.txt
+├── .env.example / .gitignore / .dockerignore
+├── secrets/       # Certificado .p12 local (no versionado)
 ├── Docs/          # SRS + arquitectura + datos + API + operaciones
 └── README.md
 ```
@@ -95,11 +117,15 @@ API: `http://localhost:8000` · Swagger: `http://localhost:8000/docs`
 
 ```text
 app/
+├── core/                   # Configuración, logging estructurado, seguridad
 ├── domain/                 # Entidades, value objects, reglas de negocio
-├── application/            # Casos de uso, puertos de entrada
-├── infrastructure/         # Adaptadores: persistence, whatsapp, pdf, maps
-│   └── persistence/        # Modelos SQLAlchemy, Alembic, seeds
-└── interfaces/             # FastAPI routers, schemas, dependencias
+├── application/            # Casos de uso y puertos (input/output)
+├── infrastructure/
+│   ├── adapters/
+│   │   ├── primary/        # web (routers FastAPI), webhooks, jobs (arq)
+│   │   └── secondary/      # persistence (modelos, Alembic, seed), whatsapp, maps, pdf, signature, storage, cache
+│   └── di/                 # Inyección de dependencias
+└── main.py
 ```
 
 Detalle completo: [Backend hexagonal](Docs/02-arquitectura/02-backend-arquitectura-hexagonal.md) · [DER](Docs/03-datos/01-diagrama-entidad-relacion.md) · [Diccionario](Docs/03-datos/02-diccionario-de-datos.md)
@@ -111,7 +137,7 @@ Detalle completo: [Backend hexagonal](Docs/02-arquitectura/02-backend-arquitectu
 | Fase | Contenido | Estado |
 | :--- | :--- | :---: |
 | 01 Requisitos | RF-01→RF-25, RNF, reglas, US-01→US-22 | ✅ |
-| 02 Arquitectura | C4, Hexagonal, FSD, ADR-01→ADR-06 | ✅ |
+| 02 Arquitectura | C4, Hexagonal, FSD, ADR-01→ADR-09 | ✅ |
 | 03 Datos | DER, diccionario, Alembic + seeds | ✅ |
 | 04 API | Endpoints REST v1, RBAC + JWT + OWASP | ✅ |
 | 05 Operaciones | `.env`, Docker, Git + DoD | ✅ |
@@ -122,16 +148,22 @@ Agrupado desde [`.env.example`](.env.example) — detalle en [guía de entorno](
 
 | Grupo | Variables |
 | :--- | :--- |
-| App | `APP_ENV`, `API_V1_PREFIX=/api/v1`, `SECRET_KEY`, `CORS_ORIGINS` |
+| App | `APP_ENV`, `APP_NAME`, `API_V1_PREFIX=/api/v1`, `PORT`, `DEBUG`, `LOG_LEVEL`, `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `CORS_ORIGINS` |
 | Postgres | `POSTGRES_*`, `DATABASE_URL` (asyncpg) |
-| Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB` |
-| WhatsApp | `WHATSAPP_API_URL`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN` |
+| Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB` |
+| WhatsApp | `WHATSAPP_API_URL`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` |
 | Maps | `GOOGLE_MAPS_API_KEY`, `PROMOTORA_BASE_LATITUDE/LONGITUDE` |
 | Negocio | `SIMULTANEOUS_SHOWS_THRESHOLD=3`, `ADVANCE_DEADLINE_HOURS=24`, `AVAILABILITY_RECHECK_MINUTES=60`, `MOBILITY_MARGIN_PERCENT=15`, `ADVANCE_PERCENT=10`, `TRANSIT_REST_BUFFER_MINUTES=30` |
+| Almacenamiento | `STORAGE_BACKEND`, `LOCAL_STORAGE_PATH` |
+| Firma electrónica | `SIGNATURE_PKCS12_PATH`, `SIGNATURE_PKCS12_PASSWORD`, `SIGNATURE_TSA_URL`, `SIGNATURE_LINK_TTL_HOURS`, `SIGNATURE_OTP_TTL_MINUTES`, `SIGNATURE_OTP_MAX_ATTEMPTS`, `SIGNATURE_OTP_PROOF_TTL_MINUTES` |
+| Pagos (bot) | `PAYMENT_YAPE_NUMBER`, `PAYMENT_PLIN_NUMBER`, `PAYMENT_BANK_NAME`, `PAYMENT_BANK_ACCOUNT`, `PAYMENT_BANK_CCI`, `PAYMENT_ACCOUNT_HOLDER` |
+| Arranque | `SUPERADMIN_EMAIL`, `SUPERADMIN_PASSWORD` (solo para el comando de arranque) |
 
 ## ✅ Calidad y Git
 
 ```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt   # runtime + pruebas y calidad
 pytest                 # tests + asyncio + cobertura
 ruff check .           # lint
 mypy .                 # tipos

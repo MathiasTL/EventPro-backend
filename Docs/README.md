@@ -23,7 +23,7 @@ Docs/
 │   ├── 01-diseno-arquitectonico-c4.md             # Diagramas C4 (Contexto, Contenedores y Componentes)
 │   ├── 02-backend-arquitectura-hexagonal.md       # Arquitectura Hexagonal en FastAPI (Domain, Ports, Adapters)
 │   ├── 03-frontend-arquitectura-fsd.md            # Feature-Sliced Design (FSD v2.1) en Frontend Web
-│   └── 04-adr-decisiones-arquitectura.md          # Registros de Decisiones de Arquitectura (ADR-01 a ADR-06)
+│   └── 04-adr-decisiones-arquitectura.md          # Registros de Decisiones de Arquitectura (ADR-01 a ADR-09)
 │
 ├── 03-datos/                                      # FASE 3: Persistencia y Diseño de Base de Datos
 │   ├── 01-diagrama-entidad-relacion.md            # Diagrama Entidad-Relación (DER en Mermaid)

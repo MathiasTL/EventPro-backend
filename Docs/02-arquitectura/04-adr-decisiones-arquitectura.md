@@ -115,3 +115,39 @@
 * **Consecuencias:**
   * *Positivas:* Sin costo por firma ni proveedor adicional; control total del flujo y de la evidencia; OTP por el mismo canal del negocio; el puerto permite migrar a Documenso, BoldSign o Llama.pe sin tocar el dominio.
   * *Negativas:* El equipo es responsable de la custodia segura del `.p12` (secreto fuera del repositorio y rotación), del reloj fiable (TSA RFC 3161 opcional) y de la retención de evidencia. La validez legal es la de una firma electrónica, no la de una firma digital acreditada; si un cliente o un trámite exige esta última, se activa el adaptador acreditado.
+
+---
+
+## ADR-08: Tareas Programadas y Reintentos con arq
+
+* **Estado:** Aceptado.
+* **Fecha:** 2026-09-30.
+* **Contexto:**
+  El sistema requiere trabajo fuera del ciclo petición-respuesta: vencimiento de cotizaciones (cada minuto, RN-09), despacho y reintentos de `outbox_messages` hacia WhatsApp, y reportes semanales y mensuales. Ejecutarlo dentro del proceso de la API (`BackgroundTasks` o un planificador embebido) lo pierde al reiniciar y se duplica al escalar a varias instancias. Redis ya forma parte de la infraestructura (ADR-06).
+* **Decisión:**
+  Usar **arq** (cola de tareas asíncrona respaldada en Redis) como ejecutor de tareas. Un servicio `worker` independiente, con la misma imagen que la API, ejecuta `arq app.infrastructure.adapters.primary.jobs.worker.WorkerSettings`. Las tareas son adaptadores primarios que solo invocan casos de uso; no contienen lógica de negocio. Las tareas periódicas usan `cron_jobs` de arq y los reintentos de la cola outbox usan el mecanismo de reintento con *backoff* de arq.
+* **Alternativas consideradas:**
+  * *Celery:* más completo, pero con mayor complejidad operativa y sin soporte nativo de `asyncio`. Descartado por desproporcionado para el volumen del negocio.
+  * *APScheduler embebido en la API:* no sobrevive a reinicios ni coordina varias instancias. Descartado.
+  * *Cron del sistema operativo:* no reintenta ni comparte el contexto de la aplicación. Descartado.
+* **Consecuencias:**
+  * *Positivas:* Sin dependencias nuevas de infraestructura (reutiliza Redis); soporte `asyncio` nativo, coherente con ADR-03; el worker escala y se reinicia de forma independiente de la API.
+  * *Negativas:* Un proceso más que operar y monitorear; arq tiene un ritmo de desarrollo bajo, por lo que el puerto de salida de tareas debe mantenerse delgado para poder sustituirlo.
+
+---
+
+## ADR-09: Bibliotecas de Seguridad (PyJWT, pwdlib, slowapi, filetype)
+
+* **Estado:** Aceptado.
+* **Fecha:** 2026-09-30.
+* **Contexto:**
+  `python-jose` y `passlib` no tienen mantenimiento activo y acumulan vulnerabilidades y advertencias de compatibilidad con versiones recientes de Python. Los requerimientos RNF-02 exigen JWT, hash de contraseñas robusto, límite de peticiones y validación de archivos por contenido.
+* **Decisión:**
+  * **JWT:** `PyJWT` (algoritmo `HS256` por defecto) en lugar de `python-jose`.
+  * **Contraseñas:** `pwdlib[argon2]` con **Argon2id** en lugar de `passlib`. Se elimina Bcrypt como alternativa (RNF-02.2).
+  * **Límite de peticiones:** `slowapi` con almacenamiento en Redis (login, cotizaciones, OTP y enlace de firma).
+  * **Tipo real de archivo:** `filetype` (Python puro, sin dependencia de `libmagic`) para validar por contenido las subidas.
+  * **Logging:** `structlog` con salida JSON y *trace id* (RNF-04.3).
+* **Consecuencias:**
+  * *Positivas:* Dependencias mantenidas; una única política de hash (Argon2id); imagen sin librerías de sistema adicionales.
+  * *Negativas:* `slowapi` limita por clave arbitraria; los límites por contrato (OTP) requieren una clave compuesta definida en el adaptador.

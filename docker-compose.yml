@@ -1,28 +1,56 @@
+# Compose base (perfil de produccion/staging). El modo desarrollo se agrega
+# automaticamente con docker-compose.override.yml (--reload y codigo montado).
+# Para ignorar el override: docker compose -f docker-compose.yml up -d
+
+x-app-environment: &app-environment
+  # Dentro de la red de compose los servicios se resuelven por nombre, no por localhost
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  LOCAL_STORAGE_PATH: /app/uploads
+  SIGNATURE_PKCS12_PATH: /run/secrets/eventpro-signing.p12
+
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runner
     container_name: eventpro_api
     restart: unless-stopped
+    env_file: .env
+    environment: *app-environment
     ports:
       - "8000:8000"
-    environment:
-      - APP_ENV=development
-      - PORT=8000
-      - DEBUG=true
-      - POSTGRES_HOST=db
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=eventpro_user
-      - POSTGRES_PASSWORD=eventpro_secret_password
-      - POSTGRES_DB=eventpro_db
-      - DATABASE_URL=postgresql+asyncpg://eventpro_user:eventpro_secret_password@db:5432/eventpro_db
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
     volumes:
-      - .:/app
-      - uploads_volume:/app/uploads
+      - uploads_data:/app/uploads
+      # Certificado PKCS#12 de firma (ruta local ignorada por git), solo lectura
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - eventpro_network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: eventpro_worker
+    restart: unless-stopped
+    env_file: .env
+    environment: *app-environment
+    # Tareas programadas y reintentos (ver Docs/05-operaciones/02-docker-e-infraestructura-local.md)
+    command: ["arq", "app.infrastructure.adapters.primary.jobs.worker.WorkerSettings"]
+    healthcheck:
+      disable: true
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -36,15 +64,15 @@ services:
     container_name: eventpro_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: eventpro_user
-      POSTGRES_PASSWORD: eventpro_secret_password
-      POSTGRES_DB: eventpro_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eventpro_user -d eventpro_db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -56,7 +84,7 @@ services:
     container_name: eventpro_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -70,7 +98,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  uploads_volume:
+  uploads_data:
 
 networks:
   eventpro_network:

@@ -1,0 +1,20 @@
+# Override de desarrollo local: Compose lo aplica automaticamente sobre docker-compose.yml.
+# Recarga en caliente y codigo fuente montado desde el host.
+# No usar en produccion: desplegar con `docker compose -f docker-compose.yml up -d`.
+
+services:
+  api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      APP_ENV: development
+      DEBUG: "true"
+    volumes:
+      - ./app:/app/app
+
+  worker:
+    command: ["arq", "app.infrastructure.adapters.primary.jobs.worker.WorkerSettings", "--watch", "app"]
+    environment:
+      APP_ENV: development
+      DEBUG: "true"
+    volumes:
+      - ./app:/app/app

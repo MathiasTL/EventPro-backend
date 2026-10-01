@@ -22,8 +22,8 @@ La estructura del código en Python se organiza de acuerdo a las capas hexagonal
 app/
 ├── core/                                 # Configuración global agnóstica de la app
 │   ├── config.py                         # Settings con Pydantic-settings (.env)
-│   ├── logging.py                        # Configuración de logging estructurado
-│   └── security.py                       # Hashing (Argon2id/Bcrypt), tokens JWT
+│   ├── logging.py                        # Logging estructurado JSON con trace id (structlog)
+│   └── security.py                       # Hashing Argon2id (pwdlib), tokens JWT (PyJWT)
 │
 ├── domain/                               # CAPA 1: NÚCLEO DE DOMINIO (Zero dependencias externas)
 │   ├── entities/                         # Modelos puros de dominio (clases Python / dataclasses)
@@ -89,13 +89,18 @@ app/
 │   │   │   │   │   ├── contracts_router.py
 │   │   │   │   │   ├── financial_router.py
 │   │   │   │   │   └── overrides_router.py
+│   │   │   │   ├── health_router.py      # GET /health (fuera de /api/v1): estado de PostgreSQL y Redis
 │   │   │   │   └── schemas/              # Pydantic Schemas (Request/Response HTTP)
-│   │   │   └── webhooks/                 # Controladores de Webhooks
-│   │   │       └── whatsapp_webhook.py   # Receptor de eventos de WhatsApp Business Cloud
+│   │   │   ├── webhooks/                 # Controladores de Webhooks
+│   │   │   │   └── whatsapp_webhook.py   # Receptor de eventos de WhatsApp Business Cloud
+│   │   │   └── jobs/                     # Tareas programadas y reintentos (arq, respaldado en Redis)
+│   │   │       └── worker.py             # WorkerSettings: vencimiento de cotizaciones, cola outbox_messages, reportes
 │   │   │
 │   │   └── secondary/                    # Adaptadores de Salida (Driven Adapters)
 │   │       ├── persistence/              # Base de Datos Relacional (PostgreSQL)
 │   │       │   ├── database.py           # Conexión SQLAlchemy / SessionFactory
+│   │       │   ├── seed.py               # Sembrado idempotente de catálogo y roles (python -m ...persistence.seed)
+│   │       │   ├── bootstrap_superadmin.py # Creación del primer SUPERADMIN desde variables de entorno
 │   │       │   ├── models/               # Tablas SQLAlchemy (ORM Models)
 │   │       │   │   ├── event_model.py
 │   │       │   │   └── quote_model.py
@@ -156,6 +161,7 @@ Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptadores Primarios (Controladores):**
   * `quotes_router.py`: Expone endpoints HTTP (`POST /api/v1/quotes`). Recibe payloads validados con Pydantic, invoca al caso de uso correspondiente e inyecta la respuesta serializada.
   * `whatsapp_webhook.py`: Endpoint que valida tokens de verificación de Meta, parsea mensajes y comandos de botones, e invoca los casos de uso del chatbot.
+  * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), los casos de uso periódicos y diferidos: vencimiento de cotizaciones, despacho y reintentos de `outbox_messages` (WhatsApp) y reportes semanales y mensuales. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
 * **Adaptadores Secundarios (Infraestructura de soporte):**
   * `SqlAlchemyQuoteRepository`: Implementa la interfaz `IQuoteRepository` usando transacciones de PostgreSQL.
   * `GoogleMapsAdapter`: Implementa `IMapsServicePort` llamando a la API REST de Google Maps con cliente asíncrono `httpx`.

@@ -13,8 +13,8 @@
 
 ## 2. RNF-02: Seguridad y Protección de Datos
 
-* **RNF-02.1 (Autenticación y Autorización):** Los endpoints administrativos deben estar protegidos mediante autenticación basada en tokens JWT (*JSON Web Tokens*) firmados con algoritmo asimétrico o HMAC-SHA256 y tiempo de expiración corto (máximo 60 minutos para Access Token, con Refresh Token rotativo).
-* **RNF-02.2 (Almacenamiento de Credenciales):** Las contraseñas de los administradores y operadores deben almacenarse utilizando funciones de derivación de claves seguras: **Argon2id** o **Bcrypt** con factor de trabajo adecuado ($cost \ge 12$).
+* **RNF-02.1 (Autenticación y Autorización):** Los endpoints administrativos deben estar protegidos mediante autenticación basada en tokens JWT (*JSON Web Tokens*) firmados con algoritmo asimétrico o HMAC-SHA256 (PyJWT) y tiempo de expiración corto (máximo 60 minutos para Access Token, con Refresh Token rotativo).
+* **RNF-02.2 (Almacenamiento de Credenciales):** Las contraseñas de los administradores y operadores deben almacenarse utilizando **Argon2id** (biblioteca `pwdlib`) con los parámetros por defecto recomendados por OWASP o superiores.
 * **RNF-02.3 (Cifrado de Comunicaciones):** Toda la comunicación en tránsito debe ejecutarse obligatoriamente bajo el protocolo criptográfico **TLS 1.3** (HTTPS y WSS).
 * **RNF-02.4 (Validación y Sanitización de Entradas):** Todas las entradas recibidas a través de la API y el Webhook deben someterse a esquemas estrictos de validación con tipado fuerte (Pydantic v2), previniendo inyecciones SQL (mitigadas por el uso del ORM SQLAlchemy) y ataques Cross-Site Scripting (XSS).
 * **RNF-02.5 (Gestión de Comprobantes de Pago e Imágenes):** Los archivos subidos (capturas de Yape/transferencia y firmas electrónicas) deben validarse por tipo MIME real y tamaño (máximo 5 MB por archivo), almacenándose de forma segura con identificadores UUID aleatorios sin exponer rutas directas del servidor.

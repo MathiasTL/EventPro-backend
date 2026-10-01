@@ -4,7 +4,7 @@
 
 ## 1. Convenciones Globales de la API
 
-* **URL Base:** `https://api.eventpro.pe/api/v1` (o `http://localhost:8000/api/v1` en local). Todas las rutas de este documento son relativas a la URL base.
+* **URL Base:** `https://api.eventpro.pe/api/v1` (o `http://localhost:8000/api/v1` en local). Todas las rutas de este documento son relativas a la URL base, con la excepción de `GET /health`, que se expone en la raíz del servicio (`/health`) para las sondas de infraestructura.
 * **Formato de Intercambio:** `application/json` (UTF-8). Excepción: `multipart/form-data` para subida de comprobantes y evidencias.
 * **Autenticación:** Cabecera HTTP `Authorization: Bearer <jwt_access_token>`. Las excepciones (endpoints públicos, de token de cliente y del webhook de Meta) se indican en cada endpoint y se resumen en la [Matriz RBAC](02-matriz-rbac-y-seguridad.md), que es el complemento obligatorio de este documento: ambos describen exactamente el mismo inventario de endpoints (método y ruta).
 * **Códigos de estado:** `200 OK` (lecturas y actualizaciones), `201 Created` (creaciones de recursos), `204 No Content` (acciones sin cuerpo de respuesta), `400`/`422` (validación), `401`/`403` (autenticación y autorización), `404` (recurso inexistente o fuera de alcance del rol), `409 Conflict` (conflicto de dominio), `410 Gone` (recurso vencido), `429` (límite de peticiones).
@@ -31,6 +31,14 @@
 ---
 
 ## 2. Catálogo de Endpoints
+
+### 2.0 Módulo: Salud del Servicio (`/health`)
+
+#### `GET /health`
+* **Descripción:** Sonda de salud (*liveness* y *readiness*) usada por el `HEALTHCHECK` del contenedor, por Docker Compose y por el balanceador. Verifica la conectividad con PostgreSQL (consulta trivial) y con Redis (`PING`), cada una con un tiempo límite corto (2 s).
+* **Seguridad:** Público, sin autenticación. Se sirve en la raíz del servicio (`/health`), no bajo `/api/v1`. No incluye versiones, credenciales ni datos de negocio.
+* **Response `200 OK`:** `{"status": "ok", "checks": {"database": "ok", "redis": "ok"}}`
+* **Response `503 Service Unavailable`:** `{"status": "degraded", "checks": {"database": "ok", "redis": "error"}}` cuando alguna dependencia no responde.
 
 ### 2.1 Módulo: Autenticación y Cuentas (`/auth`)
 
