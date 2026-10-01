@@ -17,10 +17,10 @@
 ## ✨ ¿Qué resuelve?
 
 - **Cotización en segundos por WhatsApp:** saludo + catálogo + extras en < 1.5 s, sin depender de un encargado.
-- **Control operativo real:** 10 procesos de control (disponibilidad, choques de elenco, movilidad, adelantos, PDFs).
+- **Control operativo real:** 12 procesos de control (disponibilidad, choques de elenco, movilidad, adelantos, PDFs).
 - **Seguridad por rol:** RBAC + JWT + OWASP desde el día uno.
 
-Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisitos/01-vision-alcance-y-actores.md) · [Historias US-01 a US-22](Docs/01-requisitos/05-historias-de-usuario.md)
+Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisitos/01-vision-alcance-y-actores.md) · [Historias US-01 a US-26](Docs/01-requisitos/05-historias-de-usuario.md)
 
 ## 🧱 Stack
 
@@ -39,7 +39,7 @@ Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisit
 ## 🏛️ Arquitectura en 30 segundos
 
 - **Backend:** Arquitectura Hexagonal (Domain · Application · Ports · Adapters) en FastAPI → [ver diseño](Docs/02-arquitectura/02-backend-arquitectura-hexagonal.md)
-- **Frontend (web):** Feature-Sliced Design v2.1 → [ver diseño](Docs/02-arquitectura/03-frontend-arquitectura-fsd.md)
+- **Frontend (web):** Feature-Sliced Design v2.1, mobile-first para operador y cliente; vive en un repositorio hermano (`../frontend`) → [ver diseño](Docs/02-arquitectura/03-frontend-arquitectura-fsd.md)
 - **Sistema:** Diagramas C4 (Contexto, Contenedores, Componentes) → [ver C4](Docs/02-arquitectura/01-diseno-arquitectonico-c4.md)
 - **Decisiones:** ADR-01 a ADR-09 → [ver ADRs](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md)
 
@@ -136,7 +136,7 @@ Detalle completo: [Backend hexagonal](Docs/02-arquitectura/02-backend-arquitectu
 
 | Fase | Contenido | Estado |
 | :--- | :--- | :---: |
-| 01 Requisitos | RF-01→RF-25, RNF, reglas, US-01→US-22 | ✅ |
+| 01 Requisitos | RF-01→RF-29, RNF, reglas, US-01→US-26 | ✅ |
 | 02 Arquitectura | C4, Hexagonal, FSD, ADR-01→ADR-09 | ✅ |
 | 03 Datos | DER, diccionario, Alembic + seeds | ✅ |
 | 04 API | Endpoints REST v1, RBAC + JWT + OWASP | ✅ |
@@ -169,7 +169,7 @@ ruff check .           # lint
 mypy .                 # tipos
 ```
 
-Flujo: `main` (estable) ← `develop` (integración) ← `feat/*` (trabajo). Commits en [Conventional Commits](https://www.conventionalcommits.org/) y DoD definidos en [gobernanza Git](Docs/05-operaciones/03-gobernanza-git-y-calidad-dod.md).
+Flujo: `main` (estable) ← `develop` (integración) ← ramas de trabajo con prefijo `feat/`, `fix/`, `docs/`, `build/` o `chore/`. Commits en [Conventional Commits](https://www.conventionalcommits.org/) y DoD definidos en [gobernanza Git](Docs/05-operaciones/03-gobernanza-git-y-calidad-dod.md).
 
 ## 🗺️ Roadmap
 

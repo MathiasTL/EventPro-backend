@@ -165,7 +165,7 @@ Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptadores Secundarios (Infraestructura de soporte):**
   * `SqlAlchemyQuoteRepository`: Implementa la interfaz `IQuoteRepository` usando transacciones de PostgreSQL.
   * `GoogleMapsAdapter`: Implementa `IMapsServicePort` llamando a la API REST de Google Maps con cliente asíncrono `httpx`.
-  * `WeasyPrintAdapter`: Implementa `IPdfGeneratorPort` tomando plantillas Jinja2 y convirtiéndolas a PDF descargable.
+  * `WeasyPrintAdapter`: Implementa `IPdfGeneratorPort` tomando plantillas Jinja2 y convirtiéndolas a PDF descargable. WeasyPrint es síncrono y consume CPU, por lo que el adaptador ejecuta el renderizado en el *worker* de arq o en un *threadpool*, nunca en el *event loop* (RNF-01.3).
   * `PadesSignatureAdapter`: Implementa `SignaturePort` (ver sección 3.4).
 
 ### 3.4 Puerto de Firma Electrónica (`SignaturePort`)

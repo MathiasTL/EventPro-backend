@@ -4,7 +4,15 @@
 
 ## 1. Fundamentos de Feature-Sliced Design en EventPro
 
-Para el desarrollo del cliente web de **EventPro** (orientado tanto al panel administrativo de los 2 encargados como a la interfaz móvil de firma de contratos para clientes) se adopta la metodología arquitectónica **Feature-Sliced Design (FSD v2.1)**.
+Para el desarrollo del cliente web de **EventPro** se adopta la metodología arquitectónica **Feature-Sliced Design (FSD v2.1)**. El frontend vive en un repositorio hermano (`../frontend`), fuera de este repositorio de backend, y atiende **tres audiencias**:
+
+| Audiencia | Dispositivo | Alcance |
+| :--- | :--- | :--- |
+| **Encargado** (2 usuarios) | Escritorio primero, responsivo | Panel administrativo completo: cronograma, pagos, contratos, overrides, catálogo, finanzas. |
+| **Operador** (elenco) | Teléfono, *mobile-first* (desde 360 px) | Agenda del día, cobro del saldo con foto de evidencia (`<input capture>`) y extensiones en vivo. |
+| **Cliente** | Teléfono, *mobile-first* (desde 360 px) | **Únicamente** revisión y firma electrónica del contrato mediante enlace. La revisión de la cotización ocurre en WhatsApp, no en la web. |
+
+Las vistas de operador y cliente cumplen RNF-06 (web móvil primero); la instalación como PWA queda diferida.
 
 FSD resuelve el desorden y acoplamiento habitual en aplicaciones frontend estructurando el código en **Capas jerárquicas estrictas**, divididas en **Slices (rebanadas de negocio)** y desglosadas en **Segments (segmentos técnicos)**.
 
@@ -21,12 +29,13 @@ $$\text{app} \longrightarrow \text{pages} \longrightarrow \text{widgets} \longri
 src/
 ├── app/                                  # CAPA 1: Configuración global de la aplicación
 │   ├── providers/                        # QueryProvider, AuthProvider, ThemeProvider
-│   ├── routes/                           # Router central (React Router / Next.js Pages/App)
+│   ├── routes/                           # Router central y guards por rol (ver nota 2.1 sobre Next.js)
 │   └── styles/                           # Variables CSS globales, Tailwind base
 │
 ├── pages/                                # CAPA 2: Vistas completas de la aplicación (Rutas)
 │   ├── schedule/                         # Vista del Cronograma de Eventos
-│   ├── contract-sign/                    # Vista pública de visualización y firma de contrato para el cliente
+│   ├── contract-sign/                    # Vista pública móvil de visualización y firma electrónica de contrato (cliente)
+│   ├── operator-agenda/                  # Vista móvil del operador: agenda del día, cobro de saldo y extensiones
 │   ├── quote-builder/                    # Vista de creación manual de cotizaciones y contratos
 │   ├── dashboard-finances/               # Vista de balances financieros y analítica de utilidades
 │   ├── catalog-management/               # Vista de gestión de paquetes, temáticas y extras
@@ -42,9 +51,9 @@ src/
 ├── features/                             # CAPA 4: Interacciones y acciones con valor para el usuario
 │   ├── approve-simultaneous-show/        # Proceso de Control: Aprobación de show ante umbral > 3 eventos
 │   ├── override-mobility-rate/           # Proceso de Control: Sobrescritura manual del costo de transporte
-│   ├── sign-contract-digital/            # Interfaz de captura de firma manuscrita electrónica
+│   ├── sign-contract-electronic/         # Captura de firma manuscrita, OTP y firma electrónica del contrato
 │   ├── verify-advance-payment/           # Aprobación / rechazo de captura de pago con reintentos
-│   ├── check-in-and-collect/             # Confirmación de cobro presencial (100% de saldo) antes del show
+│   ├── check-in-and-collect/             # Cobro presencial (100% del saldo) con evidencia; `POST /events/{id}/check-in-and-collect`
 │   ├── settle-extra-hours/               # Registro de tiempo extra en vivo y liquidación final
 │   └── create-manual-contract/           # Flujo de emisión de contrato en modo manual de contingencia
 │
@@ -64,6 +73,15 @@ src/
     ├── config/                           # Constantes de entorno (API_URL, MAPS_KEY)
     └── types/                            # Tipos TypeScript comunes (Pagination, ApiResponse, Result)
 ```
+
+### 2.1 Nota: la capa `pages` de FSD y el enrutador de Next.js
+
+El framework definido en [C4](01-diseno-arquitectonico-c4.md) es **Next.js (App Router)**, cuya carpeta `app/` y cuyo directorio `pages/` tienen nombres que chocan con las capas FSD `app` y `pages`. Se resuelve así:
+
+* La **capa FSD `pages`** (`src/pages/*`) contiene las vistas completas; es la única fuente de la lógica de cada pantalla.
+* El **enrutador de Next.js** vive en `app/` en la raíz del repositorio frontend y solo contiene archivos de ruta delgados que reexportan la vista correspondiente (por ejemplo, `app/schedule/page.tsx` hace `export { SchedulePage as default } from '@/pages/schedule'`). No lleva lógica ni importa capas inferiores directamente.
+* La **capa FSD `app`** (`src/app/`) conserva providers, estilos y guards; Next.js solo la ve a través de `app/layout.tsx`.
+* Para que Next.js no interprete `src/pages/` como *Pages Router*, se añade un directorio `pages/` vacío (con un `README.md`) en la raíz del repositorio frontend.
 
 ---
 
@@ -128,5 +146,5 @@ Este widget compone la entidad `event` (`@/entities/event`) y le añade una aler
 ## 5. Ventajas de FSD para el Negocio de EventPro
 
 1. **Alineación con los Requerimientos Funcionales:** Cada proceso de control especificado en el backend (`PC-01` a `PC-10`) tiene una correspondencia directa con un slice en la capa `features/`.
-2. **Independencia de Trabajo:** Dos desarrolladores pueden trabajar simultáneamente: uno en `features/sign-contract-digital` y otro en `widgets/financial-kpi-summary` sin generar conflictos de código.
+2. **Independencia de Trabajo:** Dos desarrolladores pueden trabajar simultáneamente: uno en `features/sign-contract-electronic` y otro en `widgets/financial-kpi-summary` sin generar conflictos de código.
 3. **Facilidad de Refactorización:** Como ningún slice importa de otro en el mismo nivel, modificar la lógica de cálculo de cotización en el frontend no rompe la visualización del cronograma.

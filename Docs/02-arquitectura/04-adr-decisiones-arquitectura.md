@@ -14,7 +14,7 @@
   * La interacción externa se realiza mediante Puertos de Entrada (Casos de uso) y Puertos de Salida (Interfaces abstractas).
   * FastAPI y SQLAlchemy operan como adaptadores periféricos.
 * **Consecuencias:**
-  * *Positivas:* Cobertura de pruebas unitarias al 100% en lógica de cotización y liquidación sin requerir base de datos activa; aislamiento ante cambios en las APIs de Meta o Google; código altamente modular y auditable.
+  * *Positivas:* Pruebas unitarias de la lógica de cotización y liquidación sin requerir base de datos activa (metas de cobertura en [RNF-04.2](../01-requisitos/03-requerimientos-no-funcionales.md): 75% global y 100% en servicios de dominio); aislamiento ante cambios en las APIs de Meta o Google; código altamente modular y auditable.
   * *Negativas:* Mayor cantidad inicial de archivos (interfaces, DTOs y mappers entre capas). Se justifica plenamente por la complejidad de las reglas de control.
 
 ---
@@ -24,7 +24,7 @@
 * **Estado:** Aceptado.
 * **Fecha:** 2026-09-23.
 * **Contexto:**
-  El frontend de EventPro debe atender dos audiencias distintas: los 2 encargados (panel administrativo complejo, cronograma con visualización de observaciones, overrides de movilidad, balances financieros) y los clientes finales (interfaz móvil ligera para revisión de cotización y firma electrónica de contratos). Estructuras convencionales por tipo técnico (`/components`, `/hooks`, `/pages`) provocan espagueti de dependencias e inconsistencias.
+  El frontend de EventPro debe atender tres audiencias distintas: los 2 encargados (panel administrativo complejo, *desktop-first* y responsivo: cronograma con visualización de observaciones, overrides de movilidad, balances financieros), los operadores de elenco (web móvil en el teléfono: agenda del día, cobro del saldo con foto de evidencia y extensiones) y los clientes finales (web móvil ligera, únicamente para revisar y firmar electrónicamente el contrato; la revisión de la cotización ocurre en WhatsApp, no en la web). Las vistas de operador y cliente son *mobile-first* desde 360 px (RNF-06); la instalación como PWA queda diferida. Estructuras convencionales por tipo técnico (`/components`, `/hooks`, `/pages`) provocan espagueti de dependencias e inconsistencias.
 * **Decisión:**
   Adoptar **Feature-Sliced Design (FSD v2.1)** organizando el código en 6 capas jerárquicas estrictas (`app`, `pages`, `widgets`, `features`, `entities`, `shared`) con regla de importación unidireccional de arriba hacia abajo.
 * **Consecuencias:**

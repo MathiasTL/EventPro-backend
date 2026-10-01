@@ -14,10 +14,10 @@ Docs/
 │
 ├── 01-requisitos/                                 # FASE 1: Especificación de Requerimientos de Software (SRS)
 │   ├── 01-vision-alcance-y-actores.md             # Visión del producto, alcance del MVP y actores
-│   ├── 02-requerimientos-funcionales.md           # Catálogo formal RF-01 al RF-25 (estándar IEEE 830)
-│   ├── 03-requerimientos-no-funcionales.md        # RNF (Rendimiento, Seguridad, Disponibilidad, etc.)
-│   ├── 04-reglas-de-negocio-y-control.md          # Fórmulas, 11 Procesos de Control y Máquinas de Estado
-│   └── 05-historias-de-usuario.md                 # 22 Historias de Usuario (US-01 a US-22) con Given-When-Then
+│   ├── 02-requerimientos-funcionales.md           # Catálogo formal RF-01 al RF-29 (estándar IEEE 830)
+│   ├── 03-requerimientos-no-funcionales.md        # RNF (Rendimiento, Seguridad, Disponibilidad, Usabilidad móvil, etc.)
+│   ├── 04-reglas-de-negocio-y-control.md          # Fórmulas, 12 Procesos de Control y Máquinas de Estado
+│   └── 05-historias-de-usuario.md                 # 26 Historias de Usuario (US-01 a US-26) con Given-When-Then
 │
 ├── 02-arquitectura/                               # FASE 2: Arquitectura de Software y Diseño de Sistemas
 │   ├── 01-diseno-arquitectonico-c4.md             # Diagramas C4 (Contexto, Contenedores y Componentes)
@@ -36,12 +36,13 @@ Docs/
 │
 ├── 05-operaciones/                                # FASE 5: Operaciones, Calidad y Gobernanza
 │   ├── 01-guia-entorno-y-configuracion.md         # Documentación de variables de entorno (.env)
-│   ├── 02-docker-e-infraestructura-local.md       # Orquestación con Docker Compose (API, Postgres, Redis)
-│   └── 03-gobernanza-git-y-calidad-dod.md         # GitFlow, Conventional Commits y Definition of Done
-│
-├── proceso de negocio event pro (1).pdf           # Documento de negocio de referencia original
-└── Procesos_Automatizacion_Control_EventPro.pdf   # Documento de automatización y control original
+│   ├── 02-docker-e-infraestructura-local.md       # Orquestación con Docker Compose (API, worker, Postgres, Redis)
+│   ├── 03-gobernanza-git-y-calidad-dod.md         # GitFlow, Conventional Commits y Definition of Done
+│   └── 04-division-de-epicas-del-equipo.md        # Asignación de épicas por integrante y contratos entre épicas
 ```
+
+> [!NOTE]
+> Los documentos de negocio originales (*«proceso de negocio event pro (1).pdf»* y *«Procesos_Automatizacion_Control_EventPro.pdf»*) son **referencias externas que no se versionan** en este repositorio. La especificación vigente es la de la carpeta `01-requisitos/`. El frontend vive en un repositorio hermano (`../frontend`), fuera de este repositorio.
 
 ---
 
@@ -62,5 +63,6 @@ Docs/
 * [`.env.example`](../.env.example): Plantilla documentada de variables de entorno.
 * [`docker-compose.yml`](../docker-compose.yml): Orquestación lista para desarrollo local con FastAPI, PostgreSQL y Redis.
 * [`Dockerfile`](../Dockerfile): Contenedor optimizado multi-stage para Python 3.12 y librerías de compilación de PDFs.
-* [`requirements.txt`](../requirements.txt): Dependencias fijadas para el backend.
+* [`requirements.txt`](../requirements.txt): Dependencias de runtime fijadas para el backend.
+* [`requirements-dev.txt`](../requirements-dev.txt): Dependencias de desarrollo (pytest, Testcontainers, ruff, mypy) sobre las de runtime.
 * [`.gitignore`](../.gitignore): Exclusiones estándar para Python, entornos virtuales y binarios.

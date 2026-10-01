@@ -8,9 +8,14 @@ EventPro adopta una variante ágil y estructurada de **GitHub Flow / GitFlow lig
 
 * `main`: Código en estado de producción. Únicamente recibe merges aprobados desde `develop` o hotfixes críticos.
 * `develop`: Rama principal de integración y desarrollo activo.
-* `feature/<modulo>-<descripcion>`: Ramas para nuevas funcionalidades (ej. `feature/m03-mobility-calculator`, `feature/m06-contract-pdf-generator`).
-* `fix/<modulo>-<descripcion>`: Correcciones de bugs identificados en fase de pruebas.
+* Las ramas de trabajo usan como prefijo el tipo de Conventional Commit que describe su propósito (`<tipo>/<modulo>-<descripcion>`):
+  * `feat/<modulo>-<descripcion>`: nuevas funcionalidades (ej. `feat/m03-mobility-calculator`, `feat/m06-contract-pdf-generator`).
+  * `fix/<modulo>-<descripcion>`: correcciones de bugs identificados en fase de pruebas.
+  * `docs/<descripcion>`: cambios exclusivos de documentación.
+  * `build/<descripcion>`: cambios en Docker, dependencias o configuración de construcción.
+  * `chore/<descripcion>`: mantenimiento y scripts auxiliares.
 * `hotfix/<descripcion>`: Correcciones urgentes aplicadas directamente sobre `main`.
+* El tipo de la rama es siempre el de Conventional Commits (`feat`, no `feature`).
 
 ---
 
@@ -43,10 +48,12 @@ Para que una tarea o requerimiento funcional se considere formalmente **FINALIZA
 - [ ] **Aislamiento Hexagonal:** La lógica de negocio no contiene importaciones de frameworks web (FastAPI) ni detalles de persistencia (SQLAlchemy); se orquesta a través de puertos y casos de uso.
 - [ ] **Tipado Estático Estricto:** Código verificado con análisis estático (`mypy app/`) sin advertencias ni tipos `Any` no justificados.
 - [ ] **Calidad y Formato:** Código formateado y validado con `ruff` (`ruff check .` y `ruff format .`).
-- [ ] **Cobertura de Pruebas Unitarias:**
-  - 100% de cobertura en servicios de dominio y cálculos de cotización.
-  - Coberura global mínima del 75% en la suite de `pytest`.
+- [ ] **Cobertura de Pruebas:** se cumplen las metas de [RNF-04.2](../01-requisitos/03-requerimientos-no-funcionales.md) (única fuente de verdad):
+  - 100% de cobertura en servicios de dominio y cálculos financieros.
+  - Cobertura global mínima del 75% en la suite de `pytest` (`pytest --cov`).
   - Todas las pruebas automatizadas pasan en verde (`pytest -v`).
+- [ ] **Dependencias de Desarrollo:** las herramientas de prueba y calidad (`pytest`, `pytest-cov`, `ruff`, `mypy`, Testcontainers) se instalan desde `requirements-dev.txt`, que extiende `requirements.txt`; no se agregan al archivo de runtime.
+- [ ] **Pruebas de Integración con Testcontainers:** las pruebas que tocan persistencia o bloqueos usan PostgreSQL real levantado con Testcontainers (y Redis real cuando se prueban bloqueos distribuidos); no se sustituye por SQLite ni por mocks de base de datos.
 - [ ] **Mocks para Servicios Externos:** Las pruebas de integración no realizan llamadas reales a Meta WhatsApp ni a Google Maps; utilizan adaptadores mock o stubs.
 - [ ] **Migraciones de BD Actualizadas:** Si hubo cambios de esquema, se incluye la migración de Alembic con `upgrade()` y `downgrade()` funcionales.
 - [ ] **Documentación OpenAPI y Logging:** Los endpoints exponen esquemas de Pydantic con descripciones y ejemplos; las operaciones críticas registran logs estructurados.

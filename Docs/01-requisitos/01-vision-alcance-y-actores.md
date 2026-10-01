@@ -47,7 +47,7 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 ### 3.2 Fuera del Alcance (Out of Scope - Fases Posteriores)
 * Emisión automática de comprobantes electrónicos SUNAT (Boletas / Facturas electrónicas vía PSE/OSE). En esta fase los cobros quedan registrados como transacciones internas.
 * Cobros con tarjeta de crédito mediante pasarelas internacionales (Stripe, Mercado Pago Web Checkout); el canal principal es transferencias y billeteras locales peruanas (Yape).
-* Aplicación móvil nativa para el elenco (iOS / Android); el personal se coordina mediante reportes consolidados y resúmenes compartidos.
+* Aplicación móvil nativa (iOS / Android) y PWA instalable. Los operadores y los clientes usan la **web móvil** (diseño *mobile-first*, ver RNF-06); la instalación como PWA queda para una fase posterior.
 
 ---
 
@@ -55,8 +55,8 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 
 | Actor | Tipo | Descripción y Responsabilidades |
 | :--- | :--- | :--- |
-| **Cliente** | Externo (Humano) | Usuario interesado en contratar servicios. Interactúa mediante WhatsApp para consultar catálogo, cotizar, subir comprobantes de pago y firmar electrónicamente el contrato. |
+| **Cliente** | Externo (Humano) | Usuario interesado en contratar servicios. Interactúa mediante WhatsApp para consultar catálogo, cotizar (la revisión de la cotización ocurre en el chat) y subir comprobantes de pago; solo usa la web móvil para revisar y firmar electrónicamente el contrato. |
 | **Chatbot / WhatsApp Service** | Automatizado (Sistema) | Servicio conversacional que procesa webhooks de WhatsApp, guía al cliente a través del flujo guiado y recopila parámetros del evento. |
 | **Encargado / Administrador** | Interno (Humano) | Uno de los 2 responsables del negocio. Cuenta con privilegios completos para aprobar shows simultáneos, aplicar *overrides* de movilidad o tiempo de traslado, emitir contratos en modo manual y auditar métricas financieras. |
-| **Personal de Elenco / Operador** | Interno / Freelance | Artistas, animadores, DJs y armadores de toldos. Ejecutan el servicio en campo, reportan cobro del saldo in-situ e informan extensiones de tiempo de show. |
+| **Personal de Elenco / Operador** | Interno / Freelance | Artistas, animadores, DJs y armadores de toldos. Ejecutan el servicio en campo y, desde la web móvil en su teléfono, consultan su agenda del día, registran el cobro del saldo in-situ (con foto de evidencia) e informan extensiones de tiempo de show. |
 | **Google Maps API** | Externo (Servicio) | Servicio externo consumido para geolocalización, cálculo de distancias y tiempos de tránsito en Lima Metropolitana y Callao. |

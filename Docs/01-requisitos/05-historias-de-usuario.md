@@ -45,7 +45,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 ---
 
 ### US-03: Captura de Datos y Ubicación del Evento
-* **Mapeo:** RF-02
+* **Mapeo:** RF-02, RF-14
 * **Prioridad:** Must have | **Estimación:** 2 SP
 * **Narrativa:**
   * **Como** chatbot del sistema,
@@ -55,6 +55,9 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Dado que** el cliente configuró su paquete y extras,
   * **Cuando** el bot solicita la fecha y ubicación,
   * **Entonces** valida que la fecha sea futura y que la dirección incluya distrito o coordenadas válidas de Lima/Callao.
+  * **Dado que** el bot ya capturó los datos obligatorios del evento,
+  * **Cuando** pregunta si el cliente tiene observaciones especiales (música no permitida, momento de ingreso del gorila gigante, restricciones de espacio o iluminación) y este responde con texto libre,
+  * **Entonces** almacena el texto como observaciones de la cotización, que pasan al evento y al contrato; si el cliente no tiene observaciones, la pregunta es opcional y el flujo continúa.
 
 ---
 
@@ -141,7 +144,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 
 ### US-09: Control de Tiempos de Traslado entre Shows Sucesivos
 * **Mapeo:** RF-10, PC-02
-* **Prioridad:** Should have | **Estimación:** 3 SP
+* **Prioridad:** Must have | **Estimación:** 3 SP
 * **Narrativa:**
   * **Como** encargado,
   * **Quiero** que el sistema verifique que un mismo elenco tenga tiempo suficiente para trasladarse de un evento a otro considerando el tráfico y 30 min de descanso/desarme,
@@ -228,6 +231,12 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Dado que** el adelanto ha sido verificado,
   * **Cuando** se dispara la emisión del contrato,
   * **Entonces** se compila un PDF formal con número correlativo (`CTR-2026-XXXX`), desglose claro de pagos y las notas especiales del cliente.
+  * **Dado que** el evento tiene observaciones especiales registradas por el cliente en el chat o por el encargado en el panel,
+  * **Cuando** se genera el contrato,
+  * **Entonces** el PDF muestra las observaciones literales en una sección propia y visible, y el mismo texto queda disponible en el cronograma (US-16).
+  * **Dado que** el encargado edita las observaciones de un evento antes de que el contrato sea firmado,
+  * **Cuando** guarda el cambio,
+  * **Entonces** el contrato en borrador se regenera con el texto actualizado y el cambio se registra en `audit_logs`.
 
 ---
 
@@ -242,6 +251,9 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Dado que** el encargado ingresa a la opción "Nuevo Contrato Manual",
   * **Cuando** completa los datos y montos pactados y presiona "Emitir",
   * **Entonces** el sistema registra al cliente, crea una cotización con `source = MANUAL`, genera el contrato PDF con bandera `is_manual_mode: true` y lo agenda en el cronograma una vez registrado y validado el adelanto.
+  * **Dado que** el encargado completa el campo de observaciones especiales del formulario,
+  * **Cuando** emite el contrato manual,
+  * **Entonces** las observaciones se guardan en el evento y aparecen en el PDF y en el cronograma.
 
 ---
 
@@ -300,7 +312,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 
 ### US-18: Registro de Extensiones en Caliente y Cierre de Evento
 * **Mapeo:** RF-19, RN-07, PC-08
-* **Prioridad:** Should have | **Estimación:** 3 SP
+* **Prioridad:** Must have | **Estimación:** 3 SP
 * **Narrativa:**
   * **Como** operador del show,
   * **Quiero** registrar si el cliente solicitó 30 o 60 minutos adicionales de show o espera durante la fiesta,
@@ -333,7 +345,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 
 ### US-20: Ajuste Manual de Intervalos de Traslado
 * **Mapeo:** RF-22, PC-02
-* **Prioridad:** Could have | **Estimación:** 2 SP
+* **Prioridad:** Should have | **Estimación:** 2 SP
 * **Narrativa:**
   * **Como** encargado,
   * **Quiero** acortar o extender la ventana de tiempo sugerida entre dos shows de un mismo elenco,
@@ -375,7 +387,98 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 
 ---
 
-## 9. Matriz de Trazabilidad: Requerimientos Funcionales (RF) vs. Historias de Usuario (US)
+## 9. Épica 8: Administración de la Plataforma
+
+### US-23: Gestión de Usuarios del Panel y Roles
+* **Mapeo:** RF-26
+* **Prioridad:** Must have | **Estimación:** 5 SP
+* **Narrativa:**
+  * **Como** superadministrador,
+  * **Quiero** crear, editar, activar y desactivar las cuentas del panel y asignar su rol (`ENCARGADO`, `OPERADOR`),
+  * **Para** controlar quién accede al sistema y con qué permisos, sin tocar la base de datos.
+* **Criterios de Aceptación:**
+  * **Dado que** el superadministrador completa nombre, correo, teléfono, contraseña inicial y rol,
+  * **Cuando** crea el usuario,
+  * **Entonces** la cuenta queda activa, la contraseña se guarda solo como hash Argon2id y no se devuelve en ninguna respuesta.
+  * **Dado que** el correo o el teléfono ya pertenecen a otro usuario,
+  * **Cuando** intenta crearlo,
+  * **Entonces** el sistema rechaza la operación con un error de recurso duplicado.
+  * **Dado que** el superadministrador desactiva un usuario o cambia su contraseña,
+  * **Cuando** guarda el cambio,
+  * **Entonces** todos los refresh tokens del usuario quedan revocados y no puede renovar su sesión.
+  * **Dado que** el superadministrador intenta desactivarse a sí mismo o quitarse su propio rol,
+  * **Cuando** envía el cambio,
+  * **Entonces** el sistema lo rechaza.
+  * **Dado que** un usuario con rol `ENCARGADO` u `OPERADOR` intenta acceder a la gestión de usuarios,
+  * **Cuando** invoca el endpoint,
+  * **Entonces** recibe un error de permiso denegado.
+
+---
+
+### US-24: Consulta de la Bitácora de Auditoría
+* **Mapeo:** RF-27
+* **Prioridad:** Should have | **Estimación:** 2 SP
+* **Narrativa:**
+  * **Como** encargado o superadministrador,
+  * **Quiero** consultar quién hizo qué en las decisiones críticas (*overrides*, aprobaciones de sobrecupo, auditoría de cobros, contratos manuales y firmas),
+  * **Para** tener trazabilidad ante disputas con clientes o errores de operación.
+* **Criterios de Aceptación:**
+  * **Dado que** existen registros de auditoría,
+  * **Cuando** el encargado filtra por acción, entidad, usuario o rango de fechas,
+  * **Entonces** el sistema devuelve una lista paginada, del más reciente al más antiguo, con usuario, acción, valores previos y posteriores, y marca de tiempo.
+  * **Dado que** un usuario intenta modificar o eliminar un registro de la bitácora,
+  * **Cuando** consulta los endpoints disponibles,
+  * **Entonces** no existe ninguna operación de escritura: la bitácora es de solo lectura.
+  * **Dado que** un usuario con rol `OPERADOR` intenta consultar la bitácora,
+  * **Cuando** invoca el endpoint,
+  * **Entonces** recibe un error de permiso denegado.
+
+---
+
+### US-25: Consulta de Clientes
+* **Mapeo:** RF-28
+* **Prioridad:** Should have | **Estimación:** 2 SP
+* **Narrativa:**
+  * **Como** encargado,
+  * **Quiero** buscar clientes por nombre o teléfono y ver su ficha,
+  * **Para** atender recontrataciones y consultas sin revisar chats de WhatsApp uno por uno.
+* **Criterios de Aceptación:**
+  * **Dado que** un cliente generó una cotización por el bot o por un contrato manual,
+  * **Cuando** el encargado lo busca por nombre o teléfono,
+  * **Entonces** el sistema muestra su ficha con teléfono, nombre y DNI o RUC si fueron registrados, sin que exista un alta manual independiente.
+  * **Dado que** un cliente vuelve a cotizar con el mismo número de WhatsApp,
+  * **Cuando** se genera la nueva cotización,
+  * **Entonces** el sistema reutiliza el cliente existente en lugar de duplicarlo.
+  * **Dado que** un usuario con rol `OPERADOR` intenta listar clientes,
+  * **Cuando** invoca el endpoint,
+  * **Entonces** recibe un error de permiso denegado, porque son datos personales.
+
+---
+
+### US-26: Gestión de Elencos y Vinculación con Operadores
+* **Mapeo:** RF-29
+* **Prioridad:** Must have | **Estimación:** 3 SP
+* **Narrativa:**
+  * **Como** encargado,
+  * **Quiero** registrar los elencos freelance con su categoría de servicio y vincularlos a un usuario operador,
+  * **Para** asignarlos a eventos y que cada operador vea únicamente sus propios eventos en su teléfono.
+* **Criterios de Aceptación:**
+  * **Dado que** el encargado registra un elenco con líder, teléfono y categoría de servicio,
+  * **Cuando** lo guarda,
+  * **Entonces** el elenco queda activo y disponible para el motor de disponibilidad y la asignación a eventos.
+  * **Dado que** el encargado vincula el elenco con un usuario,
+  * **Cuando** el usuario no tiene rol `OPERADOR` o ya está vinculado a otro elenco,
+  * **Entonces** el sistema rechaza el vínculo.
+  * **Dado que** un operador vinculado a un elenco inicia sesión,
+  * **Cuando** consulta su agenda,
+  * **Entonces** solo ve los eventos asignados a su elenco.
+  * **Dado que** el encargado desactiva un elenco,
+  * **Cuando** el sistema busca elencos para nuevas asignaciones,
+  * **Entonces** el elenco desactivado no se ofrece.
+
+---
+
+## 10. Matriz de Trazabilidad: Requerimientos Funcionales (RF) vs. Historias de Usuario (US)
 
 | RF | Requerimiento Funcional Técnico | Historia de Usuario Vinculada | Épica | Prioridad |
 | :---: | :--- | :---: | :--- | :---: |
@@ -388,19 +491,25 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 | **RF-07** | Liquidación Económica (Total, Adelanto 10%, Saldo) | **US-06** | Épica 1: Atención y Cotización | Must have |
 | **RF-08** | Despacho Automático de Resumen de Cotización | **US-07** | Épica 1: Atención y Cotización | Must have |
 | **RF-09** | Verificación de Disponibilidad de Recursos | **US-08** | Épica 2: Disponibilidad y Control | Must have |
-| **RF-10** | Cálculo de Intervalo de Traslado entre Shows | **US-09** | Épica 2: Disponibilidad y Control | Should have |
+| **RF-10** | Cálculo de Intervalo de Traslado entre Shows | **US-09** | Épica 2: Disponibilidad y Control | Must have |
 | **RF-11** | Recepción de Comprobantes de Adelanto | **US-11** | Épica 3: Pagos y Validación | Must have |
 | **RF-12** | Validación de Pago y Flujo de Reintento | **US-12** | Épica 3: Pagos y Validación | Must have |
 | **RF-13** | Generación Automatizada del Contrato en PDF | **US-13** | Épica 4: Contratos y Firma | Must have |
-| **RF-14** | Registro de Observaciones Especiales del Cliente | **US-13, US-16** | Épica 4 / Épica 5 | Must have |
+| **RF-14** | Registro de Observaciones Especiales del Cliente | **US-03, US-13, US-14, US-16** | Épica 1 / Épica 4 / Épica 5 | Should have |
 | **RF-15** | Registro de Firma Electrónica del Contrato | **US-15** | Épica 4: Contratos y Firma | Must have |
 | **RF-16** | Tablero de Cronograma y Filtros de Búsqueda | **US-16** | Épica 5: Cronograma y Operación | Must have |
-| **RF-17** | Visualización Rápida de Observaciones | **US-16** | Épica 5: Cronograma y Operación | Must have |
+| **RF-17** | Visualización Rápida de Observaciones | **US-16** | Épica 5: Cronograma y Operación | Should have |
 | **RF-18** | Protocolo de Cobro Pre-Show y Bloqueo de Inicio | **US-17** | Épica 5: Cronograma y Operación | Must have |
-| **RF-19** | Registro de Extensiones en Caliente y Cierre | **US-18** | Épica 5: Cronograma y Operación | Should have |
+| **RF-19** | Registro de Extensiones en Caliente y Cierre | **US-18** | Épica 5: Cronograma y Operación | Must have |
 | **RF-20** | Aprobación Manual por Umbral de Shows Simultáneos | **US-10** | Épica 2: Disponibilidad y Control | Must have |
 | **RF-21** | Sobrescritura (*Override*) Manual de Movilidad | **US-19** | Épica 6: Overrides Manuales | Must have |
-| **RF-22** | Ajuste Manual del Intervalo entre Shows | **US-20** | Épica 6: Overrides Manuales | Could have |
+| **RF-22** | Ajuste Manual del Intervalo entre Shows | **US-20** | Épica 6: Overrides Manuales | Should have |
 | **RF-23** | Modo Manual de Creación de Contratos | **US-14** | Épica 4: Contratos y Firma | Must have |
 | **RF-24** | Consolidación Automática de Ingresos y Costos | **US-21** | Épica 7: Analítica Financiera | Must have |
 | **RF-25** | Dashboard Ejecutivo de Desempeño | **US-22** | Épica 7: Analítica Financiera | Should have |
+| **RF-26** | Gestión de Usuarios del Panel y Roles | **US-23** | Épica 8: Administración de la Plataforma | Must have |
+| **RF-27** | Consulta de la Bitácora de Auditoría | **US-24** | Épica 8: Administración de la Plataforma | Should have |
+| **RF-28** | Consulta de Clientes | **US-25** | Épica 8: Administración de la Plataforma | Should have |
+| **RF-29** | Gestión de Elencos y Vinculación con Operadores | **US-26** | Épica 8: Administración de la Plataforma | Must have |
+
+> **Criterio de prioridad:** el catálogo de RF es la fuente de verdad (Alta = *Must have*, Media = *Should have*, Baja = *Could have*). La prioridad de cada fila de la matriz es la del RF; la prioridad de una historia es la mayor de los RF que cubre. Cobertura: 29 RF y 26 historias; cada RF tiene al menos una historia.

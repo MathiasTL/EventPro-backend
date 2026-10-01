@@ -19,7 +19,7 @@ flowchart TD
     subgraph Actores["Actores Humanos"]
         Cliente["Cliente Final<br/><i>[Persona]</i><br/>Solicita shows, cotiza, paga adelanto y firma contrato."]
         Encargado["Encargado / Administrador<br/><i>[Persona]</i><br/>Gestiona eventos, aprueba shows simultáneos, aplica overrides y audita finanzas."]
-        Elenco["Personal de Elenco / Operador<br/><i>[Persona]</i><br/>Ejecuta shows, cobra saldo in-situ e informa extensiones."]
+        Elenco["Personal de Elenco / Operador<br/><i>[Persona]</i><br/>Ejecuta shows, cobra saldo in-situ (web móvil) e informa extensiones."]
     end
 
     subgraph SistemaEventPro["Sistema EventPro"]
@@ -35,9 +35,9 @@ flowchart TD
     WhatsAppAPI -->|"Dispara eventos vía Webhook"| EventProApp
     EventProApp -->|"Envía mensajes, cotizaciones y contratos"| WhatsAppAPI
 
-    Cliente -->|"Visualiza y firma electrónicamente el contrato web"| EventProApp
+    Cliente -->|"Revisa y firma electrónicamente el contrato (web móvil)"| EventProApp
     Encargado -->|"Administra cronograma, contratos manuales, overrides y dashboards"| EventProApp
-    Elenco -->|"Consulta observaciones y confirma cobro pre-show"| EventProApp
+    Elenco -->|"Consulta su agenda, observaciones y confirma cobro pre-show (web móvil)"| EventProApp
 
     EventProApp -->|"Consulta matrices de distancia y rutas"| GoogleMaps
 ```
@@ -51,21 +51,22 @@ Describe las aplicaciones de software, almacenes de datos y servicios que compon
 ```mermaid
 flowchart TB
     subgraph Usuarios["Usuarios"]
-        UserWeb["Encargado / Cliente en Navegador"]
+        UserWeb["Encargado (escritorio) / Operador y Cliente (web móvil)"]
         UserWhatsApp["Cliente en WhatsApp"]
     end
 
     subgraph FrontendApp["Frontend (Feature-Sliced Design)"]
-        SPA["EventPro Web App (FSD)<br/><i>[Container: TypeScript / React / Next.js]</i><br/>Panel administrativo, visor de cronograma, creación manual de contratos, firma electrónica de clientes y dashboards."]
+        SPA["EventPro Web App (FSD)<br/><i>[Container: TypeScript / React / Next.js]</i><br/>Panel del encargado, vista móvil del operador (agenda, cobro, extensiones), firma electrónica del contrato por el cliente y dashboards."]
     end
 
     subgraph BackendApp["Backend (Arquitectura Hexagonal)"]
-        API["EventPro API Server<br/><i>[Container: Python / FastAPI]</i><br/>Exprime el núcleo de dominio, procesa webhooks, calcula tarifas, coordina persistencia y genera PDFs."]
+        API["EventPro API Server<br/><i>[Container: Python / FastAPI]</i><br/>Expone el núcleo de dominio, procesa webhooks, calcula tarifas, coordina persistencia, genera PDFs y publica GET /health (estado de PostgreSQL y Redis)."]
+        Worker["EventPro Worker<br/><i>[Container: Python / arq]</i><br/>Proceso aparte (servicio worker de Docker Compose): vencimiento de cotizaciones, cola outbox_messages hacia WhatsApp con reintentos, reportes semanales y mensuales y, opcionalmente, el renderizado de PDFs."]
     end
 
     subgraph Almacenamiento["Persistencia y Caché"]
         DB[("Base de Datos Relacional<br/><i>[Container: PostgreSQL]</i><br/>Persistencia transaccional de eventos, clientes, contratos, pagos y catálogo.")]
-        Cache[("Caché y Concurrencia<br/><i>[Container: Redis]</i><br/>Almacenamiento de sesiones de chatbot, caché de rutas de Google Maps y locks distribuidos.")]
+        Cache[("Caché, Concurrencia y Cola<br/><i>[Container: Redis]</i><br/>Sesiones de chatbot, caché de rutas de Google Maps, locks distribuidos y cola de tareas de arq.")]
         Storage[("Repositorio de Archivos<br/><i>[Container: Object Storage / Local Volume]</i><br/>Almacenamiento seguro de comprobantes de pago y PDFs de contratos.")]
     end
 
@@ -83,6 +84,11 @@ flowchart TB
     API -->|"SQLAlchemy ORM (TCP: 5432)"| DB
     API -->|"Redis Protocol (TCP: 6379)"| Cache
     API -->|"Lectura / Escritura de binarios"| Storage
+    API -->|"Encola tareas (arq)"| Cache
+    Worker -->|"Consume tareas (arq)"| Cache
+    Worker -->|"SQLAlchemy ORM (TCP: 5432)"| DB
+    Worker -->|"Lectura / Escritura de binarios"| Storage
+    Worker -->|"HTTPS POST (outbox_messages)"| ExtWhatsApp
     API -->|"REST API / HTTPS"| ExtMaps
 ```
 
@@ -95,34 +101,35 @@ El siguiente diagrama detalla cómo se organizan los componentes internos del Ba
 ```mermaid
 flowchart LR
     subgraph AdaptadoresEntrada["Adaptadores Primarios (Driving Adapters)"]
-        HttpRouters["FastAPI Routers<br/><i>[Controllers REST]</i><br/>/api/v1/events, /quotes, /contracts"]
+        HttpRouters["FastAPI Routers<br/><i>[Controllers REST]</i><br/>/api/v1/auth, /users, /audit-logs, /catalog, /crews, /clients, /quotes, /payments, /contracts, /events, /overrides, /reports"]
         WebhookController["WhatsApp Webhook Controller<br/><i>[HTTP Handler]</i><br/>/api/v1/webhooks/whatsapp"]
-        AdminCli["CLI & Tasks Controller<br/><i>[Scripts / Cron Jobs]</i><br/>Reportes semanales/mensuales"]
+        HealthController["Health Controller<br/><i>[HTTP Handler]</i><br/>GET /health (fuera de /api/v1)"]
+        ArqWorker["arq Worker (jobs/worker.py)<br/><i>[Tareas programadas y diferidas]</i><br/>Vencimiento de cotizaciones, outbox_messages, reportes"]
     end
 
     subgraph PuertosEntrada["Puertos de Entrada (Driving Ports / Use Cases)"]
-        UCQuote["CotizarEventoPort"]
-        UCPay["ValidarPagoAdelantoPort"]
-        UCContract["GenerarContratoPort"]
-        UCSchedule["GestionarCronogramaPort"]
-        UCOverride["AplicarOverridePort"]
-        UCReport["CalcularFinanzasPort"]
+        UCQuote["quote_use_cases<br/>ICotizarEvento, IRecalcularMovilidad"]
+        UCPay["payment_use_cases<br/>IRegistrarAdelanto, IValidarComprobante"]
+        UCContract["contract_use_cases<br/>IGenerarContratoPdf, IFirmarContrato"]
+        UCSchedule["event_use_cases<br/>IAgendarEvento, IConfirmarCobroPreShow, ILiquidarEvento"]
+        UCOverride["override_use_cases<br/>IAjustarMovilidadManual, IAprobarShowSimultaneo"]
+        UCReport["financial_use_cases<br/>IGenerarReporteFinanciero"]
     end
 
     subgraph Dominio["NÚCLEO DE DOMINIO (Core Domain)"]
         direction TB
-        Entities["Entidades de Dominio<br/>- Evento<br/>- Cotizacion<br/>- Contrato<br/>- Pago<br/>- Paquete / Extra"]
-        ValueObjects["Value Objects<br/>- MontoDinero<br/>- UbicacionEvento<br/>- IntervaloTiempo<br/>- EstadoEvento"]
-        DomainServices["Servicios de Dominio<br/>- MotorLiquidacionFinanciera<br/>- CalculadorIntervaloShow<br/>- EvaluadorUmbralConcurrencia"]
+        Entities["Entidades de Dominio<br/>- Event<br/>- Quote<br/>- Contract<br/>- Payment<br/>- Package / Extra"]
+        ValueObjects["Value Objects<br/>- Money<br/>- Coordinates<br/>- TimeWindow<br/>- QuoteStatus / PaymentStatus<br/>- EventStatus / ContractStatus"]
+        DomainServices["Servicios de Dominio<br/>- FinancialEngine<br/>- TravelIntervalService<br/>- ConcurrencyEvaluator"]
     end
 
     subgraph PuertosSalida["Puertos de Salida (Driven Ports / Interfaces)"]
         PortRepo["IEventRepository<br/>IQuoteRepository<br/>IContractRepository"]
-        PortMaps["IGoogleMapsClient"]
-        PortWhatsApp["IWhatsAppNotificationClient"]
-        PortPdf["IPdfGeneratorService"]
-        PortStorage["IFileStorageService"]
-        PortCache["ICacheLockService"]
+        PortMaps["IMapsServicePort"]
+        PortWhatsApp["IWhatsAppServicePort"]
+        PortPdf["IPdfGeneratorPort"]
+        PortStorage["IFileStoragePort"]
+        PortCache["ICacheLockPort"]
         PortSignature["SignaturePort"]
     end
 
@@ -139,7 +146,8 @@ flowchart LR
     %% Relaciones Driving
     HttpRouters --> UCQuote & UCPay & UCContract & UCSchedule & UCOverride & UCReport
     WebhookController --> UCQuote & UCPay
-    AdminCli --> UCReport
+    ArqWorker --> UCQuote & UCReport
+    HealthController -.-> PortRepo & PortCache
 
     %% Relaciones Ports -> Domain
     UCQuote & UCPay & UCContract & UCSchedule & UCOverride & UCReport --> DomainServices
@@ -157,3 +165,7 @@ flowchart LR
     PortCache --> RedisAdapter
     PortSignature --> PadesAdapter
 ```
+
+> **Nota sobre nombres:** los puertos y entidades de este diagrama usan los nombres canónicos de la [arquitectura hexagonal](02-backend-arquitectura-hexagonal.md) (`IPdfGeneratorPort`, `IFileStoragePort`, `EventStatus`, etc.), que es la fuente de verdad. Los módulos `/users`, `/audit-logs`, `/crews` y `/clients` se exponen como routers adicionales dentro del mismo adaptador web.
+>
+> **Renderizado de PDFs:** WeasyPrint es síncrono y consume CPU (ver RNF-01.3); el adaptador de PDF se ejecuta en el *worker* de arq o en un *threadpool*, nunca en el *event loop* de la API.

@@ -353,3 +353,51 @@
   * Distribución de eventos por distritos de Lima.
 * **Salidas:** Dashboard interactivo con gráficos de barras, líneas y torta.
 * **Prioridad:** Media.
+
+---
+
+## 10. Módulo M10: Administración de la Plataforma
+
+### RF-26: Gestión de Usuarios del Panel y Roles
+* **Descripción:** El sistema debe permitir al `SUPERADMIN` administrar las cuentas del panel (encargados y operadores): crear, consultar, editar, cambiar rol y activar o desactivar usuarios. El primer `SUPERADMIN` se crea con el comando de arranque desde variables de entorno.
+* **Entradas:** Nombre, correo, teléfono, contraseña inicial, rol (`SUPERADMIN`, `ENCARGADO`, `OPERADOR`) y estado activo; filtros de búsqueda por rol, estado o texto.
+* **Procesamiento:**
+  1. Almacenar la contraseña únicamente como hash Argon2id (RNF-02.2); nunca se devuelve en la API.
+  2. Rechazar correos o teléfonos duplicados.
+  3. Al desactivar un usuario o cambiar su contraseña, revocar todos sus refresh tokens.
+  4. Impedir que un `SUPERADMIN` se desactive a sí mismo o se quite su propio rol.
+* **Salidas:** Usuario creado o actualizado (sin datos sensibles) y listado paginado.
+* **Reglas Asociadas:** RNF-02.1, RNF-02.2.
+* **Prioridad:** Alta.
+
+---
+
+### RF-27: Consulta de la Bitácora de Auditoría
+* **Descripción:** El sistema debe exponer en modo de solo lectura la bitácora de decisiones críticas (`audit_logs`): *overrides*, aprobaciones de sobrecupo, auditoría de cobros, contratos manuales y firmas. La bitácora no se edita ni se elimina desde la API.
+* **Entradas:** Filtros por acción, entidad, identificador de entidad, usuario y rango de fechas; paginación.
+* **Procesamiento:** Consultar `audit_logs` con los filtros indicados, ordenados del más reciente al más antiguo.
+* **Salidas:** Listado paginado de registros con usuario, acción, entidad, valores previos/posteriores y marca de tiempo.
+* **Reglas Asociadas:** PC-04, PC-12.
+* **Prioridad:** Media.
+
+---
+
+### RF-28: Consulta de Clientes
+* **Descripción:** El sistema debe permitir al encargado consultar el registro de clientes. Los clientes se crean o actualizan automáticamente al generar una cotización (por bot o por contrato manual, RF-23), usando el teléfono de WhatsApp como clave natural; no existe una creación independiente.
+* **Entradas:** Búsqueda por nombre o teléfono; identificador de cliente; paginación.
+* **Procesamiento:** Consultar `clients` con acceso restringido a los roles `ENCARGADO` y `SUPERADMIN`, por tratarse de datos personales (teléfono, DNI, RUC).
+* **Salidas:** Listado paginado y ficha del cliente con sus datos de contacto e identificación.
+* **Prioridad:** Media.
+
+---
+
+### RF-29: Gestión de Elencos y Vinculación con Operadores
+* **Descripción:** El sistema debe permitir al encargado registrar y mantener los elencos y proveedores freelance asignables a eventos, y vincular cada elenco con un usuario `OPERADOR` para que este solo vea y opere sus propios eventos.
+* **Entradas:** Nombre del líder, teléfono, categoría de servicio (la misma que usan los paquetes), usuario `OPERADOR` opcional (`user_id`) y estado activo.
+* **Procesamiento:**
+  1. Validar que `user_id` corresponda a un usuario con rol `OPERADOR` y que no esté vinculado a otro elenco.
+  2. Permitir filtrar el listado por categoría de servicio y estado.
+  3. Exponer los elencos activos al motor de disponibilidad (RF-09) y a la validación de traslados (RF-10).
+* **Salidas:** Elenco creado o actualizado; listado filtrable.
+* **Reglas Asociadas:** RN-04, RN-05.
+* **Prioridad:** Alta.

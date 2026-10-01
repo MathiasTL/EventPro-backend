@@ -7,6 +7,7 @@
 * **RNF-01.1 (Tiempo de respuesta de API):** Los endpoints transaccionales (catálogo, cotizaciones, consulta de agenda) deben responder con un tiempo de latencia $P_{95} \le 300\text{ ms}$ bajo condiciones normales de carga.
 * **RNF-01.2 (Respuesta a Webhooks):** El endpoint receptor del Webhook de WhatsApp debe procesar y acusar recibo (HTTP 200) en menos de **1.5 segundos** para prevenir timeouts y reintentos automáticos del servidor de WhatsApp.
 * **RNF-01.3 (Generación de Documentos PDF):** La renderización y compilación del contrato en formato PDF no debe exceder los **3 segundos** desde que se valida el pago.
+  > **Nota de implementación:** WeasyPrint es síncrono y consume CPU. La renderización nunca se ejecuta en el *event loop* de FastAPI: se delega al *worker* de arq o, si se invoca desde la API, a un *threadpool* (`run_in_threadpool` / `asyncio.to_thread`).
 * **RNF-01.4 (Concurrencia de Cotizaciones):** El motor de cotización debe soportar al menos 50 solicitudes concurrentes sin degradación del servicio ni inconsistencias en el cálculo.
 
 ---
@@ -38,7 +39,7 @@
   * **Capa de Lógica de Negocio (Services / Use Cases):** Reglas de cotización, validación y contratos.
   * **Capa de Persistencia (Repositories / Models):** Acceso a base de datos mediante SQLAlchemy.
   * **Capa de Integración Externa:** Clientes HTTP desacoplados para WhatsApp y Google Maps.
-* **RNF-04.2 (Tipado y Cobertura de Pruebas):** El código fuente en Python 3.12+ debe aplicar tipado estático (*Type Hints*) en el 100% de funciones de servicio y alcanzar una cobertura mínima de pruebas automatizadas (*Unit Tests* con `pytest`) del **75%** en los módulos críticos de cotización, pagos y contratos.
+* **RNF-04.2 (Tipado y Cobertura de Pruebas):** El código fuente en Python 3.12+ debe aplicar tipado estático (*Type Hints*) en el 100% de funciones de servicio y alcanzar una cobertura mínima de pruebas automatizadas (*Unit Tests* con `pytest`) con una **cobertura global mínima del 75%** y del **100%** en los servicios de dominio y cálculos financieros (`FinancialEngine`, `TravelIntervalService`, `ConcurrencyEvaluator`, `Money`). Es la única meta de cobertura del proyecto; [ADR-01](../02-arquitectura/04-adr-decisiones-arquitectura.md) y la [DoD](../05-operaciones/03-gobernanza-git-y-calidad-dod.md) remiten a este requerimiento.
 * **RNF-04.3 (Registro de Actividad / Logging):** Se debe implementar *Structured Logging* en formato JSON con niveles estándar (`INFO`, `WARNING`, `ERROR`), capturando identificadores de traza (*Trace ID*) para auditar cada interacción del cliente desde WhatsApp hasta la liquidación final.
 
 ---
@@ -47,3 +48,11 @@
 
 * **RNF-05.1 (Compatibilidad OpenAPI / Swagger):** El backend debe generar y exponer automáticamente la especificación OpenAPI v3 con esquemas completos y ejemplos para todos los endpoints expuestos.
 * **RNF-05.2 (Consumo de Google Maps Platform):** Las llamadas a la API de Google Maps deben implementar mecanismos de almacenamiento en caché (Redis o caché en memoria) para rutas idénticas en un lapso de 24 horas, optimizando costos de cuota de API.
+
+---
+
+## 6. RNF-06: Usabilidad y Dispositivos
+
+* **RNF-06.1 (Web móvil primero):** Las vistas del **operador** (agenda del día, cobro de saldo, extensiones) y del **cliente** (revisión y firma del contrato) se diseñan *mobile-first* y deben ser plenamente usables desde un ancho de **360 px**. La vista del encargado es *desktop-first* y responsiva.
+* **RNF-06.2 (Evidencia con la cámara):** La carga de evidencia de cobros in situ (captura de Yape/Plin o efectivo) usa la cámara del teléfono mediante `<input type="file" accept="image/*" capture>`.
+* **RNF-06.3 (PWA diferida):** La instalabilidad como PWA (manifiesto, *service worker*, modo sin conexión) queda fuera de esta fase y se evaluará posteriormente.
