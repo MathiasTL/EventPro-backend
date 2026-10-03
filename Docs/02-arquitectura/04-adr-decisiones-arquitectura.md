@@ -7,14 +7,14 @@
 * **Estado:** Aceptado.
 * **Fecha:** 2026-09-23.
 * **Contexto:** 
-  El sistema EventPro gestiona reglas de negocio críticas con múltiples integraciones externas (WhatsApp Business API, Google Maps, motor de PDFs) y mecanismos de control manual (overrides de movilidad, umbral de eventos concurrentes, cobro estricto pre-show). En arquitecturas tradicionales tipo MVC o monolitos acoplados, la lógica de negocio suele dispersarse en controladores HTTP o modelos de base de datos, dificultando las pruebas y el mantenimiento.
+  El sistema EventPro gestiona reglas de negocio críticas con múltiples integraciones externas (mensajería, con WhatsApp vía Chatwoot; Google Maps; motor de PDFs) y mecanismos de control manual (overrides de movilidad, umbral de eventos concurrentes, cobro estricto pre-show). En arquitecturas tradicionales tipo MVC o monolitos acoplados, la lógica de negocio suele dispersarse en controladores HTTP o modelos de base de datos, dificultando las pruebas y el mantenimiento.
 * **Decisión:**
   Implementar **Arquitectura Hexagonal (Puertos y Adaptadores)** en el backend:
   * El Dominio es 100% puro y agnóstico de frameworks.
   * La interacción externa se realiza mediante Puertos de Entrada (Casos de uso) y Puertos de Salida (Interfaces abstractas).
   * FastAPI y SQLAlchemy operan como adaptadores periféricos.
 * **Consecuencias:**
-  * *Positivas:* Pruebas unitarias de la lógica de cotización y liquidación sin requerir base de datos activa (metas de cobertura en [RNF-04.2](../01-requisitos/03-requerimientos-no-funcionales.md): 75% global y 100% en servicios de dominio); aislamiento ante cambios en las APIs de Meta o Google; código altamente modular y auditable.
+  * *Positivas:* Pruebas unitarias de la lógica de cotización y liquidación sin requerir base de datos activa (metas de cobertura en [RNF-04.2](../01-requisitos/03-requerimientos-no-funcionales.md): 75% global y 100% en servicios de dominio); aislamiento ante cambios en el gateway de mensajería o en la API de Google; código altamente modular y auditable.
   * *Negativas:* Mayor cantidad inicial de archivos (interfaces, DTOs y mappers entre capas). Se justifica plenamente por la complejidad de las reglas de control.
 
 ---
@@ -38,7 +38,7 @@
 * **Estado:** Aceptado.
 * **Fecha:** 2026-09-23.
 * **Contexto:**
-  Se requiere un backend de alto rendimiento con soporte asíncrono nativo para atender webhooks de WhatsApp concurrentes, validar contratos JSON de forma estricta y exponer documentación OpenAPI en tiempo real.
+  Se requiere un backend de alto rendimiento con soporte asíncrono nativo para atender webhooks de mensajería (Chatwoot) concurrentes, validar contratos JSON de forma estricta y exponer documentación OpenAPI en tiempo real.
 * **Decisión:**
   Utilizar **FastAPI** montado sobre **Python 3.12+** con **Pydantic v2** para validación y serialización de esquemas.
 * **Consecuencias:**
@@ -61,14 +61,15 @@
 
 ---
 
-## ADR-05: Desacoplamiento de APIs Externas (WhatsApp Cloud API y Google Maps)
+## ADR-05: Desacoplamiento de APIs Externas (Google Maps)
 
-* **Estado:** Aceptado.
+* **Estado:** Aceptado. Parcialmente reemplazado por ADR-10 (2026-10-03).
 * **Fecha:** 2026-09-23.
+* **Nota:** *Parcialmente reemplazado por ADR-10 (2026-10-03).* La parte de WhatsApp (puerto `IWhatsAppServicePort` y entrega directa con Meta) fue sustituida por `IMessagingPort` y Chatwoot como gateway; la cola `outbox_messages` y sus reintentos se describen en [ADR-10](#adr-10-chatwoot-como-gateway-de-mensajería-oculto). Este registro conserva únicamente la decisión sobre Google Maps, que sigue vigente.
 * **Contexto:**
-  Tanto la API de WhatsApp como Google Maps son servicios externos sujetos a latencia de red, límites de cuota (rate limits) y costos por consumo.
+  Google Maps es un servicio externo sujeto a latencia de red, límites de cuota (rate limits) y costos por consumo.
 * **Decisión:**
-  Aislar el consumo de estas APIs tras puertos secundarios abstractos (`IWhatsAppServicePort`, `IMapsServicePort`). Los mensajes de WhatsApp se encolan en `outbox_messages` con reintentos, de modo que una caída de Meta no bloquea las transacciones de negocio.
+  Aislar el consumo de esta API tras un puerto secundario abstracto (`IMapsServicePort`).
   * Implementar caché (Redis / en memoria) para consultas repetidas de rutas en Google Maps en un lapso de 24 horas.
   * Implementar política de contingencia: si Google Maps no responde o falla la red, el sistema activa un modo de tarifa plana de contingencia o deriva a cotización manual sin bloquear al usuario.
 * **Consecuencias:**
@@ -123,7 +124,7 @@
 * **Estado:** Aceptado.
 * **Fecha:** 2026-09-30.
 * **Contexto:**
-  El sistema requiere trabajo fuera del ciclo petición-respuesta: vencimiento de cotizaciones (cada minuto, RN-09), despacho y reintentos de `outbox_messages` hacia WhatsApp, y reportes semanales y mensuales. Ejecutarlo dentro del proceso de la API (`BackgroundTasks` o un planificador embebido) lo pierde al reiniciar y se duplica al escalar a varias instancias. Redis ya forma parte de la infraestructura (ADR-06).
+  El sistema requiere trabajo fuera del ciclo petición-respuesta: vencimiento de cotizaciones (cada minuto, RN-09), despacho y reintentos de `outbox_messages` hacia el gateway de mensajería (ADR-10), reconciliación de mensajes entrantes, y reportes semanales y mensuales. Ejecutarlo dentro del proceso de la API (`BackgroundTasks` o un planificador embebido) lo pierde al reiniciar y se duplica al escalar a varias instancias. Redis ya forma parte de la infraestructura (ADR-06).
 * **Decisión:**
   Usar **arq** (cola de tareas asíncrona respaldada en Redis) como ejecutor de tareas. Un servicio `worker` independiente, con la misma imagen que la API, ejecuta `arq app.infrastructure.adapters.primary.jobs.worker.WorkerSettings`. Las tareas son adaptadores primarios que solo invocan casos de uso; no contienen lógica de negocio. Las tareas periódicas usan `cron_jobs` de arq y los reintentos de la cola outbox usan el mecanismo de reintento con *backoff* de arq.
 * **Alternativas consideradas:**
@@ -151,3 +152,29 @@
 * **Consecuencias:**
   * *Positivas:* Dependencias mantenidas; una única política de hash (Argon2id); imagen sin librerías de sistema adicionales.
   * *Negativas:* `slowapi` limita por clave arbitraria; los límites por contrato (OTP) requieren una clave compuesta definida en el adaptador.
+
+---
+
+## ADR-10: Chatwoot como Gateway de Mensajería Oculto
+
+* **Estado:** Aceptado.
+* **Fecha:** 2026-10-03.
+* **Especificación:** [05. Chatwoot como Gateway de Mensajería Oculto](05-spec-chatwoot-gateway.md).
+* **Contexto:**
+  La integración directa con Meta WhatsApp Cloud API (ADR-05) no permite que un encargado tome una conversación cuando el bot no basta ni que lea y responda desde EventPro. Se requieren traspaso bot-humano y una bandeja de conversaciones dentro de la plataforma, sin construir un sistema de mensajería propio. El proyecto es académico: usa el número de prueba de Meta for Developers, debe operar hasta el 2026-12-15 y su infraestructura debe costar US$0 (el presupuesto de US$20 se reserva para OpenAI).
+* **Decisión:**
+  Adoptar **Chatwoot autoalojado** como gateway de mensajería entre Meta Cloud API y EventPro, **invisible para los usuarios**: ningún encargado ni cliente usa su interfaz y EventPro consume su API.
+  1. **Puerto y adaptador:** `IMessagingPort` reemplaza a `IWhatsAppServicePort` (texto, listas interactivas, plantillas, adjuntos, cambio de estado y consulta de conversaciones y mensajes). `ChatwootMessagingAdapter` (`httpx`) lo implementa sobre la Application API de Chatwoot.
+  2. **Entrada de eventos:** `POST /api/v1/webhooks/chatwoot` recibe el webhook de cuenta firmado (HMAC-SHA256, ventana de 5 minutos, deduplicación por identificador). Es **solo interno**: el proxy lo bloquea y únicamente es accesible por la red interna de Docker.
+  3. **Bandeja en EventPro:** los encargados leen y responden desde la web mediante `/conversations/*` y un flujo SSE; los mensajes se consultan a Chatwoot y no se duplican en la base de datos.
+  4. **Vínculo de negocio:** la tabla `conversation_links` relaciona la conversación de Chatwoot con el cliente, la cotización vigente y el encargado asignado, junto con el motivo y el resumen del traspaso.
+  5. **Traspaso:** `pending` (responde el bot) y `open` (responde un humano) mediante el cambio de estado de la conversación.
+  6. **Resiliencia:** todo envío pasa por `outbox_messages` con reintentos y espera creciente; un job de reconciliación cada 5 minutos recupera los mensajes entrantes no vistos si Chatwoot estuvo caído.
+  7. **Canal de prueba:** se permanece en el número de prueba de Meta hasta la presentación; las credenciales de Meta se configuran dentro de Chatwoot, no en EventPro.
+* **Alternativas consideradas:**
+  * *Meta directo con bandeja propia (espejado de mensajes):* más código propio (medios, estados de entrega, reintentos) y doble fuente de verdad entre Meta, Chatwoot y la base de datos. Descartada.
+  * *Puentes no oficiales (Evolution API, WAHA):* riesgo de bloqueo del número y botones interactivos poco fiables. Descartadas.
+  * *Chatwoot Captain (agente de IA integrado):* consume presupuesto de OpenAI y cede el control del flujo del bot. Descartada.
+* **Consecuencias:**
+  * *Positivas:* Traspaso bot-humano y bandeja sin construir un sistema de mensajería; costo de infraestructura US$0 (Oracle Cloud Always Free); volver a Meta directo solo requeriría otro adaptador de `IMessagingPort`, sin cambios en el dominio; Chatwoot es la única fuente de verdad del canal.
+  * *Negativas:* Un servicio adicional de cuatro contenedores (~4 GB de memoria) que operar, respaldar y monitorear; dependencia de comportamientos de Chatwoot aún por verificar en la implementación (Agent Bot sin `outgoing_url`, reapertura de conversaciones resueltas); la entrada de eventos exige idempotencia y reconciliación porque no se confirma que Chatwoot reintente sus webhooks.
