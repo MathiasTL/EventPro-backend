@@ -14,16 +14,17 @@ Docs/
 │
 ├── 01-requisitos/                                 # FASE 1: Especificación de Requerimientos de Software (SRS)
 │   ├── 01-vision-alcance-y-actores.md             # Visión del producto, alcance del MVP y actores
-│   ├── 02-requerimientos-funcionales.md           # Catálogo formal RF-01 al RF-29 (estándar IEEE 830)
+│   ├── 02-requerimientos-funcionales.md           # Catálogo formal RF-01 al RF-32 (estándar IEEE 830)
 │   ├── 03-requerimientos-no-funcionales.md        # RNF (Rendimiento, Seguridad, Disponibilidad, Usabilidad móvil, etc.)
 │   ├── 04-reglas-de-negocio-y-control.md          # Fórmulas, 12 Procesos de Control y Máquinas de Estado
-│   └── 05-historias-de-usuario.md                 # 26 Historias de Usuario (US-01 a US-26) con Given-When-Then
+│   └── 05-historias-de-usuario.md                 # 32 Historias de Usuario (US-01 a US-32) con Given-When-Then
 │
 ├── 02-arquitectura/                               # FASE 2: Arquitectura de Software y Diseño de Sistemas
 │   ├── 01-diseno-arquitectonico-c4.md             # Diagramas C4 (Contexto, Contenedores y Componentes)
 │   ├── 02-backend-arquitectura-hexagonal.md       # Arquitectura Hexagonal en FastAPI (Domain, Ports, Adapters)
 │   ├── 03-frontend-arquitectura-fsd.md            # Feature-Sliced Design (FSD v2.1) en Frontend Web
-│   └── 04-adr-decisiones-arquitectura.md          # Registros de Decisiones de Arquitectura (ADR-01 a ADR-09)
+│   ├── 04-adr-decisiones-arquitectura.md          # Registros de Decisiones de Arquitectura (ADR-01 a ADR-10)
+│   └── 05-spec-chatwoot-gateway.md                # Especificación del gateway de mensajería Chatwoot (ADR-10)
 │
 ├── 03-datos/                                      # FASE 3: Persistencia y Diseño de Base de Datos
 │   ├── 01-diagrama-entidad-relacion.md            # Diagrama Entidad-Relación (DER en Mermaid)

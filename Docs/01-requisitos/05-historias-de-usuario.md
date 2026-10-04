@@ -25,7 +25,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Para** conocer las opciones y precios disponibles sin esperar a que un encargado responda manualmente.
 * **Criterios de Aceptación:**
   * **Dado que** un cliente envía un mensaje a la línea de WhatsApp fuera de una conversación en curso,
-  * **Cuando** el sistema procesa el webhook en menos de 1.5 segundos,
+  * **Cuando** el sistema recibe el mensaje a través del gateway de mensajería (webhook de Chatwoot) y acusa recibo en menos de 1.5 segundos,
   * **Entonces** envía un saludo de bienvenida con botones/lista interactiva mostrando las categorías de servicio (Hora Loca, Shows Infantiles, Baby Showers, DJ, Toldos).
 
 ---
@@ -478,7 +478,141 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 
 ---
 
-## 10. Matriz de Trazabilidad: Requerimientos Funcionales (RF) vs. Historias de Usuario (US)
+## 10. Épica 9: Atención Humana y Bandeja de Conversaciones
+
+### US-27: Solicitar Hablar con un Encargado
+* **Mapeo:** RF-30, RN-10, PC-13
+* **Prioridad:** Must have | **Estimación:** 3 SP
+* **Narrativa:**
+  * **Como** cliente que conversa con el bot por WhatsApp,
+  * **Quiero** poder pedir que me atienda una persona, o ser derivado si el bot no logra entenderme,
+  * **Para** resolver mi consulta sin quedarme atascado en el flujo automático.
+* **Criterios de Aceptación:**
+  * **Dado que** el cliente elige la opción «Hablar con un encargado» o lo escribe con texto equivalente,
+  * **Cuando** el bot procesa el mensaje,
+  * **Entonces** responde «Te comunico con un encargado», la conversación pasa a `open` sin asignar con `handoff_reason = CLIENT_REQUEST` y un `handoff_summary` (datos capturados y cotización vigente), y el bot deja de responder.
+  * **Dado que** el bot no entiende dos mensajes consecutivos del cliente,
+  * **Cuando** procesa el segundo mensaje,
+  * **Entonces** deriva la conversación con `handoff_reason = BOT_NOT_UNDERSTOOD`.
+  * **Dado que** el bot sufre una excepción no controlada al procesar un mensaje,
+  * **Cuando** captura el error,
+  * **Entonces** responde «Tuvimos un problema, te comunico con un encargado» y deriva con `handoff_reason = BOT_ERROR`.
+  * **Dado que** la conversación está `open` (modo `HUMAN`),
+  * **Cuando** el cliente envía nuevos mensajes,
+  * **Entonces** el bot no responde y los mensajes quedan disponibles para el encargado.
+
+---
+
+### US-28: Tomar una Conversación y Responder desde EventPro
+* **Mapeo:** RF-30, RF-31, RN-10, RN-11
+* **Prioridad:** Must have | **Estimación:** 5 SP
+* **Narrativa:**
+  * **Como** encargado,
+  * **Quiero** tomar una conversación derivada y responder al cliente desde la plataforma EventPro,
+  * **Para** atender el caso sin abrir otra herramienta y sin que el bot interfiera.
+* **Criterios de Aceptación:**
+  * **Dado que** existe una conversación derivada sin asignar,
+  * **Cuando** el encargado ejecuta «Tomar conversación»,
+  * **Entonces** la conversación queda `open` y asignada a él, y se conserva el motivo original de la derivación.
+  * **Dado que** el encargado no ha tomado la conversación (modo `BOT` o asignada a otro encargado),
+  * **Cuando** intenta enviar un mensaje,
+  * **Entonces** el sistema lo rechaza con `conversation-not-taken` o `conversation-taken-by-other`, y la interfaz le ofrece tomar la conversación cuando corresponde.
+  * **Dado que** el encargado tomó la conversación y la ventana de 24 h está abierta,
+  * **Cuando** envía un texto o un adjunto,
+  * **Entonces** el mensaje se acepta con estado `QUEUED`, se entrega al cliente por WhatsApp y el autor real queda registrado en `audit_logs`.
+  * **Dado que** la ventana de 24 h está cerrada,
+  * **Cuando** el encargado intenta enviar texto libre,
+  * **Entonces** el sistema lo rechaza con `service-window-closed` y la interfaz solo permite elegir una plantilla aprobada.
+  * **Dado que** el cliente envió una imagen o un comprobante en el chat,
+  * **Cuando** el encargado abre la conversación,
+  * **Entonces** visualiza el adjunto mediante el proxy autenticado de EventPro, sin que el navegador acceda a Chatwoot.
+
+---
+
+### US-29: Devolver la Conversación al Bot
+* **Mapeo:** RF-30, RN-10
+* **Prioridad:** Must have | **Estimación:** 2 SP
+* **Narrativa:**
+  * **Como** encargado que terminó de atender a un cliente,
+  * **Quiero** devolver la conversación al bot,
+  * **Para** que el flujo automático continúe con el cliente sin que yo deba seguir pendiente del chat.
+* **Criterios de Aceptación:**
+  * **Dado que** el encargado tiene asignada una conversación `open`,
+  * **Cuando** ejecuta «Devolver al bot»,
+  * **Entonces** la conversación pasa a `pending`, se limpia el encargado asignado, el bot retoma las respuestas y el motivo de la última derivación se conserva como historial.
+  * **Dado que** la conversación está asignada a otro encargado,
+  * **Cuando** un `ENCARGADO` intenta devolverla,
+  * **Entonces** el sistema responde `conversation-taken-by-other`; solo la puede devolver el encargado asignado o un `SUPERADMIN`.
+  * **Dado que** la conversación ya está en `pending`,
+  * **Cuando** se ejecuta la devolución,
+  * **Entonces** la operación no produce cambios y responde correctamente.
+
+---
+
+### US-30: Bandeja de Conversaciones y Motivos de Falla de Envío
+* **Mapeo:** RF-31, RN-10, RN-11
+* **Prioridad:** Must have | **Estimación:** 5 SP
+* **Narrativa:**
+  * **Como** encargado,
+  * **Quiero** ver una bandeja con las conversaciones de WhatsApp, filtrarlas y entender por qué falló un mensaje,
+  * **Para** priorizar a quién atender y reenviar los mensajes que no llegaron.
+* **Criterios de Aceptación:**
+  * **Dado que** existen conversaciones atendidas por el bot, por encargados y derivaciones sin asignar,
+  * **Cuando** el encargado filtra por modo (`BOT` o `HUMAN`) o por «asignadas a mí» o «sin asignar»,
+  * **Entonces** la bandeja muestra el cliente, el modo, el motivo de traspaso con su etiqueta en español, la vista previa del último mensaje y si la ventana de 24 h sigue abierta.
+  * **Dado que** un mensaje saliente tiene estado de entrega `FAILED`,
+  * **Cuando** el encargado abre el hilo,
+  * **Entonces** ve un motivo legible en español (por ejemplo, «La ventana de 24 horas está cerrada» o «El número no está entre los destinatarios de prueba») y, si se agotaron los reintentos del envío, un botón «Reintentar» que vuelve a enviar el mensaje.
+  * **Dado que** Chatwoot no está disponible,
+  * **Cuando** el encargado abre la bandeja o un hilo,
+  * **Entonces** la interfaz informa que la mensajería no está disponible temporalmente, sin exponer detalles del gateway.
+  * **Dado que** un usuario con rol `OPERADOR` intenta acceder a las conversaciones,
+  * **Cuando** invoca el endpoint,
+  * **Entonces** recibe un error de permiso denegado.
+
+---
+
+### US-31: Bandeja en Tiempo Real y Aviso de Nuevas Derivaciones
+* **Mapeo:** RF-32, RF-30
+* **Prioridad:** Must have | **Estimación:** 3 SP
+* **Narrativa:**
+  * **Como** encargado con la bandeja abierta,
+  * **Quiero** que los mensajes nuevos y las derivaciones del bot aparezcan sin recargar la página,
+  * **Para** responder rápido a los clientes que necesitan ayuda.
+* **Criterios de Aceptación:**
+  * **Dado que** el encargado tiene la bandeja abierta,
+  * **Cuando** el bot deriva una conversación o el cliente envía un mensaje nuevo,
+  * **Entonces** la bandeja se actualiza en tiempo real y muestra un aviso de la nueva derivación con su motivo.
+  * **Dado que** cambia el estado de entrega de un mensaje (`SENT`, `DELIVERED`, `READ` o `FAILED`),
+  * **Cuando** el sistema recibe la actualización,
+  * **Entonces** el hilo abierto refleja el nuevo estado sin recargar.
+  * **Dado que** se interrumpe la conexión de eventos,
+  * **Cuando** la interfaz se reconecta automáticamente,
+  * **Entonces** vuelve a solicitar la bandeja completa para recuperar los eventos perdidos.
+  * **Dado que** el token de acceso del encargado vence,
+  * **Cuando** el servidor cierra el stream,
+  * **Entonces** la interfaz renueva la sesión y se reconecta sin intervención del usuario.
+
+---
+
+### US-32: Reasignación de una Conversación por el Superadministrador
+* **Mapeo:** RF-30
+* **Prioridad:** Must have | **Estimación:** 2 SP
+* **Narrativa:**
+  * **Como** superadministrador,
+  * **Quiero** tomar una conversación que está asignada a otro encargado,
+  * **Para** que ningún cliente quede sin atención si ese encargado no está disponible.
+* **Criterios de Aceptación:**
+  * **Dado que** una conversación está asignada a otro encargado,
+  * **Cuando** el `SUPERADMIN` ejecuta «Tomar conversación»,
+  * **Entonces** la conversación queda asignada al `SUPERADMIN` y la acción se registra en `audit_logs` como `OVERRIDE_CONVERSATION_ASSIGNMENT` con el usuario anterior.
+  * **Dado que** un `ENCARGADO` intenta tomar una conversación asignada a otro encargado,
+  * **Cuando** ejecuta la acción,
+  * **Entonces** el sistema responde `conversation-taken-by-other` y no cambia la asignación.
+
+---
+
+## 11. Matriz de Trazabilidad: Requerimientos Funcionales (RF) vs. Historias de Usuario (US)
 
 | RF | Requerimiento Funcional Técnico | Historia de Usuario Vinculada | Épica | Prioridad |
 | :---: | :--- | :---: | :--- | :---: |
@@ -511,5 +645,8 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 | **RF-27** | Consulta de la Bitácora de Auditoría | **US-24** | Épica 8: Administración de la Plataforma | Should have |
 | **RF-28** | Consulta de Clientes | **US-25** | Épica 8: Administración de la Plataforma | Should have |
 | **RF-29** | Gestión de Elencos y Vinculación con Operadores | **US-26** | Épica 8: Administración de la Plataforma | Must have |
+| **RF-30** | Traspaso de la Conversación del Bot a un Encargado y Retorno al Bot | **US-27, US-28, US-29, US-31, US-32** | Épica 9: Atención Humana y Bandeja | Must have |
+| **RF-31** | Bandeja de Conversaciones en EventPro | **US-28, US-30** | Épica 9: Atención Humana y Bandeja | Must have |
+| **RF-32** | Actualización en Tiempo Real de la Bandeja | **US-31** | Épica 9: Atención Humana y Bandeja | Should have |
 
-> **Criterio de prioridad:** el catálogo de RF es la fuente de verdad (Alta = *Must have*, Media = *Should have*, Baja = *Could have*). La prioridad de cada fila de la matriz es la del RF; la prioridad de una historia es la mayor de los RF que cubre. Cobertura: 29 RF y 26 historias; cada RF tiene al menos una historia.
+> **Criterio de prioridad:** el catálogo de RF es la fuente de verdad (Alta = *Must have*, Media = *Should have*, Baja = *Could have*). La prioridad de cada fila de la matriz es la del RF; la prioridad de una historia es la mayor de los RF que cubre. Cobertura: 32 RF y 32 historias; cada RF tiene al menos una historia.

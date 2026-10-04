@@ -349,19 +349,19 @@ Extensiones de tiempo registradas durante el show (RF-19). El cobro vive en `pay
 ---
 
 ### 2.19 Tabla: `outbox_messages`
-Cola de mensajes salientes de WhatsApp con reintentos (patrón *outbox*). Desacopla las transacciones de negocio de la disponibilidad de la API de Meta (ADR-05).
+Cola de mensajes salientes con reintentos (patrón *outbox*). Desacopla las transacciones de negocio de la disponibilidad de la pasarela de mensajería: el despachador entrega cada mensaje a Chatwoot mediante `IMessagingPort`, y Chatwoot lo envía por WhatsApp (ADR-05, ADR-10).
 
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del mensaje. |
 | `recipient_phone` | `VARCHAR(20)` | NO | - | - | Teléfono de destino en formato E.164. |
-| `message_type` | `VARCHAR(30)` | NO | - | CHECK in (`TEXT`, `TEMPLATE`, `INTERACTIVE`, `DOCUMENT`) | Tipo de mensaje de WhatsApp. |
+| `message_type` | `VARCHAR(30)` | NO | - | CHECK in (`TEXT`, `TEMPLATE`, `INTERACTIVE`, `DOCUMENT`) | Tipo de mensaje de WhatsApp enviado a través de la pasarela. |
 | `payload` | `JSONB` | SÍ | `NULL` | - | Contenido estructurado del mensaje; se anula (`NULL`) tras el envío de mensajes con OTP. |
-| `status` | `VARCHAR(20)` | NO | `'PENDING'` | CHECK in (`PENDING`, `SENT`, `FAILED`) | `PENDING` en cola, `SENT` entregado a la API, `FAILED` reintentos agotados. |
+| `status` | `VARCHAR(20)` | NO | `'PENDING'` | CHECK in (`PENDING`, `SENT`, `FAILED`) | `PENDING` en cola, `SENT` entregado a la pasarela (Chatwoot), `FAILED` reintentos agotados. |
 | `attempts` | `INTEGER` | NO | `0` | CHECK (`attempts >= 0`) | Intentos de envío realizados. |
 | `max_attempts` | `INTEGER` | NO | `5` | CHECK (`max_attempts > 0`) | Máximo de intentos antes de marcar `FAILED`. |
 | `next_attempt_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | INDEX | Momento del próximo intento (retroceso exponencial). |
-| `last_error` | `TEXT` | SÍ | `NULL` | - | Último error devuelto por la API. |
+| `last_error` | `TEXT` | SÍ | `NULL` | - | Último error devuelto por la pasarela de mensajería. |
 | `sent_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento del envío exitoso. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de encolado. |
 
@@ -377,7 +377,7 @@ Bitácora de auditoría para trazabilidad de decisiones críticas y procesos de 
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del log. |
 | `user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Usuario responsable de la acción; nulo en acciones del sistema o del cliente (por ejemplo, la firma). |
-| `action` | `VARCHAR(50)` | NO | - | CHECK in (`OVERRIDE_MOBILITY`, `OVERRIDE_TRANSIT_INTERVAL`, `APPROVE_OVERBOOKED_PAYMENT`, `REJECT_OVERBOOKED_PAYMENT`, `AUDIT_PAYMENT`, `MANUAL_CONTRACT`, `CONTRACT_SIGNED`) | Acción registrada. `CONTRACT_SIGNED` guarda en `new_values` el SHA-256 del PDF sellado, la verificación del OTP, la IP, el agente de usuario y las marcas de tiempo. |
+| `action` | `VARCHAR(50)` | NO | - | CHECK in (`OVERRIDE_MOBILITY`, `OVERRIDE_TRANSIT_INTERVAL`, `APPROVE_OVERBOOKED_PAYMENT`, `REJECT_OVERBOOKED_PAYMENT`, `AUDIT_PAYMENT`, `MANUAL_CONTRACT`, `CONTRACT_SIGNED`, `SEND_CONVERSATION_MESSAGE`, `OVERRIDE_CONVERSATION_ASSIGNMENT`) | Acción registrada. `SEND_CONVERSATION_MESSAGE` identifica al encargado que escribió un mensaje enviado con el agente de servicio de Chatwoot (ADR-10). `OVERRIDE_CONVERSATION_ASSIGNMENT` registra la reasignación de una conversación por un `SUPERADMIN`. `CONTRACT_SIGNED` guarda en `new_values` el SHA-256 del PDF sellado, la verificación del OTP, la IP, el agente de usuario y las marcas de tiempo. |
 | `entity_name` | `VARCHAR(50)` | NO | - | - | Entidad modificada (`quotes`, `events`, `contracts`, `payments`, `crew_assignments`). |
 | `entity_id` | `UUID` | NO | - | INDEX (`entity_name`, `entity_id`) | UUID de la entidad en cuestión. |
 | `old_values` | `JSONB` | SÍ | `NULL` | - | Estado anterior en formato JSON. |
@@ -400,3 +400,28 @@ Bitácora de auditoría para trazabilidad de decisiones críticas y procesos de 
 *Restricciones de tabla:*
 * `UNIQUE(package_id, inventory_item_id)`
 * `INDEX(inventory_item_id)`
+
+---
+
+### 2.22 Tabla: `conversation_links`
+Vínculo entre una conversación de Chatwoot y los datos de negocio de EventPro (cliente, cotización vigente y encargado que la tomó). Es la única información de conversaciones que persiste EventPro (ADR-10).
+
+**EventPro no almacena mensajes.** Chatwoot es la fuente de verdad de los mensajes, los medios, los estados de entrega y el estado de la conversación (`pending` o `open`); EventPro los consulta por API y los recibe por webhook.
+
+| Columna | Tipo | Nulo | Default | Restricciones | Descripción |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del vínculo. |
+| `chatwoot_conversation_id` | `BIGINT` | NO | - | UNIQUE | Identificador de la conversación en Chatwoot. |
+| `client_id` | `UUID` | NO | - | FK (`clients.id`), INDEX | Cliente de la conversación (el teléfono de WhatsApp es su clave natural). |
+| `quote_id` | `UUID` | SÍ | `NULL` | FK (`quotes.id`) | Cotización vigente de la conversación, si existe. |
+| `assigned_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX parcial | Encargado que tomó la conversación; nulo mientras responde el bot o si está derivada sin asignar. |
+| `handoff_reason` | `VARCHAR(30)` | SÍ | `NULL` | CHECK in (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`) | Motivo de la última derivación a un humano; nulo si nunca fue derivada. UI: «Solicitud del cliente», «Bot no entendió», «Toma manual», «Error del bot». |
+| `handoff_summary` | `TEXT` | SÍ | `NULL` | - | Resumen generado al derivar (datos capturados y cotización vigente). |
+| `handed_off_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora de la última derivación; permite ordenar la bandeja. |
+| `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de creación del vínculo. |
+| `updated_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de la última modificación del vínculo. |
+
+*Restricciones de tabla:*
+* `UNIQUE(chatwoot_conversation_id)`
+* `INDEX(client_id)`
+* `CREATE INDEX ix_conversation_links_assigned_user ON conversation_links (assigned_user_id) WHERE assigned_user_id IS NOT NULL` para el filtro «asignadas a mí» de la bandeja.

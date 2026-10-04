@@ -27,13 +27,16 @@ flowchart TD
     end
 
     subgraph Externos["Sistemas y Servicios Externos"]
-        WhatsAppAPI["WhatsApp Business Cloud API<br/><i>[External Service]</i><br/>Canal conversacional y webhooks para atención de clientes."]
+        WhatsAppAPI["Meta WhatsApp Cloud API<br/><i>[External Service]</i><br/>Canal conversacional (número de prueba de Meta)."]
+        Chatwoot["Chatwoot (autoalojado)<br/><i>[Gateway de mensajería oculto]</i><br/>Gestiona conversaciones y traspaso bot-humano; invisible para los usuarios."]
         GoogleMaps["Google Maps Platform<br/><i>[External Service]</i><br/>Cálculo de distancias y tiempos de tránsito para movilidad e intervalos."]
     end
 
     Cliente -->|"Chatea, consulta y envía comprobantes"| WhatsAppAPI
-    WhatsAppAPI -->|"Dispara eventos vía Webhook"| EventProApp
-    EventProApp -->|"Envía mensajes, cotizaciones y contratos"| WhatsAppAPI
+    WhatsAppAPI -->|"Webhook HTTPS"| Chatwoot
+    Chatwoot -->|"Webhook de cuenta firmado (red interna)"| EventProApp
+    EventProApp -->|"Application API: envía mensajes, cotizaciones y contratos"| Chatwoot
+    Chatwoot -->|"Entrega mensajes"| WhatsAppAPI
 
     Cliente -->|"Revisa y firma electrónicamente el contrato (web móvil)"| EventProApp
     Encargado -->|"Administra cronograma, contratos manuales, overrides y dashboards"| EventProApp
@@ -56,12 +59,12 @@ flowchart TB
     end
 
     subgraph FrontendApp["Frontend (Feature-Sliced Design)"]
-        SPA["EventPro Web App (FSD)<br/><i>[Container: TypeScript / React / Next.js]</i><br/>Panel del encargado, vista móvil del operador (agenda, cobro, extensiones), firma electrónica del contrato por el cliente y dashboards."]
+        SPA["EventPro Web App (FSD)<br/><i>[Container: TypeScript / React / Next.js]</i><br/>Panel del encargado (incluye la bandeja de conversaciones con SSE), vista móvil del operador (agenda, cobro, extensiones), firma electrónica del contrato por el cliente y dashboards."]
     end
 
     subgraph BackendApp["Backend (Arquitectura Hexagonal)"]
-        API["EventPro API Server<br/><i>[Container: Python / FastAPI]</i><br/>Expone el núcleo de dominio, procesa webhooks, calcula tarifas, coordina persistencia, genera PDFs y publica GET /health (estado de PostgreSQL y Redis)."]
-        Worker["EventPro Worker<br/><i>[Container: Python / arq]</i><br/>Proceso aparte (servicio worker de Docker Compose): vencimiento de cotizaciones, cola outbox_messages hacia WhatsApp con reintentos, reportes semanales y mensuales y, opcionalmente, el renderizado de PDFs."]
+        API["EventPro API Server<br/><i>[Container: Python / FastAPI]</i><br/>Expone el núcleo de dominio, procesa el webhook de Chatwoot, publica eventos SSE, calcula tarifas, coordina persistencia, genera PDFs y publica GET /health (estado de PostgreSQL y Redis)."]
+        Worker["EventPro Worker<br/><i>[Container: Python / arq]</i><br/>Proceso aparte (servicio worker de Docker Compose): vencimiento de cotizaciones, cola outbox_messages hacia Chatwoot con reintentos, job de reconciliación cada 5 minutos, reportes semanales y mensuales y, opcionalmente, el renderizado de PDFs."]
     end
 
     subgraph Almacenamiento["Persistencia y Caché"]
@@ -71,15 +74,19 @@ flowchart TB
     end
 
     subgraph ServiciosTerceros["Servicios de Terceros"]
-        ExtWhatsApp["Meta / WhatsApp Cloud API"]
+        ExtWhatsApp["Meta / WhatsApp Cloud API<br/>(número de prueba)"]
+        ExtChatwoot["Chatwoot (autoalojado, gateway oculto)<br/><i>[Container: Rails / Sidekiq / PostgreSQL / Redis]</i><br/>Conversaciones y traspaso bot-humano; sin acceso de usuarios a su interfaz."]
         ExtMaps["Google Maps Platform"]
     end
 
     UserWeb -->|"HTTPS / JSON"| SPA
     SPA -->|"HTTPS / REST API (JWT)"| API
     UserWhatsApp -->|"Mensajería Instantánea"| ExtWhatsApp
-    ExtWhatsApp -->|"HTTPS POST (Webhooks)"| API
-    API -->|"HTTPS POST (Envío de mensajes)"| ExtWhatsApp
+    ExtWhatsApp -->|"Webhook HTTPS"| ExtChatwoot
+    ExtChatwoot -->|"Mensajes salientes"| ExtWhatsApp
+    ExtChatwoot -->|"Webhook de cuenta firmado (red interna Docker)"| API
+    API -->|"Application API (HTTP / JSON, red interna Docker)"| ExtChatwoot
+    API -->|"SSE (eventos de conversación)"| SPA
 
     API -->|"SQLAlchemy ORM (TCP: 5432)"| DB
     API -->|"Redis Protocol (TCP: 6379)"| Cache
@@ -88,7 +95,7 @@ flowchart TB
     Worker -->|"Consume tareas (arq)"| Cache
     Worker -->|"SQLAlchemy ORM (TCP: 5432)"| DB
     Worker -->|"Lectura / Escritura de binarios"| Storage
-    Worker -->|"HTTPS POST (outbox_messages)"| ExtWhatsApp
+    Worker -->|"Application API (outbox_messages y reconciliación)"| ExtChatwoot
     API -->|"REST API / HTTPS"| ExtMaps
 ```
 
@@ -101,10 +108,10 @@ El siguiente diagrama detalla cómo se organizan los componentes internos del Ba
 ```mermaid
 flowchart LR
     subgraph AdaptadoresEntrada["Adaptadores Primarios (Driving Adapters)"]
-        HttpRouters["FastAPI Routers<br/><i>[Controllers REST]</i><br/>/api/v1/auth, /users, /audit-logs, /catalog, /crews, /clients, /quotes, /payments, /contracts, /events, /overrides, /reports"]
-        WebhookController["WhatsApp Webhook Controller<br/><i>[HTTP Handler]</i><br/>/api/v1/webhooks/whatsapp"]
+        HttpRouters["FastAPI Routers<br/><i>[Controllers REST]</i><br/>/api/v1/auth, /users, /audit-logs, /catalog, /crews, /clients, /quotes, /payments, /contracts, /events, /overrides, /reports, /conversations/* (incluye SSE)"]
+        WebhookController["Chatwoot Webhook Controller<br/><i>[HTTP Handler, solo red interna]</i><br/>/api/v1/webhooks/chatwoot"]
         HealthController["Health Controller<br/><i>[HTTP Handler]</i><br/>GET /health (fuera de /api/v1)"]
-        ArqWorker["arq Worker (jobs/worker.py)<br/><i>[Tareas programadas y diferidas]</i><br/>Vencimiento de cotizaciones, outbox_messages, reportes"]
+        ArqWorker["arq Worker (jobs/worker.py)<br/><i>[Tareas programadas y diferidas]</i><br/>Vencimiento de cotizaciones, outbox_messages, reconciliación, reportes"]
     end
 
     subgraph PuertosEntrada["Puertos de Entrada (Driving Ports / Use Cases)"]
@@ -126,7 +133,7 @@ flowchart LR
     subgraph PuertosSalida["Puertos de Salida (Driven Ports / Interfaces)"]
         PortRepo["IEventRepository<br/>IQuoteRepository<br/>IContractRepository"]
         PortMaps["IMapsServicePort"]
-        PortWhatsApp["IWhatsAppServicePort"]
+        PortMessaging["IMessagingPort"]
         PortPdf["IPdfGeneratorPort"]
         PortStorage["IFileStoragePort"]
         PortCache["ICacheLockPort"]
@@ -136,7 +143,7 @@ flowchart LR
     subgraph AdaptadoresSalida["Adaptadores Secundarios (Driven Adapters)"]
         SqlAlchemyRepo["PostgreSQL Adapter<br/><i>[SQLAlchemy Models & Repos]</i>"]
         GoogleMapsAdapter["Google Maps Adapter<br/><i>[HTTPX / REST Client]</i>"]
-        WhatsAppAdapter["WhatsApp Cloud Adapter<br/><i>[HTTPX Client]</i>"]
+        ChatwootAdapter["ChatwootMessagingAdapter<br/><i>[HTTPX]</i>"]
         WeasyPrintAdapter["PDF Generation Adapter<br/><i>[WeasyPrint / Jinja2]</i>"]
         FileSystemAdapter["File Storage Adapter<br/><i>[Local / S3 Compatible]</i>"]
         RedisAdapter["Redis Cache & Lock Adapter<br/><i>[Redis-py]</i>"]
@@ -154,12 +161,12 @@ flowchart LR
     DomainServices --> Entities & ValueObjects
 
     %% Relaciones Domain/UseCases -> Driven Ports
-    UCQuote & UCPay & UCContract & UCSchedule & UCOverride & UCReport -.-> PortRepo & PortMaps & PortWhatsApp & PortPdf & PortStorage & PortCache & PortSignature
+    UCQuote & UCPay & UCContract & UCSchedule & UCOverride & UCReport -.-> PortRepo & PortMaps & PortMessaging & PortPdf & PortStorage & PortCache & PortSignature
 
     %% Relaciones Driven Ports -> Driven Adapters
     PortRepo --> SqlAlchemyRepo
     PortMaps --> GoogleMapsAdapter
-    PortWhatsApp --> WhatsAppAdapter
+    PortMessaging --> ChatwootAdapter
     PortPdf --> WeasyPrintAdapter
     PortStorage --> FileSystemAdapter
     PortCache --> RedisAdapter
@@ -167,5 +174,7 @@ flowchart LR
 ```
 
 > **Nota sobre nombres:** los puertos y entidades de este diagrama usan los nombres canónicos de la [arquitectura hexagonal](02-backend-arquitectura-hexagonal.md) (`IPdfGeneratorPort`, `IFileStoragePort`, `EventStatus`, etc.), que es la fuente de verdad. Los módulos `/users`, `/audit-logs`, `/crews` y `/clients` se exponen como routers adicionales dentro del mismo adaptador web.
+>
+> **Chatwoot como gateway oculto:** el endpoint `/api/v1/webhooks/chatwoot` solo es accesible por la red interna de Docker (el proxy lo bloquea) y el módulo `/conversations/*` sirve la bandeja de los encargados, incluido el flujo SSE. Detalle en la [especificación del gateway](05-spec-chatwoot-gateway.md) y en [ADR-10](04-adr-decisiones-arquitectura.md#adr-10-chatwoot-como-gateway-de-mensajería-oculto).
 >
 > **Renderizado de PDFs:** WeasyPrint es síncrono y consume CPU (ver RNF-01.3); el adaptador de PDF se ejecuta en el *worker* de arq o en un *threadpool*, nunca en el *event loop* de la API.

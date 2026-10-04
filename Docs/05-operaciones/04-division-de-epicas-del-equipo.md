@@ -11,14 +11,14 @@ Este documento asigna el desarrollo de EventPro en **6 épicas verticales**. Cad
 
 | # | Épica | Dueño | Historias | Módulos API principales |
 | :---: | :--- | :--- | :--- | :--- |
-| E1 | Bot de WhatsApp y Cotizador | **Mathias** | US-01 a US-07, US-25 | `/quotes`, `/clients`, `/webhooks/whatsapp` |
+| E1 | Bot de WhatsApp, Cotizador y Bandeja de Conversaciones | **Mathias** | US-01 a US-07, US-25, US-27 a US-32 | `/quotes`, `/clients`, `/webhooks/chatwoot`, `/conversations` |
 | E2 | Identidad, Seguridad y Plataforma | **Diego** | US-23, US-24 + transversal (RNF, RBAC) | `/health`, `/auth`, `/users`, `/audit-logs` |
 | E3 | Catálogo Comercial y Elencos | **David** | US-26 + soporte de US-01, US-02, US-08 | `/catalog/*`, `/crews` |
 | E4 | Disponibilidad y Procesos de Control | **Renzo** | US-08, US-09, US-10, US-19, US-20 | `/overrides/*` + motor de disponibilidad |
 | E5 | Pagos, Contratos y Firma Electrónica | **Christian** | US-11 a US-15 | `/payments`, `/contracts`, `/contracts/sign/*` |
 | E6 | Operación del Evento y Analítica | **Nicolas** | US-16, US-17, US-18, US-21, US-22 | `/events`, `/reports` |
 
-**Por qué esta división:** las épicas originales 6 (*overrides*) y 7 (analítica) son pequeñas y dependen de otras, así que se integraron en la épica de la que dependen. Lo transversal (autenticación y catálogo) se separó porque **bloquea a todos los demás**; las historias de administración (usuarios, auditoría, clientes y elencos, Épica 8 de las historias de usuario) se reparten entre las épicas que son dueñas de esos módulos.
+**Por qué esta división:** las épicas originales 6 (*overrides*) y 7 (analítica) son pequeñas y dependen de otras, así que se integraron en la épica de la que dependen. Lo transversal (autenticación y catálogo) se separó porque **bloquea a todos los demás**; las historias de administración (usuarios, auditoría, clientes y elencos, Épica 8 de las historias de usuario) se reparten entre las épicas que son dueñas de esos módulos. La Épica 9 de las historias (atención humana y bandeja de conversaciones, US-27 a US-32) pertenece a E1, porque comparte con el bot el gateway de mensajería (Chatwoot) y la conversación del cliente.
 
 ---
 
@@ -40,21 +40,21 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 
 ## 3. Detalle por épica
 
-### E1 — Bot de WhatsApp y Cotizador · Mathias
+### E1 — Bot de WhatsApp, Cotizador y Bandeja de Conversaciones · Mathias
 
-**Objetivo:** que el cliente cotice por WhatsApp en segundos, sin depender del encargado.
+**Objetivo:** que el cliente cotice por WhatsApp en segundos, sin depender del encargado, y que un encargado pueda tomar la conversación cuando el bot no basta y responder desde la plataforma de EventPro (el cliente nunca ve Chatwoot; ver [Especificación del gateway](../02-arquitectura/05-spec-chatwoot-gateway.md)).
 
-**Historias:** US-01 Saludo y catálogo · US-02 Paquete, temática y extras · US-03 Datos, ubicación y observaciones · US-04 Movilidad automática · US-05 Exención por transporte propio · US-06 Liquidación (total, adelanto 10 %, saldo) · US-07 Envío del resumen · US-25 Consulta de clientes.
+**Historias:** US-01 Saludo y catálogo · US-02 Paquete, temática y extras · US-03 Datos, ubicación y observaciones · US-04 Movilidad automática · US-05 Exención por transporte propio · US-06 Liquidación (total, adelanto 10 %, saldo) · US-07 Envío del resumen · US-25 Consulta de clientes · US-27 Solicitar hablar con un encargado · US-28 Tomar una conversación y responder desde EventPro · US-29 Devolver la conversación al bot · US-30 Bandeja de conversaciones y motivos de falla de envío · US-31 Bandeja en tiempo real y aviso de nuevas derivaciones · US-32 Reasignación de una conversación por el superadministrador.
 
-**Requerimientos:** RF-01 a RF-08, RF-14 (captura de observaciones en el chat), RF-28.
+**Requerimientos:** RF-01 a RF-08, RF-14 (captura de observaciones en el chat), RF-28, RF-30 (traspaso), RF-31 (bandeja) y RF-32 (tiempo real).
 
 | Capa | Alcance |
 | :--- | :--- |
 | Dominio | Agregado `Quote` con su máquina de estados, `Client`, cálculo de liquidación determinística, reglas de movilidad |
-| Casos de uso | Crear cotización, calcular movilidad, liquidar, enviar resumen, cancelar, vencer cotizaciones (tarea programada) |
-| Adaptadores | WhatsApp Cloud API / Chatwoot (entrada y salida), Google Maps (distancias), cola `outbox_messages` con arq, repositorios de cotizaciones y clientes |
-| Endpoints | `GET/POST /webhooks/whatsapp`, `POST/GET /quotes`, `GET /quotes/{id}`, `POST /quotes/{id}/cancel`, `GET /clients`, `GET /clients/{id}` |
-| Frontend | Bandeja de cotizaciones con filtros y estados, detalle de cotización, listado y ficha de clientes |
+| Casos de uso | Crear cotización, calcular movilidad, liquidar, enviar resumen, cancelar, vencer cotizaciones (tarea programada), traspasar la conversación a un encargado, tomarla, responder, devolverla al bot, reasignarla, conciliar mensajes perdidos (tarea programada) |
+| Adaptadores | Puerto `IMessagingPort` con `ChatwootMessagingAdapter` (entrada y salida de WhatsApp a través de Chatwoot), webhook firmado de Chatwoot, publicación de eventos por SSE, Google Maps (distancias), cola `outbox_messages` con arq, repositorios de cotizaciones, clientes y `conversation_links` |
+| Endpoints | `POST /webhooks/chatwoot` (interno), `POST/GET /quotes`, `GET /quotes/{id}`, `POST /quotes/{id}/cancel`, `GET /clients`, `GET /clients/{id}`, `/conversations` (listado, mensajes, adjuntos, `takeover`, `release`, envío, `stream` SSE) |
+| Frontend | Bandeja de cotizaciones con filtros y estados, detalle de cotización, listado y ficha de clientes, **bandeja de conversaciones** (`pages/conversations`, `widgets/conversation-inbox`, `widgets/conversation-thread`, `features/conversation-takeover`, `features/send-message`, `features/conversation-stream`, `entities/conversation`, `entities/message`) |
 
 **Entregables clave:**
 
@@ -62,6 +62,9 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 - [ ] Respuesta del bot en menos de 1.5 s (RNF de rendimiento).
 - [ ] Vencimiento automático de cotizaciones con arq.
 - [ ] Modelo `Quote` documentado y compartido con el equipo en el Sprint 0.
+- [ ] Puerto `IMessagingPort` publicado en el Sprint 0 con una implementación falsa, para que E5 envíe el enlace de firma y el OTP sin esperar a Chatwoot.
+- [ ] Chatwoot operativo según [Docker e infraestructura local, sección 5](02-docker-e-infraestructura-local.md#5-chatwoot-primera-configuración) y webhook interno firmado.
+- [ ] Traspaso bot-humano y bandeja de conversaciones con actualización en tiempo real (US-27 a US-32).
 
 ---
 
@@ -216,7 +219,7 @@ Estos son los puntos donde una épica consume a otra. Cada contrato se define co
 | E1 (Mathias) | E3 (David) | Lectura del catálogo | El bot muestra paquetes, temáticas y extras |
 | E1 (Mathias) | E4 (Renzo) | Verificación de disponibilidad | Antes de confirmar una cotización |
 | E1 (Mathias) | E5 (Christian) | Registro de adelanto | El cliente envía la captura del pago por WhatsApp |
-| E5 (Christian) | E1 (Mathias) | Envío de mensajes por la cola `outbox_messages` | Enviar el enlace de firma y avisos de pago |
+| E5 (Christian) | E1 (Mathias) | `IMessagingPort` (a través de la cola `outbox_messages`; implementación `ChatwootMessagingAdapter`) | Enviar el enlace de firma, el OTP y avisos de pago |
 | E6 (Nicolas) | E5 (Christian) | Contrato firmado → evento confirmado | Un contrato firmado aparece en el cronograma |
 | E6 (Nicolas) | E4 (Renzo) | Validación de traslado | Al asignar un elenco a un evento |
 | E6 (Nicolas) | E1, E5 | Consultas de lectura | Consolidación financiera y dashboard |

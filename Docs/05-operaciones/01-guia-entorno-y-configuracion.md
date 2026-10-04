@@ -38,12 +38,23 @@ A continuación se detalla cada una de las variables requeridas por el sistema:
 * `REDIS_PASSWORD`: Contraseña de autenticación de Redis (opcional en desarrollo).
 * `REDIS_DB`: Índice de la base de datos Redis (`0`).
 
-### 2.4 Integración con Meta WhatsApp Cloud API
-* `WHATSAPP_API_URL`: URL base de Graph API de Meta (`https://graph.facebook.com/v20.0`).
-* `WHATSAPP_PHONE_NUMBER_ID`: Identificador del número de teléfono registrado en WhatsApp Business.
-* `WHATSAPP_ACCESS_TOKEN`: Token de acceso permanente o de sistema generado en Meta for Developers.
-* `WHATSAPP_VERIFY_TOKEN`: Token secreto configurado para el handshake del Webhook (`GET /webhooks/whatsapp`).
-* `WHATSAPP_APP_SECRET`: Secreto de la aplicación de Meta con el que se valida la cabecera `X-Hub-Signature-256` (HMAC-SHA256) de `POST /webhooks/whatsapp`. Obligatorio en `staging` y `production`.
+### 2.4 Integración con Chatwoot (gateway de mensajería)
+EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como gateway oculto de WhatsApp (ver [Especificación del gateway, sección 5](../02-arquitectura/05-spec-chatwoot-gateway.md#5-configuración) y ADR-10). Estas variables sustituyen a las antiguas `WHATSAPP_*`:
+* `CHATWOOT_BASE_URL`: URL interna de Chatwoot dentro de la red de Docker (`http://chatwoot-rails:3000`). Nunca se expone en internet.
+* `CHATWOOT_ACCOUNT_ID`: Identificador de la cuenta de Chatwoot.
+* `CHATWOOT_INBOX_ID`: Identificador de la bandeja de WhatsApp.
+* `CHATWOOT_BOT_TOKEN`: Token del Agent Bot, con el que se envían los mensajes del bot.
+* `CHATWOOT_AGENT_TOKEN`: Token del agente de servicio, con el que se envían los mensajes de los encargados.
+* `CHATWOOT_WEBHOOK_SECRET`: Secreto con el que se valida la firma (`X-Chatwoot-Signature`) del webhook de cuenta en `POST /webhooks/chatwoot`. Obligatorio en `staging` y `production`.
+
+> [!IMPORTANT]
+> Las credenciales de Meta (identificador del número, ID de la cuenta de WhatsApp Business y token) **ya no forman parte de `.env`**: se configuran dentro de Chatwoot al crear la bandeja de WhatsApp Cloud. Debe usarse el token permanente de un *system user* de Meta; el token temporal del número de prueba expira (aproximadamente 24 h) y no debe usarse. Los tokens de Chatwoot no expiran.
+
+### 2.4.1 Configuración de Chatwoot (`chatwoot.env`) y del proxy
+* `chatwoot.env`: archivo propio de los contenedores de Chatwoot (`SECRET_KEY_BASE`, `FRONTEND_URL`, `POSTGRES_*`, `REDIS_*`, almacenamiento). Se crea a partir de [`chatwoot.env.example`](../../chatwoot.env.example), lo cargan solo los servicios de `docker-compose.chatwoot.yml` y **nunca** se versiona.
+* `EVENTPRO_DOMAIN`: dominio base (DuckDNS) del proxy Caddy de `docker-compose.proxy.yml`, por ejemplo `eventpro-demo.duckdns.org`. Caddy publica `app.`, `api.` y `chat.` sobre ese dominio. Solo se define en el servidor.
+* `FRONTEND_UPSTREAM` (opcional): `host:puerto` del frontend detrás del proxy (por defecto `frontend:3000`).
+* `CHATWOOT_LOCAL_PORT` (opcional): puerto local de la administración de Chatwoot (por defecto `3001`, solo en `127.0.0.1`).
 
 ### 2.5 Integración con Google Maps Platform
 * `GOOGLE_MAPS_API_KEY`: Clave de API de Google Cloud con permisos para Directions API y Distance Matrix API.
@@ -91,5 +102,6 @@ Variables leídas únicamente por el comando de arranque `python -m app.infrastr
 
 * `.env.example` se versiona con valores de ejemplo seguros; `.env` (copia local) **nunca** se versiona.
 * Docker Compose carga `.env` mediante `env_file` en los servicios `api` y `worker`, y sobrescribe solo lo que depende de la red interna (`POSTGRES_HOST=db`, `REDIS_HOST=redis`, `DATABASE_URL`, `LOCAL_STORAGE_PATH`, `SIGNATURE_PKCS12_PATH`).
+* `chatwoot.env` (secretos de Chatwoot) se ignora por git igual que `.env`; `chatwoot.env.example` es la plantilla versionada. Ver sección 2.4.1.
 * El certificado `.p12` reside en `secrets/` (ignorado por git, junto con `*.p12` y `*.pfx`). Para generar uno autofirmado de desarrollo, ver el [README](../../README.md#inicio-rápido).
-* En producción, los secretos (`SECRET_KEY`, `POSTGRES_PASSWORD`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_APP_SECRET`, `SIGNATURE_PKCS12_PASSWORD`, `PAYMENT_*`) se inyectan desde el gestor de secretos de la plataforma de despliegue, no desde un archivo en el repositorio.
+* En producción, los secretos (`SECRET_KEY`, `POSTGRES_PASSWORD`, `CHATWOOT_BOT_TOKEN`, `CHATWOOT_AGENT_TOKEN`, `CHATWOOT_WEBHOOK_SECRET`, `SIGNATURE_PKCS12_PASSWORD`, `PAYMENT_*`) se inyectan desde el gestor de secretos de la plataforma de despliegue, no desde un archivo en el repositorio.

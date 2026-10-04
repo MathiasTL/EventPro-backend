@@ -11,6 +11,9 @@ Para la evolución del esquema en PostgreSQL, EventPro utiliza **Alembic**, la h
 2. **Reversibilidad Obligatoria:** Toda migración generada debe implementar tanto el método `upgrade()` como el método `downgrade()`.
 3. **Generación Automatizada y Revisión Manual:** Las migraciones se generan con `alembic revision --autogenerate -m "descripcion"` y deben ser auditadas línea por línea antes de su commit para verificar índices y restricciones `CHECK`.
 
+### 1.2 Migración de `conversation_links`
+La tabla `conversation_links` (ADR-10) se crea en una migración incremental posterior a las de `users`, `clients` y `quotes`, porque contiene claves foráneas hacia las tres (`assigned_user_id`, `client_id` y `quote_id`). La migración debe crear también el índice único sobre `chatwoot_conversation_id`, el índice sobre `client_id`, el índice parcial sobre `assigned_user_id` y la restricción `CHECK` de `handoff_reason`, y su `downgrade()` elimina la tabla. No requiere datos semilla: los vínculos se crean en tiempo de ejecución cuando llega la primera conversación de un cliente.
+
 ---
 
 ## 2. Datos Semilla Iniciales (Seed Data)

@@ -8,7 +8,7 @@ La arquitectura del backend de **EventPro** adopta el patrón de **Arquitectura 
 
 1. **Independiente del Framework:** Las entidades y casos de uso no importan ni conocen a FastAPI, SQLAlchemy ni librerías de terceros. FastAPI es un adaptador de entrada; la lógica reside en el núcleo.
 2. **Altamente Testeable:** El 100% de la lógica de cotizaciones, validaciones de adelantos y umbrales de shows se puede probar de forma unitaria con mocks o stubs en memoria sin levantar bases de datos ni servidores web.
-3. **Sustituible en Infraestructura:** Cambiar PostgreSQL por MySQL, o cambiar el proveedor de envío de WhatsApp no altera una sola línea del dominio ni de los casos de uso.
+3. **Sustituible en Infraestructura:** Cambiar PostgreSQL por MySQL, o cambiar el gateway de mensajería (por ejemplo, de Chatwoot a Meta directo) no altera una sola línea del dominio ni de los casos de uso.
 4. **Regla de Dependencia Inviolable:** Las dependencias del código fuente apuntan **únicamente hacia adentro**, hacia el Dominio:
    $$\text{Infraestructura (Adaptadores)} \longrightarrow \text{Aplicación (Casos de Uso / Puertos)} \longrightarrow \text{Dominio (Entidades / Value Objects)}$$
 
@@ -56,7 +56,7 @@ app/
 │   │   └── output/                       # Puertos Secundarios (Driven Ports - SPI)
 │   │       ├── repositories.py           # IEventRepository, IQuoteRepository, IContractRepository
 │   │       ├── maps_port.py              # IMapsServicePort (cálculo de distancias y tiempos)
-│   │       ├── whatsapp_port.py          # IWhatsAppServicePort (envío de mensajes y plantillas)
+│   │       ├── messaging_port.py         # IMessagingPort (texto, listas interactivas, plantillas, adjuntos, estado de conversación y consulta de conversaciones y mensajes)
 │   │       ├── pdf_port.py               # IPdfGeneratorPort (compilación de contratos)
 │   │       ├── storage_port.py           # IFileStoragePort (guardar imágenes y PDFs)
 │   │       ├── signature_port.py         # SignaturePort (sello PAdES, hash y marca de tiempo del contrato)
@@ -87,14 +87,15 @@ app/
 │   │   │   │   │   ├── quotes_router.py
 │   │   │   │   │   ├── events_router.py
 │   │   │   │   │   ├── contracts_router.py
+│   │   │   │   ├── conversations_router.py   # /conversations/*: bandeja, mensajes, takeover, release y stream SSE
 │   │   │   │   │   ├── financial_router.py
 │   │   │   │   │   └── overrides_router.py
 │   │   │   │   ├── health_router.py      # GET /health (fuera de /api/v1): estado de PostgreSQL y Redis
 │   │   │   │   └── schemas/              # Pydantic Schemas (Request/Response HTTP)
 │   │   │   ├── webhooks/                 # Controladores de Webhooks
-│   │   │   │   └── whatsapp_webhook.py   # Receptor de eventos de WhatsApp Business Cloud
+│   │   │   │   └── chatwoot_webhook.py   # Receptor del webhook de cuenta de Chatwoot (solo red interna)
 │   │   │   └── jobs/                     # Tareas programadas y reintentos (arq, respaldado en Redis)
-│   │   │       └── worker.py             # WorkerSettings: vencimiento de cotizaciones, cola outbox_messages, reportes
+│   │   │       └── worker.py             # WorkerSettings: vencimiento de cotizaciones, cola outbox_messages, reconciliación con Chatwoot, reportes
 │   │   │
 │   │   └── secondary/                    # Adaptadores de Salida (Driven Adapters)
 │   │       ├── persistence/              # Base de Datos Relacional (PostgreSQL)
@@ -111,8 +112,8 @@ app/
 │   │       ├── external_services/        # Clientes HTTP hacia APIs de terceros
 │   │       │   ├── google_maps/          # Adaptador Google Maps Platform (Directions/Distance Matrix)
 │   │       │   │   └── google_maps_adapter.py
-│   │       │   └── whatsapp/             # Adaptador WhatsApp Cloud API
-│   │       │       └── whatsapp_cloud_adapter.py
+│   │       │   └── chatwoot/             # Adaptador del gateway de mensajería (Application API de Chatwoot)
+│   │       │       └── chatwoot_messaging_adapter.py
 │   │       ├── documents/                # Generador de contratos
 │   │       │   └── weasyprint_adapter.py # Compilador HTML/Jinja2 a PDF
 │   │       ├── signature/                # Sello de firma electrónica
@@ -153,19 +154,21 @@ Coordina los flujos de interacción del negocio.
 * **Casos de Uso (*Use Cases*):** Clases que implementan un puerto de entrada. Cada caso de uso coordina:
   1. Carga de entidades a través de un puerto de salida (repositorio).
   2. Ejecución de lógica de dominio y cambio de estado de la entidad.
-  3. Disparo de efectos secundarios a través de puertos de salida (ej. enviar mensaje por WhatsApp, persistir en base de datos).
+  3. Disparo de efectos secundarios a través de puertos de salida (ej. enviar un mensaje mediante `IMessagingPort`, persistir en base de datos).
   4. Retorno de un DTO con el resultado.
 
 ### 3.3 Capa de Infraestructura (`app/infrastructure`)
 Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptadores Primarios (Controladores):**
   * `quotes_router.py`: Expone endpoints HTTP (`POST /api/v1/quotes`). Recibe payloads validados con Pydantic, invoca al caso de uso correspondiente e inyecta la respuesta serializada.
-  * `whatsapp_webhook.py`: Endpoint que valida tokens de verificación de Meta, parsea mensajes y comandos de botones, e invoca los casos de uso del chatbot.
-  * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), los casos de uso periódicos y diferidos: vencimiento de cotizaciones, despacho y reintentos de `outbox_messages` (WhatsApp) y reportes semanales y mensuales. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
+  * `chatwoot_webhook.py`: Endpoint `POST /api/v1/webhooks/chatwoot`, accesible solo por la red interna. Valida `X-Chatwoot-Signature` (HMAC-SHA256 sobre `"{timestamp}.{raw_body}"`, ventana de 5 minutos), descarta duplicados (idempotencia), responde `200` y encola el evento en arq. El worker enruta los mensajes entrantes de conversaciones en `pending` hacia los casos de uso del chatbot y publica el resto por SSE.
+  * `conversations_router.py`: Expone `/conversations/*` (bandeja, mensajes, `takeover`, `release`) y el stream SSE (`GET /conversations/stream`) para los roles `ENCARGADO` y `SUPERADMIN`; delega en casos de uso que consultan Chatwoot mediante `IMessagingPort`.
+  * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), los casos de uso periódicos y diferidos: vencimiento de cotizaciones, despacho y reintentos de `outbox_messages` (hacia Chatwoot), el job de reconciliación de mensajes entrantes (cada 5 minutos) y reportes semanales y mensuales. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
 * **Adaptadores Secundarios (Infraestructura de soporte):**
   * `SqlAlchemyQuoteRepository`: Implementa la interfaz `IQuoteRepository` usando transacciones de PostgreSQL.
   * `GoogleMapsAdapter`: Implementa `IMapsServicePort` llamando a la API REST de Google Maps con cliente asíncrono `httpx`.
   * `WeasyPrintAdapter`: Implementa `IPdfGeneratorPort` tomando plantillas Jinja2 y convirtiéndolas a PDF descargable. WeasyPrint es síncrono y consume CPU, por lo que el adaptador ejecuta el renderizado en el *worker* de arq o en un *threadpool*, nunca en el *event loop* (RNF-01.3).
+  * `ChatwootMessagingAdapter`: Implementa `IMessagingPort` sobre la Application API de Chatwoot con cliente asíncrono `httpx` (ver [ADR-10](04-adr-decisiones-arquitectura.md#adr-10-chatwoot-como-gateway-de-mensajería-oculto) y la [especificación del gateway](05-spec-chatwoot-gateway.md)).
   * `PadesSignatureAdapter`: Implementa `SignaturePort` (ver sección 3.4).
 
 ### 3.4 Puerto de Firma Electrónica (`SignaturePort`)
@@ -174,7 +177,7 @@ Contiene las implementaciones técnicas concretas de los puertos.
 * **Responsabilidades:** estampar la firma manuscrita en el PDF, sellarlo con PAdES, adjuntar una marca de tiempo RFC 3161 opcional y devolver el SHA-256 del PDF sellado.
 * **Adaptador por defecto:** `PadesSignatureAdapter` (propio, ADR-07), basado en **pyHanko** y un certificado **PKCS#12** (`.p12`). En desarrollo se usa un `.p12` autofirmado; incorporar un certificado acreditado por INDECOPI es un cambio de configuración, no de dominio.
 * **Adaptadores futuros documentados (opciones, no implementados):** Documenso (autoalojado), BoldSign y Llama.pe (proveedor acreditado). Cualquiera se integra implementando `SignaturePort` sin tocar el dominio ni los casos de uso.
-* **Fuera del puerto:** el envío del enlace y del OTP por WhatsApp usa `IWhatsAppServicePort` (vía `outbox_messages`), y el almacenamiento de PDFs usa `IFileStoragePort`.
+* **Fuera del puerto:** el envío del enlace y del OTP por WhatsApp usa `IMessagingPort` (vía `outbox_messages`), y el almacenamiento de PDFs usa `IFileStoragePort`.
 
 ---
 

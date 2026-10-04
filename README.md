@@ -20,7 +20,7 @@
 - **Control operativo real:** 12 procesos de control (disponibilidad, choques de elenco, movilidad, adelantos, PDFs).
 - **Seguridad por rol:** RBAC + JWT + OWASP desde el día uno.
 
-Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisitos/01-vision-alcance-y-actores.md) · [Historias US-01 a US-26](Docs/01-requisitos/05-historias-de-usuario.md)
+Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisitos/01-vision-alcance-y-actores.md) · [Historias US-01 a US-32](Docs/01-requisitos/05-historias-de-usuario.md)
 
 ## 🧱 Stack
 
@@ -33,8 +33,8 @@ Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisit
 | Auth y seguridad | PyJWT (JWT), pwdlib (Argon2id), slowapi (rate limiting), filetype (MIME real) | [`requirements.txt`](requirements.txt), [ADR-09](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
 | Firma electrónica | pyHanko (PAdES) + certificado PKCS#12 | [ADR-07](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
 | Calidad | pytest + pytest-asyncio + pytest-cov, ruff, mypy, Testcontainers | [`requirements-dev.txt`](requirements-dev.txt) |
-| Integraciones | WhatsApp Cloud API v20, Google Maps Platform | [`.env.example`](.env.example) |
-| Infra local | Docker multi-stage + Compose (api, worker, db, redis) | [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml) |
+| Integraciones | Chatwoot (gateway de mensajería) + WhatsApp Cloud API v20, Google Maps Platform | [`.env.example`](.env.example), [Spec del gateway](Docs/02-arquitectura/05-spec-chatwoot-gateway.md) |
+| Infra local | Docker multi-stage + Compose (api, worker, db, redis); opcionales: Chatwoot y proxy Caddy | [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml), [`docker-compose.chatwoot.yml`](docker-compose.chatwoot.yml), [`docker-compose.proxy.yml`](docker-compose.proxy.yml) |
 
 ## 🏛️ Arquitectura en 30 segundos
 
@@ -81,7 +81,7 @@ curl -s http://localhost:8000/health
 > [!IMPORTANT]
 > Los servicios `api` y `worker` ejecutan `app.main:app` y `WorkerSettings` (ver [`Dockerfile`](Dockerfile) y [`docker-compose.yml`](docker-compose.yml)). Como `app/` aún no existe, esos contenedores reiniciarán hasta el scaffold. `db` y `redis` sí quedan operativos — es el comportamiento esperado en esta fase.
 
-Para producción o staging, sin recarga ni código montado: `docker compose -f docker-compose.yml up -d --build`. Detalle en [Docker e infraestructura local](Docs/05-operaciones/02-docker-e-infraestructura-local.md).
+Para producción o staging, sin recarga ni código montado: `docker compose -f docker-compose.yml up -d --build`. Chatwoot (`docker-compose.chatwoot.yml`) y el proxy HTTPS del servidor (`docker-compose.proxy.yml`) son archivos Compose opcionales que se combinan con el base; detalle y comandos en [Docker e infraestructura local](Docs/05-operaciones/02-docker-e-infraestructura-local.md#4-archivos-compose-y-combinaciones).
 
 ### 2. Cuando exista `app/` (objetivo inmediato)
 
@@ -106,6 +106,7 @@ API: `http://localhost:8000` · Swagger: `http://localhost:8000/docs`
 ```text
 .
 ├── Dockerfile / docker-compose.yml / docker-compose.override.yml
+├── docker-compose.chatwoot.yml / docker-compose.proxy.yml / chatwoot.env.example / deploy/Caddyfile
 ├── requirements.txt / requirements-dev.txt
 ├── .env.example / .gitignore / .dockerignore
 ├── secrets/       # Certificado .p12 local (no versionado)
@@ -136,7 +137,7 @@ Detalle completo: [Backend hexagonal](Docs/02-arquitectura/02-backend-arquitectu
 
 | Fase | Contenido | Estado |
 | :--- | :--- | :---: |
-| 01 Requisitos | RF-01→RF-29, RNF, reglas, US-01→US-26 | ✅ |
+| 01 Requisitos | RF-01→RF-32, RNF, reglas, US-01→US-32 | ✅ |
 | 02 Arquitectura | C4, Hexagonal, FSD, ADR-01→ADR-09 | ✅ |
 | 03 Datos | DER, diccionario, Alembic + seeds | ✅ |
 | 04 API | Endpoints REST v1, RBAC + JWT + OWASP | ✅ |
@@ -151,7 +152,7 @@ Agrupado desde [`.env.example`](.env.example) — detalle en [guía de entorno](
 | App | `APP_ENV`, `APP_NAME`, `API_V1_PREFIX=/api/v1`, `PORT`, `DEBUG`, `LOG_LEVEL`, `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `CORS_ORIGINS` |
 | Postgres | `POSTGRES_*`, `DATABASE_URL` (asyncpg) |
 | Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB` |
-| WhatsApp | `WHATSAPP_API_URL`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` |
+| Chatwoot (gateway) | `CHATWOOT_BASE_URL`, `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_INBOX_ID`, `CHATWOOT_BOT_TOKEN`, `CHATWOOT_AGENT_TOKEN`, `CHATWOOT_WEBHOOK_SECRET` (las credenciales de Meta se configuran dentro de Chatwoot, en `chatwoot.env.example` van los secretos propios de Chatwoot) |
 | Maps | `GOOGLE_MAPS_API_KEY`, `PROMOTORA_BASE_LATITUDE/LONGITUDE` |
 | Negocio | `SIMULTANEOUS_SHOWS_THRESHOLD=3`, `ADVANCE_DEADLINE_HOURS=24`, `AVAILABILITY_RECHECK_MINUTES=60`, `MOBILITY_MARGIN_PERCENT=15`, `ADVANCE_PERCENT=10`, `TRANSIT_REST_BUFFER_MINUTES=30` |
 | Almacenamiento | `STORAGE_BACKEND`, `LOCAL_STORAGE_PATH` |

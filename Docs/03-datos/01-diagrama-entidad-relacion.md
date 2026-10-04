@@ -16,6 +16,9 @@ erDiagram
     ROLES ||--o{ USERS : assigns
 
     CLIENTS ||--o{ QUOTES : requests
+    CLIENTS ||--o{ CONVERSATION_LINKS : converses
+    QUOTES |o--o{ CONVERSATION_LINKS : current_quote
+    USERS |o--o{ CONVERSATION_LINKS : takes_over
 
     PACKAGES ||--o{ PACKAGE_THEMES : contains
     THEMES ||--o{ PACKAGE_THEMES : defines
@@ -282,6 +285,19 @@ erDiagram
         timestamptz created_at "default CURRENT_TIMESTAMP"
     }
 
+    CONVERSATION_LINKS {
+        uuid id PK "default gen_random_uuid()"
+        bigint chatwoot_conversation_id UK "UNIQUE"
+        uuid client_id FK "FK (clients.id), INDEX"
+        uuid quote_id FK "NULL; FK (quotes.id)"
+        uuid assigned_user_id FK "NULL; FK (users.id); partial INDEX"
+        varchar(30) handoff_reason "NULL; CHECK in (CLIENT_REQUEST, BOT_NOT_UNDERSTOOD, MANUAL_TAKEOVER, BOT_ERROR)"
+        text handoff_summary "NULL"
+        timestamptz handed_off_at "NULL"
+        timestamptz created_at "default CURRENT_TIMESTAMP"
+        timestamptz updated_at "default CURRENT_TIMESTAMP"
+    }
+
     AUDIT_LOGS {
         uuid id PK "default gen_random_uuid()"
         uuid user_id FK "NULL; FK (users.id)"
@@ -322,6 +338,11 @@ Restricciones compuestas, parciales o de varias columnas que no se pueden expres
   * `UNIQUE(event_id, crew_id)`
 * **`outbox_messages`**
   * `INDEX(status, next_attempt_at)` para el despachador de mensajes pendientes.
+* **`conversation_links`**
+  * `UNIQUE(chatwoot_conversation_id)`: una conversación de Chatwoot se vincula a un único cliente.
+  * `INDEX(client_id)`
+  * `CREATE INDEX ix_conversation_links_assigned_user ON conversation_links (assigned_user_id) WHERE assigned_user_id IS NOT NULL` para el filtro «asignadas a mí» de la bandeja.
+  * Solo guarda el vínculo de negocio; los mensajes, medios, estados de entrega y el estado de la conversación viven en Chatwoot (ADR-10).
 
 ---
 
@@ -330,4 +351,5 @@ Restricciones compuestas, parciales o de varias columnas que no se pueden expres
 * Los tipos se escriben como en el diccionario; las precisiones `NUMERIC(p,s)` se representan `numeric(p_s)` por limitación de la sintaxis de Mermaid.
 * El comentario de cada atributo indica `NULL` (si admite nulos), el valor por defecto y las restricciones. Los atributos sin la marca `NULL` son `NOT NULL`.
 * `payments.quote_id` es obligatorio y `payments.event_id` es opcional: el adelanto se registra antes de que exista el evento.
+* `conversation_links` no almacena mensajes: Chatwoot es la fuente de verdad de la conversación. `quote_id` apunta a la cotización vigente y `assigned_user_id` al encargado que tomó la conversación; ambos son opcionales.
 * Un evento puede tener varios contratos a lo largo del tiempo, pero solo uno no anulado (`VOIDED`) simultáneamente (índice único parcial).

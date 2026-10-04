@@ -5,9 +5,9 @@
 ## 1. Convenciones Globales de la API
 
 * **URL Base:** `https://api.eventpro.pe/api/v1` (o `http://localhost:8000/api/v1` en local). Todas las rutas de este documento son relativas a la URL base, con la excepción de `GET /health`, que se expone en la raíz del servicio (`/health`) para las sondas de infraestructura.
-* **Formato de Intercambio:** `application/json` (UTF-8). Excepción: `multipart/form-data` para subida de comprobantes y evidencias.
-* **Autenticación:** Cabecera HTTP `Authorization: Bearer <jwt_access_token>`. Las excepciones (endpoints públicos, de token de cliente y del webhook de Meta) se indican en cada endpoint y se resumen en la [Matriz RBAC](02-matriz-rbac-y-seguridad.md), que es el complemento obligatorio de este documento: ambos describen exactamente el mismo inventario de endpoints (método y ruta).
-* **Códigos de estado:** `200 OK` (lecturas y actualizaciones), `201 Created` (creaciones de recursos), `204 No Content` (acciones sin cuerpo de respuesta), `400`/`422` (validación), `401`/`403` (autenticación y autorización), `404` (recurso inexistente o fuera de alcance del rol), `409 Conflict` (conflicto de dominio), `410 Gone` (recurso vencido), `429` (límite de peticiones).
+* **Formato de Intercambio:** `application/json` (UTF-8). Excepciones: `multipart/form-data` para subida de comprobantes, evidencias y adjuntos de conversación, y `text/event-stream` (Server-Sent Events) en `GET /conversations/stream`.
+* **Autenticación:** Cabecera HTTP `Authorization: Bearer <jwt_access_token>`. Las excepciones (endpoints públicos, de token de cliente, del webhook de Chatwoot y del stream SSE) se indican en cada endpoint y se resumen en la [Matriz RBAC](02-matriz-rbac-y-seguridad.md), que es el complemento obligatorio de este documento: ambos describen exactamente el mismo inventario de endpoints (método y ruta).
+* **Códigos de estado:** `200 OK` (lecturas y actualizaciones), `201 Created` (creaciones de recursos), `202 Accepted` (acción aceptada y procesada de forma asíncrona), `204 No Content` (acciones sin cuerpo de respuesta), `400`/`422` (validación), `401`/`403` (autenticación y autorización), `404` (recurso inexistente o fuera de alcance del rol), `409 Conflict` (conflicto de dominio), `410 Gone` (recurso vencido), `429` (límite de peticiones), `503` (dependencia no disponible).
 * **Identificadores de estado y enumeraciones:** todos los valores de enumeración de los *payloads* son códigos en inglés `UPPER_SNAKE_CASE` (ver [RN, sección 3.5](../01-requisitos/04-reglas-de-negocio-y-control.md#35-tabla-de-mapeo-código-etiqueta-de-interfaz-y-significado)). Las etiquetas en español pertenecen solo a la interfaz. Enumeraciones usadas en esta API:
   * `payment_method`: `YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`.
   * `concept` (pago): `ADVANCE`, `BALANCE`, `EXTENSION`.
@@ -601,19 +601,30 @@ No existe un endpoint público para el vencimiento. Una **tarea programada** (ej
 
 ---
 
-### 2.8 Módulo: Integración con WhatsApp Business (`/webhooks/whatsapp`)
+### 2.8 Módulo: Webhook de Chatwoot (`/webhooks/chatwoot`)
 
-#### `GET /webhooks/whatsapp`
-* **Descripción:** Verificación de Webhook para la API de Meta / WhatsApp Cloud (reto de suscripción).
-* **Seguridad:** Meta. Se valida que `hub.verify_token` coincida con `WHATSAPP_VERIFY_TOKEN`; si no coincide, responde `403`.
-* **Query Params:** `hub.mode=subscribe`, `hub.challenge=...`, `hub.verify_token=...`
-* **Response `200 OK`:** Retorna el valor `hub.challenge` como texto plano (`text/plain`).
+El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería autoalojado e invisible para los usuarios (ADR-10). Meta entrega sus webhooks a Chatwoot, no a EventPro, y Chatwoot reenvía cada evento a este endpoint como webhook de cuenta.
 
-#### `POST /webhooks/whatsapp`
-* **Descripción:** Receptor de eventos de mensajes entrantes, clics de botones y subida de imágenes (comprobantes de pago).
-* **Seguridad:** Meta. Cada petición debe incluir la cabecera `X-Hub-Signature-256: sha256=<hex>`, que es el HMAC-SHA256 del **cuerpo crudo** de la petición (bytes exactos, sin reserializar) calculado con el secreto de la aplicación de Meta. El backend recalcula el HMAC y lo compara en tiempo constante antes de procesar nada; si la cabecera falta o no coincide, responde `401` (`invalid-webhook-signature`), no encola el evento y registra el intento. Este endpoint no usa JWT.
-* **Request Body:** Payload estándar de WhatsApp Cloud API.
-* **Response `200 OK`:** `{"status": "EVENT_RECEIVED"}` (procesamiento asíncrono en menos de 1.5 s; el evento se procesa de forma idempotente por el identificador de mensaje de Meta).
+#### `POST /webhooks/chatwoot`
+* **Descripción:** Receptor de los eventos de cuenta de Chatwoot: mensajes entrantes del cliente (texto, clics de botones e imágenes de comprobantes de pago), mensajes nuevos, cambios de estado de la conversación y actualizaciones de entrega.
+* **Seguridad:** Sin JWT; autenticado por firma. Cada petición debe incluir las cabeceras `X-Chatwoot-Timestamp` (marca de tiempo Unix, en segundos) y `X-Chatwoot-Signature: sha256=<hex>`, donde `<hex>` es el HMAC-SHA256 de la cadena `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"` (bytes exactos, sin reserializar) calculado con el secreto `CHATWOOT_WEBHOOK_SECRET`. El backend recalcula el HMAC y lo compara en tiempo constante antes de procesar nada, y rechaza las peticiones cuya marca de tiempo tenga más de 5 minutos de antigüedad. Si alguna cabecera falta, la firma no coincide o la marca de tiempo está vencida, responde `401` (`invalid-webhook-signature`), no encola el evento y registra el intento.
+* **Exposición:** solo interna. El proxy inverso bloquea esta ruta hacia internet y únicamente es accesible desde la red interna de Docker (`http://api:8000/api/v1/webhooks/chatwoot`).
+* **Request Body:** Payload estándar del webhook de cuenta de Chatwoot. Ejemplo recortado para `message_created`:
+  ```json
+  {
+    "event": "message_created",
+    "id": 4821,
+    "message_type": "incoming",
+    "content": "Hola, quiero cotizar una hora loca para el 15 de octubre",
+    "conversation": {"id": 57, "status": "pending"},
+    "sender": {"phone_number": "+51999888777"},
+    "attachments": []
+  }
+  ```
+* **Response `200 OK`:** `{"status": "EVENT_RECEIVED"}` (procesamiento asíncrono en menos de 1.5 s; el evento se encola en arq).
+* **Idempotencia:** el evento se procesa una sola vez por identificador de mensaje o evento de Chatwoot (deduplicación en Redis, TTL de 7 días); un reenvío responde `200` sin reprocesar.
+* **Enrutamiento del worker:** un mensaje entrante (`message_created`, `incoming`) en una conversación `pending` lo procesa el bot; cualquier otro evento (mensajes nuevos, cambios de estado, actualizaciones de entrega) se publica a la web de EventPro por el stream SSE (`GET /conversations/stream`).
+* **Errores:** `401` (`invalid-webhook-signature`).
 
 ---
 
@@ -1202,6 +1213,163 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 
 ---
 
+### 2.14 Módulo: Conversaciones (`/conversations`)
+
+Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es la fuente de verdad de mensajes, medios, estados de entrega y `status`; EventPro solo almacena el vínculo de negocio en `conversation_links`. Todos los endpoints exigen rol `ENCARGADO` o `SUPERADMIN`, y el `{id}` de la ruta es el `chatwoot_conversation_id` (entero).
+
+**Modo y estado de la conversación:** el `status` de Chatwoot se proyecta al `mode` de EventPro: `pending` → `BOT` (responde el bot), `open` → `HUMAN` (un encargado atiende) y `resolved` → `BOT` (si el cliente vuelve a escribir, la conversación se reabre en `pending`). Una conversación `open` sin `assigned_user_id` es una derivación pendiente de toma.
+
+**Ventana de servicio de 24 h:** `service_window_open` es `true` mientras no hayan pasado 24 horas desde el último mensaje entrante del cliente; `service_window_expires_at` es esa marca más 24 h (`null` si el cliente nunca escribió). Con la ventana cerrada solo se pueden enviar plantillas aprobadas.
+
+**Disponibilidad:** `GET /conversations`, `GET /conversations/{id}/messages`, `GET /conversations/{id}/attachments/{attachment_id}`, `takeover` y `release` consultan o modifican Chatwoot de forma síncrona; si no responde, devuelven `503` (`messaging-gateway-unavailable`). El envío de mensajes pasa por `outbox_messages` y tolera la caída de Chatwoot.
+
+#### `GET /conversations`
+* **Descripción:** Bandeja de conversaciones, ordenada por `last_message_at` descendente. Por defecto excluye las conversaciones `resolved`.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Query Params:** `mode=HUMAN` (`BOT` | `HUMAN`), `assigned=me` (`me` = asignadas al usuario autenticado | `unassigned` = sin asignar), `include_resolved=false`, `page`, `page_size` (paginado).
+* **Response `200 OK`:**
+  ```json
+  {
+    "items": [
+      {
+        "chatwoot_conversation_id": 57,
+        "client": {"id": "c3d1a7f2-...", "name": "Carlos Ramírez", "phone": "+51999888777"},
+        "quote_id": "q9c8a1b2-...",
+        "status": "open",
+        "mode": "HUMAN",
+        "assigned_user_id": "b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a22",
+        "handoff_reason": "CLIENT_REQUEST",
+        "handed_off_at": "2026-10-03T16:40:12Z",
+        "last_message_preview": "Quisiera cambiar la hora del show",
+        "last_message_at": "2026-10-03T16:52:30Z",
+        "service_window_open": true,
+        "service_window_expires_at": "2026-10-04T16:52:30Z"
+      }
+    ],
+    "page": 1,
+    "page_size": 20,
+    "total": 1
+  }
+  ```
+  `status` es `pending`, `open` o `resolved`; `handoff_reason` es `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR` o `null`; `quote_id`, `assigned_user_id` y `handed_off_at` son `null` cuando no aplican.
+* **Errores:** `503` (`messaging-gateway-unavailable`).
+
+#### `GET /conversations/{id}/messages`
+* **Descripción:** Mensajes de la conversación, consultados a Chatwoot (EventPro no los almacena). Se devuelven del más reciente al más antiguo.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Query Params:** `before=<message_id>` (devuelve los mensajes anteriores a ese identificador; sin valor, los más recientes), `limit=30` (máximo `100`). Se usa paginación por cursor en lugar de `page` porque la lista se consulta a Chatwoot, donde el historial crece con mensajes nuevos.
+* **Response `200 OK`:**
+  ```json
+  {
+    "items": [
+      {
+        "id": 4830,
+        "direction": "OUTGOING",
+        "author_type": "AGENT",
+        "content": "Claro, con gusto lo reprogramamos.",
+        "attachments": [],
+        "delivery_status": "READ",
+        "failure_reason": null,
+        "created_at": "2026-10-03T16:52:30Z"
+      },
+      {
+        "id": 4821,
+        "direction": "INCOMING",
+        "author_type": "CLIENT",
+        "content": "Adjunto mi comprobante",
+        "attachments": [
+          {"id": 311, "file_type": "image", "content_type": "image/jpeg", "url": "/api/v1/conversations/57/attachments/311"}
+        ],
+        "delivery_status": null,
+        "failure_reason": null,
+        "created_at": "2026-10-03T16:40:02Z"
+      }
+    ],
+    "has_more": true
+  }
+  ```
+  `attachments[].url` es la ruta de EventPro del medio (`GET /conversations/{id}/attachments/{attachment_id}`); las URL de Chatwoot nunca se exponen al navegador. `direction` es `INCOMING` u `OUTGOING`; `author_type` es `CLIENT`, `BOT` o `AGENT`; `delivery_status` es `SENT`, `DELIVERED`, `READ` o `FAILED` (`null` en mensajes entrantes). Con `FAILED`, `failure_reason` es un texto legible en español (por ejemplo, «La ventana de 24 horas está cerrada» o «El número no está entre los destinatarios de prueba»).
+* **Errores:** `404` (`not-found`, la conversación no existe), `503` (`messaging-gateway-unavailable`).
+
+#### `GET /conversations/{id}/attachments/{attachment_id}`
+* **Descripción:** Proxy de los medios de la conversación (imágenes, comprobantes, documentos). El backend obtiene el archivo de Chatwoot por la red interna y lo transmite al cliente con el `Content-Type` original y `Content-Disposition: inline; filename=...`. Valida que el adjunto pertenezca a la conversación indicada. Las URL de Chatwoot nunca se exponen al navegador.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`. La lectura no exige que la conversación esté tomada.
+* **Response `200 OK`:** el contenido binario del archivo.
+* **Errores:** `404` (`not-found`, el adjunto no existe o no pertenece a la conversación), `503` (`messaging-gateway-unavailable`).
+* **Nota:** este endpoint sirve los medios del chat. Si el bot ya almacenó un comprobante de pago en el almacenamiento de EventPro (RF-11), la fuente para la revisión del pago sigue siendo `GET /payments/{id}/evidence`.
+
+#### `POST /conversations/{id}/messages`
+* **Descripción:** Envía un mensaje al cliente como el agente de servicio de Chatwoot. El autor real (el usuario autenticado) se registra en `audit_logs` con la acción `SEND_CONVERSATION_MESSAGE`. El envío pasa por `outbox_messages` con reintentos (ver especificación del gateway, sección 4): el mensaje se acepta y se entrega de forma asíncrona. Si agota los reintentos queda `FAILED` y el encargado puede reenviarlo con una nueva petición.
+* **Reglas:**
+  * La conversación debe estar tomada por el usuario autenticado: `status = open` y `assigned_user_id` igual al usuario. No se puede escribir en una conversación en modo `BOT`; hay que ejecutar antes `POST /conversations/{id}/takeover`.
+  * Si la ventana de 24 h está cerrada, solo se admite una plantilla aprobada (objeto `template`); con texto libre responde `422` (`service-window-closed`). Con la ventana abierta, el objeto `template` también es válido.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Content-Type:** `application/json` (texto o plantilla) o `multipart/form-data` (adjunto).
+* **Request Body (texto):**
+  ```json
+  {
+    "content": "Claro, con gusto lo reprogramamos."
+  }
+  ```
+* **Request Body (plantilla, para ventana cerrada):**
+  ```json
+  {
+    "template": {
+      "name": "contract_reminder",
+      "language": "es",
+      "params": {"1": "Carlos", "2": "15 de octubre"}
+    }
+  }
+  ```
+* **Request multipart:** campos `attachment` (archivo, obligatorio) y `content` (texto opcional que acompaña al adjunto). Aplican las reglas de subida de archivos de la sección 1: máximo 5 MB, validación por contenido y tipos JPEG, PNG, WebP o PDF.
+* **Response `202 Accepted`:**
+  ```json
+  {
+    "outbox_id": "ob-91c2...",
+    "chatwoot_conversation_id": 57,
+    "delivery_status": "QUEUED"
+  }
+  ```
+  `QUEUED` es el estado previo a la aceptación por Chatwoot; una vez enviado, el mensaje aparece en `GET /conversations/{id}/messages` y el avance de su estado (`SENT`, `DELIVERED`, `READ` o `FAILED`) llega por el evento `message.updated` del stream.
+* **Errores:** `404` (`not-found`), `409` (`conversation-not-taken`, la conversación no está `open` o no está asignada; `conversation-taken-by-other`, está asignada a otro usuario), `422` (`service-window-closed`; `invalid-file`; `validation-error`, por ejemplo cuerpo sin `content`, `attachment` ni `template`).
+
+#### `POST /conversations/{id}/takeover`
+* **Descripción:** Un encargado toma la conversación: pasa a `open` en Chatwoot, se asigna al usuario autenticado (`assigned_user_id`) y el bot deja de responder. Si la conversación estaba en modo `BOT` registra `handoff_reason = MANUAL_TAKEOVER` y `handed_off_at`; si ya había sido derivada (`open` sin asignar), conserva el motivo original. Es idempotente: si ya está tomada por el mismo usuario, responde `200` sin cambios.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`. Una conversación tomada por otro usuario responde `409` (`conversation-taken-by-other`) para un `ENCARGADO`; un `SUPERADMIN` puede reasignarla a sí mismo y la acción se registra en `audit_logs` como `OVERRIDE_CONVERSATION_ASSIGNMENT` con el usuario anterior.
+* **Request Body:** vacío.
+* **Response `200 OK`:** la conversación actualizada (mismo formato que un ítem de `GET /conversations`).
+* **Errores:** `404` (`not-found`), `409` (`conversation-taken-by-other`), `503` (`messaging-gateway-unavailable`).
+
+#### `POST /conversations/{id}/release`
+* **Descripción:** Devuelve la conversación al bot: pasa a `pending` en Chatwoot y se limpia `assigned_user_id`; el bot retoma las respuestas. Solo la puede liberar el usuario asignado o un `SUPERADMIN`. Es idempotente: si ya está en `pending`, responde `200` sin cambios. `handoff_reason` y `handed_off_at` se conservan como historial de la última derivación.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Request Body:** vacío.
+* **Response `200 OK`:** la conversación actualizada (mismo formato que un ítem de `GET /conversations`).
+* **Errores:** `404` (`not-found`), `409` (`conversation-taken-by-other`, un `ENCARGADO` intenta liberar una conversación asignada a otro), `503` (`messaging-gateway-unavailable`).
+
+#### `GET /conversations/stream`
+* **Descripción:** Eventos en tiempo real para la bandeja mediante Server-Sent Events (`Content-Type: text/event-stream`). El stream es de solo lectura; las acciones se ejecutan con los demás endpoints del módulo. Se publican los eventos que el worker recibe de Chatwoot (ver `POST /webhooks/chatwoot`), incluidos los cambios hechos desde EventPro.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`, con el access token JWT enviado en el parámetro `access_token`. `EventSource` del navegador no permite cabeceras personalizadas, y el modelo de autenticación de la API no usa cookies, por lo que se admite el parámetro de consulta en lugar de `Authorization`. El mismo access token de 60 minutos se reutiliza, sin endpoint adicional; el proxy no debe registrar la cadena de consulta de esta ruta. El servidor cierra el stream cuando el token vence: el cliente renueva el token con `POST /auth/refresh` y se reconecta. Este es el único endpoint que acepta el token fuera de la cabecera.
+* **Query Params:** `access_token=<jwt_access_token>`.
+* **Tipos de evento** (`event:`; el campo `data:` es JSON):
+
+  | Evento | Cuándo se emite | `data` |
+  | :--- | :--- | :--- |
+  | `conversation.updated` | Cambia el `status`, la asignación, el modo o la vista previa de una conversación. | Ítem de bandeja (formato de `GET /conversations`). |
+  | `message.created` | Llega o se registra un mensaje nuevo. | `{"chatwoot_conversation_id": 57, "message": {...}}` (formato de mensaje de `GET /conversations/{id}/messages`). |
+  | `message.updated` | Cambia el estado de entrega de un mensaje. | `{"chatwoot_conversation_id": 57, "message": {...}}`. |
+  | `handoff.requested` | El bot deriva la conversación a un humano. | `{"chatwoot_conversation_id": 57, "handoff_reason": "CLIENT_REQUEST", "handoff_summary": "...", "client": {"id": "c3d1a7f2-...", "name": "Carlos Ramírez", "phone": "+51999888777"}, "handed_off_at": "2026-10-03T16:40:12Z"}`. |
+
+  Ejemplo de trama:
+  ```text
+  event: handoff.requested
+  data: {"chatwoot_conversation_id": 57, "handoff_reason": "CLIENT_REQUEST", "handoff_summary": "Cotización q9c8a1b2: Hora Loca Medium, 15/10", "client": {"id": "c3d1a7f2-...", "name": "Carlos Ramírez", "phone": "+51999888777"}, "handed_off_at": "2026-10-03T16:40:12Z"}
+  ```
+* **Reconexión:** no existe búfer de reenvío. El servidor envía un comentario de latido (`: keepalive`) cada 25 segundos; ante una desconexión, el cliente se reconecta automáticamente y, al reconectar, vuelve a solicitar `GET /conversations` para recuperar el estado.
+* **Errores (antes de abrir el stream):** `401` (`invalid-credentials`, token ausente, inválido o vencido), `403` (`forbidden`).
+
+---
+
 ## 3. Catálogo de Errores de Dominio (RFC 7807)
 
 Todos los errores usan `Content-Type: application/problem+json` con los campos `type`, `title`, `status`, `detail` e `instance`. El `type` es una URL estable bajo `https://errors.eventpro.pe/`. Algunos errores añaden miembros de extensión (por ejemplo, `alternatives`, `attempts_remaining` o `minimum_interval_minutes`).
@@ -1216,7 +1384,7 @@ Todos los errores usan `Content-Type: application/problem+json` con los campos `
 | `not-found` | `404` | El recurso no existe o está fuera del alcance del rol (por ejemplo, un evento no asignado a un `OPERADOR`). |
 | `duplicate-resource` | `409` | Violación de unicidad (correo, teléfono, nombre de catálogo, elenco ya asignado). |
 | `rate-limit-exceeded` | `429` | Se superó el límite de peticiones del endpoint (login, cotización, OTP, enlace de firma). |
-| `invalid-webhook-signature` | `401` | Falta la cabecera `X-Hub-Signature-256` del webhook de WhatsApp o su HMAC no coincide. |
+| `invalid-webhook-signature` | `401` | Falta la cabecera `X-Chatwoot-Signature` o `X-Chatwoot-Timestamp` del webhook de Chatwoot, su HMAC no coincide o la marca de tiempo tiene más de 5 minutos de antigüedad. |
 | `invalid-advance-amount` | `400` | El adelanto no es exactamente el 10% del subtotal de servicios. |
 | `availability-conflict` | `409` | No hay cupo (artistas o inventario) para la fecha y el horario solicitados (RF-09). Puede incluir `alternatives` y `handoff_available`. |
 | `simultaneous-threshold-exceeded` | `409` | Se superaría `SIMULTANEOUS_SHOWS_THRESHOLD` shows simultáneos (RN-04); requiere aprobación manual de un encargado. |
@@ -1233,3 +1401,7 @@ Todos los errores usan `Content-Type: application/problem+json` con los campos `
 | `invalid-otp` | `422` / `401` | El código OTP es incorrecto (`422`, con `attempts_remaining`) o la prueba de OTP presentada al firmar falta, es inválida o venció (`401`). |
 | `otp-expired` | `410` | El OTP venció; debe solicitarse uno nuevo. |
 | `otp-attempts-exceeded` | `429` | Se superó el máximo de intentos fallidos (5); el OTP queda invalidado. |
+| `service-window-closed` | `422` | La ventana de servicio de 24 h de WhatsApp está cerrada y el mensaje no es una plantilla aprobada. Incluye `service_window_expires_at`. |
+| `conversation-not-taken` | `409` | La conversación no está tomada por un humano (`status` distinto de `open`) o está abierta sin asignar; hay que ejecutar `takeover` antes de enviar mensajes. |
+| `conversation-taken-by-other` | `409` | La conversación está asignada a otro encargado. Incluye `assigned_user_id`. |
+| `messaging-gateway-unavailable` | `503` | Chatwoot no responde y la operación requiere una consulta o un cambio de estado síncrono (bandeja, mensajes, `takeover`, `release`). |

@@ -35,7 +35,8 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 ## 3. Alcance del Sistema (Scope)
 
 ### 3.1 Dentro del Alcance (In Scope - MVP / Fase 1)
-* **Canal Conversacional (WhatsApp Business API & Webhook):** Saludo automático, presentación de catálogo estructurado de paquetes, temáticas y extras, captura de datos del cliente, fecha, hora y ubicación del evento.
+* **Canal Conversacional (WhatsApp mediante Chatwoot como gateway de mensajería oculto, ADR-10):** Saludo automático, presentación de catálogo estructurado de paquetes, temáticas y extras, captura de datos del cliente, fecha, hora y ubicación del evento.
+* **Traspaso a Encargado y Bandeja de Conversaciones:** El bot deriva la conversación a un encargado cuando el cliente lo pide, cuando no logra entenderlo o ante un error; los encargados toman la conversación, responden desde la plataforma EventPro (respetando la ventana de servicio de 24 h de WhatsApp), la devuelven al bot y ven las actualizaciones en tiempo real. Chatwoot nunca es visible para los usuarios.
 * **Motor de Cotización y Cálculo de Movilidad:** Integración con Google Maps Platform (Distance Matrix / Directions) para el cálculo de distancia y tiempo (ida y vuelta) con recargo comercial (+15%) y posibilidad de exención si el cliente provee movilidad.
 * **Control de Disponibilidad y Reglas de Despacho:** Validación de elencos freelance e inventario de mobiliario; cálculo de tiempos de traslado entre eventos y aprobación manual cuando se supere el umbral de shows simultáneos (solapamiento real de intervalos, por defecto más de 3 eventos con adelanto validado).
 * **Gestión de Pagos y Comprobantes:** Registro de anticipos (10% sobre servicios base) mediante billeteras digitales (Yape / Plin) o transferencias bancarias; subida de capturas y flujo de verificación con reintentos.
@@ -56,7 +57,8 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 | Actor | Tipo | Descripción y Responsabilidades |
 | :--- | :--- | :--- |
 | **Cliente** | Externo (Humano) | Usuario interesado en contratar servicios. Interactúa mediante WhatsApp para consultar catálogo, cotizar (la revisión de la cotización ocurre en el chat) y subir comprobantes de pago; solo usa la web móvil para revisar y firmar electrónicamente el contrato. |
-| **Chatbot / WhatsApp Service** | Automatizado (Sistema) | Servicio conversacional que procesa webhooks de WhatsApp, guía al cliente a través del flujo guiado y recopila parámetros del evento. |
-| **Encargado / Administrador** | Interno (Humano) | Uno de los 2 responsables del negocio. Cuenta con privilegios completos para aprobar shows simultáneos, aplicar *overrides* de movilidad o tiempo de traslado, emitir contratos en modo manual y auditar métricas financieras. |
+| **Chatbot / Servicio de Mensajería** | Automatizado (Sistema) | Servicio conversacional que procesa los eventos recibidos del gateway de mensajería (webhook de Chatwoot), guía al cliente a través del flujo guiado, recopila parámetros del evento y deriva la conversación a un encargado cuando corresponde. |
+| **Chatwoot (gateway de mensajería)** | Externo (Servicio, oculto) | Servicio autoalojado entre Meta WhatsApp Cloud API y EventPro: conserva mensajes, medios y estados de entrega. Ningún usuario interactúa con su interfaz. |
+| **Encargado / Administrador** | Interno (Humano) | Uno de los 2 responsables del negocio. Cuenta con privilegios completos para aprobar shows simultáneos, atender conversaciones derivadas desde la bandeja, aplicar *overrides* de movilidad o tiempo de traslado, emitir contratos en modo manual y auditar métricas financieras. |
 | **Personal de Elenco / Operador** | Interno / Freelance | Artistas, animadores, DJs y armadores de toldos. Ejecutan el servicio en campo y, desde la web móvil en su teléfono, consultan su agenda del día, registran el cobro del saldo in-situ (con foto de evidencia) e informan extensiones de tiempo de show. |
 | **Google Maps API** | Externo (Servicio) | Servicio externo consumido para geolocalización, cálculo de distancias y tiempos de tránsito en Lima Metropolitana y Callao. |
