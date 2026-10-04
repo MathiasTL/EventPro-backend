@@ -85,7 +85,7 @@ flowchart TB
     ExtWhatsApp -->|"Webhook HTTPS"| ExtChatwoot
     ExtChatwoot -->|"Mensajes salientes"| ExtWhatsApp
     ExtChatwoot -->|"Webhook de cuenta firmado (red interna Docker)"| API
-    API -->|"Application API (HTTPS / JSON)"| ExtChatwoot
+    API -->|"Application API (HTTP / JSON, red interna Docker)"| ExtChatwoot
     API -->|"SSE (eventos de conversación)"| SPA
 
     API -->|"SQLAlchemy ORM (TCP: 5432)"| DB
