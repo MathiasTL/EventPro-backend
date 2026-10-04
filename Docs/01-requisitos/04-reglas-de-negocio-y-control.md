@@ -80,6 +80,24 @@ $$\text{Utilidad Neta} = \text{Ingresos Totales Liquidados} - \left( \sum \text{
 
 ---
 
+### RN-10: Atención de Conversaciones: Bot o Encargado
+1. Toda conversación de WhatsApp tiene un solo responsable a la vez, según su `status` en el gateway de mensajería (Chatwoot, ADR-10): en `pending` responde el **bot** (modo `BOT`); en `open` atiende un **encargado** (modo `HUMAN`) y el bot **no responde**. Una conversación `resolved` se trata como modo `BOT`: si el cliente vuelve a escribir, se reabre en `pending`.
+2. La conversación pasa a `open` por tres disparadores: el cliente pide hablar con un encargado, el bot no entiende dos veces consecutivas, o un encargado la toma manualmente. Una excepción no controlada del bot también la deriva automáticamente. Cada derivación registra su motivo (`handoff_reason`, ver sección 3.5) y un resumen (`handoff_summary`).
+3. Una conversación `open` sin encargado asignado es una **derivación pendiente de toma**. Solo el encargado asignado puede escribir en ella; otro `ENCARGADO` no puede tomarla, pero un `SUPERADMIN` puede reasignarla a sí mismo, con registro en `audit_logs`.
+4. El encargado asignado, o un `SUPERADMIN`, devuelve la conversación al bot con `release`; el bot retoma las respuestas.
+5. **Las decisiones de negocio** (aprobación del adelanto, sobrecupo, rechazo de comprobante) se toman únicamente en el panel de EventPro, no desde la conversación.
+6. Chatwoot es la fuente de verdad de los mensajes; EventPro no los almacena y solo conserva el vínculo de negocio en `conversation_links`.
+
+---
+
+### RN-11: Ventana de Servicio de 24 Horas
+1. La ventana de servicio de WhatsApp está **abierta** mientras no hayan transcurrido 24 horas desde el último mensaje entrante del cliente; vence a las 24 horas de ese mensaje.
+2. Con la ventana abierta, el encargado y el bot responden con **texto libre** (o adjuntos). Con la ventana cerrada solo se pueden enviar **plantillas aprobadas**; un texto libre se rechaza (`service-window-closed`).
+3. Para contener costos (precios de Meta vigentes desde 2026-10-01) se permanece en el número de prueba y las plantillas se reservan para mensajes fuera de la ventana (por ejemplo, el OTP de firma).
+4. La bandeja indica en todo momento si la ventana está abierta y cuándo vence.
+
+---
+
 ## 2. Matriz de Procesos de Control y Sobrescritura (*Overrides*)
 
 | # | Proceso de Control | Tipo | Condición de Activación | Mecanismo de Control |
@@ -96,12 +114,13 @@ $$\text{Utilidad Neta} = \text{Ingresos Totales Liquidados} - \left( \sum \text{
 | **PC-10** | **Persistencia de Observaciones** | Estructural | Registro de cotización y contrato | Almacenamiento en campo específico visible en PDF y cronograma para evitar extravíos. |
 | **PC-11** | **Revalidación de Disponibilidad y Vencimiento de Adelanto** | Automático | Al pulsar «Pagar adelanto» (más de `AVAILABILITY_RECHECK_MINUTES`), al subir comprobante y al validar el pago; y al vencer `ADVANCE_DEADLINE_HOURS` | Revalidación con bloqueo distribuido (Redis lock) en la validación; la cotización pasa a `EXPIRED` al vencer el plazo; si no hay cupo se ofrece otro horario o derivación al encargado. |
 | **PC-12** | **Auditoría Posterior de Cobros In Situ** | Manual | Pago `BALANCE` o `EXTENSION` registrado con evidencia | El pago nace `VERIFIED` con `audit_status = UNREVIEWED`; el encargado lo marca `REVIEWED` o `FLAGGED` (con observaciones) sin bloquear la operación. |
+| **PC-13** | **Traspaso de Conversación a Encargado** | Híbrido | El cliente pide un encargado, el bot no entiende dos veces seguidas, el bot falla (`BOT_ERROR`) o un encargado toma la conversación | La conversación pasa a `open` (modo `HUMAN`) y el bot deja de responder; aviso en tiempo real en la bandeja; el encargado devuelve la conversación al bot con `release`. |
 
 ---
 
 ## 3. Máquinas de Estados
 
-El sistema maneja **cuatro ciclos de vida independientes**: cotización, pago, evento y contrato (más la auditoría posterior de los cobros in situ, un atributo del pago). Los códigos de estado son identificadores en inglés (`UPPER_SNAKE_CASE`) y se usan tal cual en el código, en las restricciones `CHECK` de la base de datos y en los *payloads* de la API. La etiqueta en español es solo para la interfaz de usuario. **Esta sección es la fuente única de verdad**: los demás documentos deben referenciarla en lugar de duplicarla.
+El sistema maneja **cuatro ciclos de vida independientes**: cotización, pago, evento y contrato (más la auditoría posterior de los cobros in situ, un atributo del pago). Las conversaciones de WhatsApp no tienen un ciclo propio en EventPro: su `status` lo gestiona Chatwoot y EventPro lo proyecta a un modo de atención (ver sección 3.5). Los códigos de estado son identificadores en inglés (`UPPER_SNAKE_CASE`) y se usan tal cual en el código, en las restricciones `CHECK` de la base de datos y en los *payloads* de la API. La etiqueta en español es solo para la interfaz de usuario. **Esta sección es la fuente única de verdad**: los demás documentos deben referenciarla en lugar de duplicarla.
 
 ### 3.1 Ciclo de Vida de la Cotización
 ```mermaid
@@ -211,3 +230,9 @@ stateDiagram-v2
 | Contrato | `ISSUED` | Emitido, pendiente de firma | PDF compilado y enviado con enlace de firma electrónica. |
 | Contrato | `SIGNED` | Firmado | Firmado electrónicamente por el cliente (OTP verificado) y sellado con PAdES; se registra el SHA-256 del PDF sellado y los metadatos de la firma. |
 | Contrato | `VOIDED` | Anulado | Anulado por cancelación del evento antes de su ejecución u otra causa administrativa. |
+| Conversación (modo) | `BOT` | Atendida por el bot | Conversación en `pending` (o `resolved`); responde el bot. |
+| Conversación (modo) | `HUMAN` | Atendida por un encargado | Conversación en `open`; un encargado atiende y el bot no responde. Sin asignar, es una derivación pendiente de toma. |
+| Motivo de traspaso | `CLIENT_REQUEST` | Solicitud del cliente | El cliente pidió hablar con un encargado. |
+| Motivo de traspaso | `BOT_NOT_UNDERSTOOD` | Bot no entendió | El bot no entendió al cliente dos veces consecutivas. |
+| Motivo de traspaso | `MANUAL_TAKEOVER` | Toma manual | Un encargado tomó la conversación mientras la atendía el bot. |
+| Motivo de traspaso | `BOT_ERROR` | Error del bot | Excepción no controlada del bot; derivación automática. |

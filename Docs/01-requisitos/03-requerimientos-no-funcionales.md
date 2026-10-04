@@ -5,7 +5,7 @@
 ## 1. RNF-01: Rendimiento y Eficiencia
 
 * **RNF-01.1 (Tiempo de respuesta de API):** Los endpoints transaccionales (catálogo, cotizaciones, consulta de agenda) deben responder con un tiempo de latencia $P_{95} \le 300\text{ ms}$ bajo condiciones normales de carga.
-* **RNF-01.2 (Respuesta a Webhooks):** El endpoint receptor del Webhook de WhatsApp debe procesar y acusar recibo (HTTP 200) en menos de **1.5 segundos** para prevenir timeouts y reintentos automáticos del servidor de WhatsApp.
+* **RNF-01.2 (Respuesta a Webhooks):** El endpoint `POST /webhooks/chatwoot`, que recibe los eventos del gateway de mensajería (Chatwoot recibe a su vez el webhook de Meta), debe procesar y acusar recibo (HTTP 200) en menos de **1.5 segundos**, encolando el trabajo en arq, para prevenir timeouts y reintentos automáticos. El endpoint es solo interno: no se expone a internet.
 * **RNF-01.3 (Generación de Documentos PDF):** La renderización y compilación del contrato en formato PDF no debe exceder los **3 segundos** desde que se valida el pago.
   > **Nota de implementación:** WeasyPrint es síncrono y consume CPU. La renderización nunca se ejecuta en el *event loop* de FastAPI: se delega al *worker* de arq o, si se invoca desde la API, a un *threadpool* (`run_in_threadpool` / `asyncio.to_thread`).
 * **RNF-01.4 (Concurrencia de Cotizaciones):** El motor de cotización debe soportar al menos 50 solicitudes concurrentes sin degradación del servicio ni inconsistencias en el cálculo.
@@ -27,7 +27,9 @@
 * **RNF-03.1 (Tasa de Disponibilidad):** La API backend de EventPro debe ofrecer una disponibilidad mínima del **99.5%** en horario operativo comercial (08:00 a 23:00 hrs GMT-5).
 * **RNF-03.2 (Manejo de Caídas de Servicios Externos):** 
   * En caso de indisponibilidad temporal de la API de Google Maps, el sistema no debe abortar la cotización; debe aplicar una tarifa plana de contingencia o habilitar el modo de cotización manual con notificación al encargado.
-  * Si el servicio de WhatsApp experimenta interrupciones, los mensajes pendientes deben encolarse para su reprocesamiento automático una vez restablecida la conexión.
+  * Si el gateway de mensajería (Chatwoot) o el canal de WhatsApp experimentan interrupciones, todo envío pasa por `outbox_messages` y se reintenta con espera creciente (30 s, 2 min, 10 min, 30 min y 2 h); agotados los reintentos, el mensaje queda `FAILED` y la bandeja ofrece «Reintentar». Ninguna operación de negocio se bloquea por la caída de la mensajería.
+  * Para los eventos entrantes que Chatwoot no llegue a entregar, un **job de reconciliación** consulta cada 5 minutos las conversaciones actualizadas desde el último cursor y procesa los mensajes entrantes no vistos; la deduplicación por identificador (Redis, TTL de 7 días) hace seguro el reproceso.
+  * Los eventos en tiempo real de la bandeja (SSE) se recuperan por reconexión automática y nueva consulta de la bandeja; no existe búfer de reenvío.
 * **RNF-03.3 (Backups de Base de Datos):** La base de datos relacional debe contar con copias de seguridad automáticas diarias e instantáneas (*snapshots*) previas a cualquier migración de esquema.
 
 ---
@@ -38,7 +40,7 @@
   * **Capa de Transporte / Controladores (API Routers):** Gestión de peticiones HTTP y serialización.
   * **Capa de Lógica de Negocio (Services / Use Cases):** Reglas de cotización, validación y contratos.
   * **Capa de Persistencia (Repositories / Models):** Acceso a base de datos mediante SQLAlchemy.
-  * **Capa de Integración Externa:** Clientes HTTP desacoplados para WhatsApp y Google Maps.
+  * **Capa de Integración Externa:** Clientes HTTP desacoplados para el gateway de mensajería (Chatwoot, mediante el puerto `IMessagingPort`) y Google Maps.
 * **RNF-04.2 (Tipado y Cobertura de Pruebas):** El código fuente en Python 3.12+ debe aplicar tipado estático (*Type Hints*) en el 100% de funciones de servicio y alcanzar una cobertura mínima de pruebas automatizadas (*Unit Tests* con `pytest`) con una **cobertura global mínima del 75%** y del **100%** en los servicios de dominio y cálculos financieros (`FinancialEngine`, `TravelIntervalService`, `ConcurrencyEvaluator`, `Money`). Es la única meta de cobertura del proyecto; [ADR-01](../02-arquitectura/04-adr-decisiones-arquitectura.md) y la [DoD](../05-operaciones/03-gobernanza-git-y-calidad-dod.md) remiten a este requerimiento.
 * **RNF-04.3 (Registro de Actividad / Logging):** Se debe implementar *Structured Logging* en formato JSON con niveles estándar (`INFO`, `WARNING`, `ERROR`), capturando identificadores de traza (*Trace ID*) para auditar cada interacción del cliente desde WhatsApp hasta la liquidación final.
 
@@ -56,3 +58,11 @@
 * **RNF-06.1 (Web móvil primero):** Las vistas del **operador** (agenda del día, cobro de saldo, extensiones) y del **cliente** (revisión y firma del contrato) se diseñan *mobile-first* y deben ser plenamente usables desde un ancho de **360 px**. La vista del encargado es *desktop-first* y responsiva.
 * **RNF-06.2 (Evidencia con la cámara):** La carga de evidencia de cobros in situ (captura de Yape/Plin o efectivo) usa la cámara del teléfono mediante `<input type="file" accept="image/*" capture>`.
 * **RNF-06.3 (PWA diferida):** La instalabilidad como PWA (manifiesto, *service worker*, modo sin conexión) queda fuera de esta fase y se evaluará posteriormente.
+
+---
+
+## 7. RNF-07: Costos y Uso de Servicios de Mensajería
+
+* **RNF-07.1 (Costo de infraestructura):** El proyecto es académico y su presupuesto total es de US$20, reservado principalmente para OpenAI; el gateway de mensajería (Chatwoot autoalojado) y el resto de la infraestructura deben operar a un costo de US$0, dentro de los límites gratuitos del proveedor de hosting.
+* **RNF-07.2 (Canal de prueba y precios de Meta):** El canal usa el número de prueba de Meta for Developers (hasta 5 destinatarios verificados, sin método de pago) hasta la presentación final. Dado que Meta cobra los mensajes de servicio tras 1 000 gratuitos por número y mes y las plantillas de utilidad dentro de la ventana de 24 h (precios vigentes desde 2026-10-01), los mensajes dentro de la ventana de 24 h se envían con texto libre y las plantillas se reservan para mensajes fuera de ella (por ejemplo, el OTP de firma).
+* **RNF-07.3 (Chatwoot oculto y portabilidad):** Los usuarios no interactúan con la interfaz de Chatwoot ni el navegador recibe sus URL: los medios se sirven por el proxy autenticado de EventPro. Sustituir el gateway (por ejemplo, volver a Meta directo) debe requerir únicamente otro adaptador de `IMessagingPort`, sin cambios en el dominio.

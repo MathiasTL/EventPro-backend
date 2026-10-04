@@ -5,14 +5,14 @@
 ## 1. Módulo M01: Canal WhatsApp y Captura de Pedidos
 
 ### RF-01: Atención Automatizada y Saludo Inicial
-* **Descripción:** El sistema debe procesar los mensajes entrantes de clientes mediante un Webhook conectado a la API de WhatsApp Business y responder de manera automatizada con un mensaje de bienvenida y el catálogo estructurado de servicios.
-* **Entradas:** Mensaje entrante vía webhook de WhatsApp (número de teléfono del remitente, identificador de mensaje, texto o payload de botón).
+* **Descripción:** El sistema debe procesar los mensajes entrantes de clientes a través del gateway de mensajería (Chatwoot, ADR-10), que recibe los mensajes del canal de WhatsApp y los reenvía al backend por el webhook `POST /webhooks/chatwoot`, y responder de manera automatizada con un mensaje de bienvenida y el catálogo estructurado de servicios.
+* **Entradas:** Evento `message_created` entrante recibido del gateway de mensajería por el webhook de Chatwoot (identificador de la conversación, número de teléfono del remitente, identificador de mensaje, texto o payload de botón). El canal del cliente sigue siendo WhatsApp.
 * **Procesamiento:** 
   1. Verificar si el número de teléfono corresponde a un cliente con una cotización o conversación activa.
   2. Si no existe conversación activa, inicializar una nueva sesión de atención.
   3. Despachar mensaje de saludo inicial junto con el menú principal de opciones interactivas.
-* **Salidas:** Mensaje interactivo de WhatsApp despachado al cliente (HTTP 200 al Webhook).
-* **Reglas Asociadas:** PC-10.
+* **Salidas:** Mensaje interactivo de WhatsApp despachado al cliente a través del gateway de mensajería (HTTP 200 al webhook en menos de 1.5 s, RNF-01.2). El bot solo responde mientras la conversación está en modo `BOT` (`pending`); en modo `HUMAN` (`open`) no responde (RF-30).
+* **Reglas Asociadas:** PC-10, RN-10.
 * **Prioridad:** Alta.
 
 ---
@@ -115,14 +115,14 @@
 ---
 
 ### RF-08: Despacho Automático de Resumen de Cotización
-* **Descripción:** El sistema debe componer un mensaje estructurado y legible con el desglose comercial de la cotización y transmitirlo automáticamente al cliente a través del chat de WhatsApp.
+* **Descripción:** El sistema debe componer un mensaje estructurado y legible con el desglose comercial de la cotización y transmitirlo automáticamente al cliente a través del chat de WhatsApp (por el gateway de mensajería).
 * **Entradas:** Identificador de la cotización calculada y número de WhatsApp del cliente.
 * **Procesamiento:**
   1. Generar plantilla de texto con detalle de paquete, temática, extras, movilidad, monto total y monto de adelanto requerido (10%).
   2. El mensaje **no incluye datos de pago** (Yape, Plin ni cuentas bancarias). Incluye únicamente un botón interactivo «Pagar adelanto».
   3. El mensaje advierte de forma explícita que **la fecha y el horario solo quedan asegurados cuando el adelanto es validado**, e informa el plazo máximo para pagarlo (`ADVANCE_DEADLINE_HOURS`, por defecto 24 horas desde el envío).
   4. Registrar la hora de envío como inicio del plazo de vigencia de la cotización.
-* **Salidas:** Mensaje enviado por la API de WhatsApp con cambio de estado de la cotización a `SENT` (ver ciclo de vida de cotización en RN, sección 3).
+* **Salidas:** Mensaje enviado por WhatsApp mediante el gateway de mensajería (a través de `outbox_messages`) con cambio de estado de la cotización a `SENT` (ver ciclo de vida de cotización en RN, sección 3).
 * **Reglas Asociadas:** RN-09.
 * **Prioridad:** Alta.
 
@@ -401,3 +401,59 @@
 * **Salidas:** Elenco creado o actualizado; listado filtrable.
 * **Reglas Asociadas:** RN-04, RN-05.
 * **Prioridad:** Alta.
+
+---
+
+## 11. Módulo M11: Atención Humana y Bandeja de Conversaciones
+
+Este módulo se apoya en Chatwoot como gateway de mensajería oculto (ADR-10): los encargados nunca usan la interfaz de Chatwoot, sino la bandeja de EventPro. Los endpoints se definen en el módulo 2.14 de la [especificación de endpoints REST](../04-api/01-especificacion-endpoints-rest.md) y el diseño en la [especificación del gateway](../02-arquitectura/05-spec-chatwoot-gateway.md).
+
+### RF-30: Traspaso de la Conversación del Bot a un Encargado y Retorno al Bot
+* **Descripción:** El sistema debe permitir que una conversación de WhatsApp pase de la atención del bot a la de un encargado (modo `HUMAN`) y regrese al bot cuando el encargado la devuelve. Mientras la conversación está atendida por un encargado, el bot no responde. Cada traspaso registra su motivo (`handoff_reason`) y un resumen del contexto (`handoff_summary`: datos capturados y cotización vigente).
+* **Entradas:**
+  * Disparadores del traspaso: (1) el cliente solicita hablar con un encargado (opción «Hablar con un encargado» o texto equivalente); (2) el bot no entiende al cliente dos veces consecutivas; (3) un encargado ejecuta la toma manual de la conversación (`POST /conversations/{id}/takeover`).
+  * Excepción no controlada del bot durante el procesamiento de un mensaje.
+  * Devolución de la conversación al bot por el encargado asignado o por un `SUPERADMIN` (`POST /conversations/{id}/release`).
+* **Procesamiento:**
+  1. En los disparadores (1) y (2), el bot avisa al cliente («Te comunico con un encargado»), registra `handoff_reason` (`CLIENT_REQUEST` o `BOT_NOT_UNDERSTOOD`) y `handoff_summary`, y la conversación pasa a `open` sin asignar; se emite en tiempo real el evento `handoff.requested` hacia la bandeja (RF-32).
+  2. Ante una excepción no controlada, el bot responde «Tuvimos un problema, te comunico con un encargado» y deriva automáticamente con `handoff_reason = BOT_ERROR`.
+  3. En la toma manual, la conversación pasa a `open`, se asigna al encargado autenticado (`assigned_user_id`) y, si estaba en modo `BOT`, se registra `handoff_reason = MANUAL_TAKEOVER`. Si ya había sido derivada y estaba sin asignar, conserva su motivo original. La operación es idempotente para el mismo usuario.
+  4. Una conversación asignada a otro encargado no puede ser tomada por un `ENCARGADO` (error `conversation-taken-by-other`). Un `SUPERADMIN` puede reasignarla a sí mismo; la acción se registra en `audit_logs` como `OVERRIDE_CONVERSATION_ASSIGNMENT` con el usuario anterior.
+  5. Al devolver la conversación, pasa a `pending`, se limpia `assigned_user_id` y el bot retoma las respuestas. `handoff_reason` y `handed_off_at` se conservan como historial de la última derivación.
+  6. Las decisiones de negocio (aprobación del adelanto, sobrecupo, rechazo de comprobante) se mantienen en el panel de EventPro y no se toman desde la conversación.
+* **Salidas:** Conversación con `mode`, `status`, `assigned_user_id`, `handoff_reason` y `handoff_summary` actualizados en `conversation_links` y en Chatwoot; aviso al cliente cuando deriva el bot. Si Chatwoot no responde, la toma y la devolución fallan con `503` (`messaging-gateway-unavailable`).
+* **Reglas Asociadas:** RN-10, PC-13.
+* **Endpoints:** `POST /conversations/{id}/takeover`, `POST /conversations/{id}/release`, `POST /webhooks/chatwoot` (módulos 2.14 y 2.8).
+* **Prioridad:** Alta.
+
+---
+
+### RF-31: Bandeja de Conversaciones en EventPro
+* **Descripción:** El sistema debe ofrecer a los encargados una bandeja dentro de EventPro para listar las conversaciones de WhatsApp, leer sus mensajes y responder a los clientes, sin exponer Chatwoot al usuario. Chatwoot es la fuente de verdad de mensajes, medios y estados de entrega; EventPro no duplica mensajes y solo almacena el vínculo de negocio (`conversation_links`).
+* **Entradas:** Filtros de la bandeja (`mode`: `BOT` o `HUMAN`; `assigned`: `me` o `unassigned`; `include_resolved`; paginación); identificador de conversación; mensaje a enviar (texto, adjunto o plantilla aprobada); identificador de adjunto.
+* **Procesamiento:**
+  1. **Listado:** devolver las conversaciones ordenadas por último mensaje, con cliente, cotización vinculada, `status`, `mode`, encargado asignado, motivo del traspaso, vista previa del último mensaje y estado de la ventana de servicio de 24 h. Por defecto se excluyen las conversaciones `resolved`.
+  2. **Lectura:** obtener los mensajes de la conversación desde Chatwoot con paginación por cursor, indicando dirección, autor (`CLIENT`, `BOT` o `AGENT`) y estado de entrega.
+  3. **Respuesta:** solo puede enviar mensajes el encargado que tomó la conversación (`status = open` y `assigned_user_id` igual al usuario autenticado); en otro caso se rechaza con `conversation-not-taken` o `conversation-taken-by-other`. El mensaje se encola en `outbox_messages` y la respuesta es `202` con estado `QUEUED`; el autor real se registra en `audit_logs` (`SEND_CONVERSATION_MESSAGE`).
+  4. **Ventana de servicio de 24 h:** `service_window_open` es verdadero mientras no hayan transcurrido 24 horas desde el último mensaje entrante del cliente. Con la ventana cerrada solo se admiten plantillas aprobadas; un texto libre se rechaza con `service-window-closed`.
+  5. **Medios:** los adjuntos (imágenes, comprobantes, documentos) se sirven únicamente mediante el proxy autenticado `GET /conversations/{id}/attachments/{attachment_id}`; las URL de Chatwoot nunca llegan al navegador. La lectura de medios no exige haber tomado la conversación.
+  6. **Fallas de entrega:** un mensaje con estado `FAILED` muestra un motivo legible (por ejemplo, ventana de 24 h cerrada o número fuera de los destinatarios de prueba). Si el envío agotó sus reintentos, la bandeja ofrece «Reintentar», que vuelve a enviar el mensaje (nuevo `POST /conversations/{id}/messages`).
+  7. Acceso restringido a los roles `ENCARGADO` y `SUPERADMIN`.
+* **Salidas:** Bandeja filtrable, hilo de mensajes con estados de entrega y adjuntos visibles, mensaje aceptado para envío (`QUEUED`) o error de negocio identificado por su código.
+* **Reglas Asociadas:** RN-10, RN-11, RNF-03.2.
+* **Endpoints:** `GET /conversations`, `GET /conversations/{id}/messages`, `POST /conversations/{id}/messages`, `GET /conversations/{id}/attachments/{attachment_id}` (módulo 2.14).
+* **Prioridad:** Alta.
+
+---
+
+### RF-32: Actualización en Tiempo Real de la Bandeja
+* **Descripción:** El sistema debe mantener actualizada la bandeja de los encargados sin recargar la página: mensajes nuevos, cambios de estado o asignación, cambios en el estado de entrega y avisos de nuevas derivaciones del bot.
+* **Entradas:** Eventos recibidos por el worker desde Chatwoot (`POST /webhooks/chatwoot`) y cambios hechos desde EventPro; conexión SSE del encargado con su access token (`access_token`).
+* **Procesamiento:**
+  1. Publicar por Server-Sent Events los eventos `conversation.updated`, `message.created`, `message.updated` y `handoff.requested`.
+  2. Autenticar el stream con el access token en el parámetro de consulta `access_token` (`EventSource` no admite cabeceras personalizadas); el servidor cierra el stream al vencer el token y el cliente renueva la sesión y se reconecta.
+  3. No existe búfer de reenvío: tras una desconexión, el cliente se reconecta automáticamente y vuelve a solicitar la bandeja completa para recuperar el estado.
+* **Salidas:** Flujo de eventos en tiempo real (`text/event-stream`) con latido periódico para mantener la conexión.
+* **Reglas Asociadas:** RN-10.
+* **Endpoints:** `GET /conversations/stream` (módulo 2.14).
+* **Prioridad:** Media.
