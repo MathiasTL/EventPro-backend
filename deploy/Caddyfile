@@ -1,0 +1,90 @@
+# Proxy inverso de EventPro (solo servidor). HTTPS automatico con Let's Encrypt.
+# Variables de entorno (las inyecta docker-compose.proxy.yml):
+#   EVENTPRO_DOMAIN     dominio base, por ejemplo eventpro-demo.duckdns.org
+#   FRONTEND_UPSTREAM   host:puerto del frontend (por defecto frontend:3000)
+#
+# Subdominios (DuckDNS: confirmar que resuelve subdominios de segundo nivel, ver spec 6.2/9;
+# si no, usar enrutamiento por ruta en un solo dominio):
+#   app.<dominio>   web de EventPro (frontend)
+#   api.<dominio>   API de EventPro
+#   chat.<dominio>  Chatwoot, SOLO las rutas que necesita Meta
+
+{
+	# Sin API de administracion expuesta.
+	admin off
+}
+
+# --- Web de EventPro (encargados) -------------------------------------------
+app.{$EVENTPRO_DOMAIN} {
+	encode zstd gzip
+	# El frontend vive en el repositorio hermano ../frontend. Este upstream es un marcador:
+	# ajustarlo al servicio o contenedor real que lo publique (por ejemplo `frontend:80`).
+	reverse_proxy {$FRONTEND_UPSTREAM:frontend:3000}
+}
+
+# --- API de EventPro ---------------------------------------------------------
+api.{$EVENTPRO_DOMAIN} {
+	encode zstd gzip
+
+	# El webhook de Chatwoot es interno: solo se alcanza por la red de Docker
+	# (http://api:8000/api/v1/webhooks/chatwoot). Hacia internet no existe.
+	@chatwoot_webhook path /api/v1/webhooks/chatwoot /api/v1/webhooks/chatwoot/*
+	handle @chatwoot_webhook {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy api:8000 {
+			# SSE (GET /conversations/stream): enviar cada evento sin almacenarlo en buffer.
+			flush_interval -1
+		}
+	}
+
+	# Registro de acceso sin datos sensibles: el stream SSE autentica con `?access_token=<JWT>`,
+	# asi que la cadena de consulta se reemplaza y las cabeceras de credenciales se eliminan.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			request>uri query {
+				replace access_token REDACTED
+			}
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+		}
+	}
+}
+
+# --- Chatwoot (solo lo que necesita Meta) ------------------------------------
+# La administracion de Chatwoot NO se publica: se usa por el puerto local 127.0.0.1:3001 del
+# servidor (tunel SSH) o, en desarrollo, directamente en localhost.
+chat.{$EVENTPRO_DOMAIN} {
+	encode zstd gzip
+
+	# Webhook del canal oficial de WhatsApp Cloud en Chatwoot: GET (verificacion) y POST (eventos)
+	# en /webhooks/whatsapp/<numero>. Chatwoot valida la firma de Meta (X-Hub-Signature-256).
+	@meta_webhook path /webhooks/whatsapp/*
+	# Medios salientes: Meta descarga los adjuntos desde una URL firmada de Active Storage.
+	# Solo descargas de archivos (blobs, variantes y disco local); excluye direct_uploads.
+	@meta_media path /rails/active_storage/blobs/* /rails/active_storage/representations/* /rails/active_storage/disk/*
+
+	handle @meta_webhook {
+		reverse_proxy chatwoot-rails:3000
+	}
+	handle @meta_media {
+		reverse_proxy chatwoot-rails:3000
+	}
+
+	# Contingencia de demo (bandeja Website widget): descomentar para publicar el widget.
+	# @widget path /packs/* /widget /widget_tests /api/v1/widget/* /cable /vite/* /assets/*
+	# handle @widget {
+	# 	reverse_proxy chatwoot-rails:3000
+	# }
+
+	# Todo lo demas (panel de administracion, API de plataforma) queda fuera de internet.
+	handle {
+		respond 404
+	}
+
+	# Sin registro de acceso en este sitio: las rutas de medios llevan firmas en la URL.
+}
