@@ -11,7 +11,7 @@
 | **Operador de Elenco / Campo** | `OPERADOR` | Acceso móvil restringido a **sus propios eventos asignados** (los de su elenco, `crews.user_id`). Visualización de notas/observaciones, registro de llegada, cobro de saldo in situ con evidencia y extensiones de show. |
 | **Cliente / Invitado** | `CLIENTE` | No tiene cuenta ni JWT. Acceso público acotado por un token temporal criptográfico de un solo uso, entregado por WhatsApp, que solo da acceso a **su propio contrato** (visualización, OTP y firma electrónica). Sus cotizaciones y comprobantes los gestiona a través del chat de WhatsApp (bot). |
 
-> **Actores no humanos:** el **bot de WhatsApp** y las **tareas programadas** (vencimiento de cotizaciones, despacho de la cola `outbox_messages`) ejecutan casos de uso internos sin pasar por HTTP ni por esta matriz. Los endpoints HTTP equivalentes a las acciones del bot (`POST /quotes`, `POST /quotes/{id}/pay-advance`, `POST /quotes/{id}/cancel`, `POST /payments/advance`) están reservados a `ENCARGADO` y `SUPERADMIN`, para actuar en nombre del cliente.
+> **Actores no humanos:** el **bot de WhatsApp** (que opera a través de Chatwoot) y las **tareas programadas** (vencimiento de cotizaciones, despacho de la cola `outbox_messages`) ejecutan casos de uso internos sin pasar por HTTP ni por esta matriz. Los endpoints HTTP equivalentes a las acciones del bot (`POST /quotes`, `POST /quotes/{id}/pay-advance`, `POST /quotes/{id}/cancel`, `POST /payments/advance`) están reservados a `ENCARGADO` y `SUPERADMIN`, para actuar en nombre del cliente.
 
 ---
 
@@ -28,7 +28,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `Propios` | Permitido solo sobre eventos asignados al elenco del operador (`crews.user_id` = usuario autenticado, mediante `crew_assignments`); los demás eventos responden `404`. |
 | `Token` | Permitido con el token de un solo uso del enlace de firma, solo para el contrato al que pertenece el token. |
 | `Público` | Sin autenticación (acceso acotado por límites de peticiones). |
-| `Meta` | Sin JWT; autenticado por la verificación de Meta (token de verificación o firma HMAC). |
+| `Firma` | Sin JWT; autenticado por la firma HMAC del webhook de Chatwoot (acceso interno, no es un acceso de usuario). |
 
 ### 2.0 Salud del Servicio
 
@@ -94,12 +94,11 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `POST /quotes/{id}/cancel` | Sí | Sí | - | - | |
 | `PATCH /overrides/quotes/{id}/mobility` | Sí | Sí | - | - | Audita `OVERRIDE_MOBILITY`. |
 
-### 2.5 Webhook de WhatsApp
+### 2.5 Webhook de Chatwoot
 
 | Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE (Token) | Notas |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| `GET /webhooks/whatsapp` | Meta | Meta | Meta | Meta | Reto de verificación: valida `hub.verify_token`. No es un acceso de usuario. |
-| `POST /webhooks/whatsapp` | Meta | Meta | Meta | Meta | Valida `X-Hub-Signature-256` (HMAC-SHA256 del cuerpo crudo). No usa JWT. |
+| `POST /webhooks/chatwoot` | Firma | Firma | Firma | Firma | Valida `X-Chatwoot-Signature` (HMAC-SHA256 de `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"`) y rechaza marcas de tiempo con más de 5 minutos. No usa JWT. Solo interno: bloqueado en el proxy. |
 
 ### 2.6 Pagos y Comprobantes
 
@@ -152,6 +151,20 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `GET /reports/dashboard` | Sí | Sí | - | - | KPIs de RF-25. |
 | `GET /reports/financial/pnl` | Sí | Sí | - | - | Utilidad neta (RF-24). |
 
+### 2.10 Conversaciones (Bandeja de WhatsApp)
+
+| Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE (Token) | Notas |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| `GET /conversations` | Sí | Sí | - | - | Contiene teléfonos de clientes: acceso restringido a la gestión. |
+| `GET /conversations/{id}/messages` | Sí | Sí | - | - | Consultado a Chatwoot; `503` si no responde. |
+| `GET /conversations/{id}/attachments/{attachment_id}` | Sí | Sí | - | - | Proxy autenticado de los medios del chat; no exige que la conversación esté tomada. |
+| `POST /conversations/{id}/messages` | Sí | Sí | - | - | Solo en conversaciones tomadas por el propio usuario. Envía como el agente de servicio y audita al autor real (`SEND_CONVERSATION_MESSAGE`). |
+| `POST /conversations/{id}/takeover` | Sí | Sí | - | - | Un `ENCARGADO` no puede tomar una conversación asignada a otro usuario (`409`); un `SUPERADMIN` sí y audita `OVERRIDE_CONVERSATION_ASSIGNMENT`. |
+| `POST /conversations/{id}/release` | Sí | Sí | - | - | Solo el usuario asignado o un `SUPERADMIN`. |
+| `GET /conversations/stream` | Sí | Sí | - | - | SSE. El access token JWT viaja en el parámetro `access_token` (ver sección 4). |
+
+---
+
 ---
 
 ## 3. Mecanismo de Seguridad y Autenticación JWT
@@ -193,9 +206,10 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
    | `POST /contracts/sign/{token}/otp/verify` | Máximo 5 intentos fallidos por OTP (`otp_attempts`); al superarlos se invalida el OTP. Adicionalmente, 20 intentos por IP por hora. |
    | `GET /contracts/sign/{token}` y `GET /contracts/sign/{token}/pdf` | Máximo 30 solicitudes por minuto por IP, para dificultar la enumeración de tokens. |
 
-3. **Firma del Webhook de WhatsApp:** `POST /webhooks/whatsapp` exige la cabecera `X-Hub-Signature-256: sha256=<hex>`, el HMAC-SHA256 del cuerpo crudo calculado con el secreto de la aplicación de Meta. Se recalcula y se compara en tiempo constante antes de procesar el evento; sin firma válida responde `401` y no se encola nada. El `GET /webhooks/whatsapp` valida `hub.verify_token` contra `WHATSAPP_VERIFY_TOKEN`. El procesamiento es idempotente por el identificador de mensaje de Meta.
+3. **Firma del Webhook de Chatwoot:** `POST /webhooks/chatwoot` exige las cabeceras `X-Chatwoot-Timestamp` (marca de tiempo Unix en segundos) y `X-Chatwoot-Signature: sha256=<hex>`, el HMAC-SHA256 de `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"` calculado con `CHATWOOT_WEBHOOK_SECRET`. Se recalcula y se compara en tiempo constante antes de procesar el evento, y se rechazan las marcas de tiempo con más de 5 minutos de antigüedad (mitiga la repetición de peticiones capturadas). Sin firma válida responde `401` (`invalid-webhook-signature`), no se encola nada y se registra el intento. El endpoint es **solo interno**: el proxy inverso lo bloquea hacia internet y únicamente es accesible desde la red interna de Docker. El procesamiento es idempotente por el identificador de mensaje o evento de Chatwoot (deduplicación en Redis, TTL de 7 días). La firma `X-Hub-Signature-256` de Meta y el reto de verificación de suscripción los valida ahora el propio Chatwoot en su webhook público, no EventPro; EventPro ya no expone ningún endpoint hacia Meta.
 4. **Seguridad del OTP:** código de 6 dígitos generado con un generador criptográfico, almacenado solo con hash (`otp_hash`), con vigencia de 10 minutos, intentos limitados y entrega por WhatsApp a través de `outbox_messages` (el contenido del OTP se elimina del `payload` tras el envío).
-5. **Aislamiento de Archivos Binarios:** Los comprobantes y evidencias subidos no se ejecutan ni se sirven directamente desde rutas del sistema operativo; se almacenan con extensión neutral y nombre UUID, y se descargan únicamente a través de la API con control de acceso (`GET /payments/{id}/evidence`).
+5. **Aislamiento de Archivos Binarios:** los medios del chat (adjuntos de Chatwoot) se sirven únicamente a través del proxy autenticado `GET /conversations/{id}/attachments/{attachment_id}`; las URL de Chatwoot no se exponen al navegador. Los comprobantes y evidencias subidos no se ejecutan ni se sirven directamente desde rutas del sistema operativo; se almacenan con extensión neutral y nombre UUID, y se descargan únicamente a través de la API con control de acceso (`GET /payments/{id}/evidence`).
 6. **Validación de Subidas:** máximo 5 MB por archivo; el tipo se valida por contenido (*magic bytes*, biblioteca `filetype`) y no solo por extensión ni por `Content-Type`. Las evidencias de cobro in situ admiten solo imágenes (JPEG, PNG, WebP); los comprobantes de adelanto, además, PDF.
 7. **Headers de Seguridad HTTP:** Inclusión obligatoria de `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
 8. **Auditoría:** las acciones críticas (overrides, aprobación de sobrecupo, auditoría de cobros, contratos manuales y firmas) se registran en `audit_logs`, que es de solo lectura vía API (`GET /audit-logs`).
+9. **Autenticación del stream SSE:** `GET /conversations/stream` usa el mismo access token JWT (rol `ENCARGADO` o `SUPERADMIN`) enviado en el parámetro de consulta `access_token`, porque `EventSource` no permite cabeceras personalizadas y la API no usa cookies. Es el único endpoint que acepta el token fuera de `Authorization`. Como la cadena de consulta puede quedar en registros, el proxy y la aplicación no deben registrar la consulta de esta ruta; el servidor cierra el stream al vencer el token y el cliente renueva con `POST /auth/refresh` y se reconecta. El stream es de solo lectura y no sustituye la validación de rol de los demás endpoints del módulo.

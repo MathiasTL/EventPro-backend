@@ -377,7 +377,7 @@ Bitácora de auditoría para trazabilidad de decisiones críticas y procesos de 
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del log. |
 | `user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Usuario responsable de la acción; nulo en acciones del sistema o del cliente (por ejemplo, la firma). |
-| `action` | `VARCHAR(50)` | NO | - | CHECK in (`OVERRIDE_MOBILITY`, `OVERRIDE_TRANSIT_INTERVAL`, `APPROVE_OVERBOOKED_PAYMENT`, `REJECT_OVERBOOKED_PAYMENT`, `AUDIT_PAYMENT`, `MANUAL_CONTRACT`, `CONTRACT_SIGNED`) | Acción registrada. `CONTRACT_SIGNED` guarda en `new_values` el SHA-256 del PDF sellado, la verificación del OTP, la IP, el agente de usuario y las marcas de tiempo. |
+| `action` | `VARCHAR(50)` | NO | - | CHECK in (`OVERRIDE_MOBILITY`, `OVERRIDE_TRANSIT_INTERVAL`, `APPROVE_OVERBOOKED_PAYMENT`, `REJECT_OVERBOOKED_PAYMENT`, `AUDIT_PAYMENT`, `MANUAL_CONTRACT`, `CONTRACT_SIGNED`, `SEND_CONVERSATION_MESSAGE`, `OVERRIDE_CONVERSATION_ASSIGNMENT`) | Acción registrada. `SEND_CONVERSATION_MESSAGE` identifica al encargado que escribió un mensaje enviado con el agente de servicio de Chatwoot (ADR-10). `OVERRIDE_CONVERSATION_ASSIGNMENT` registra la reasignación de una conversación por un `SUPERADMIN`. `CONTRACT_SIGNED` guarda en `new_values` el SHA-256 del PDF sellado, la verificación del OTP, la IP, el agente de usuario y las marcas de tiempo. |
 | `entity_name` | `VARCHAR(50)` | NO | - | - | Entidad modificada (`quotes`, `events`, `contracts`, `payments`, `crew_assignments`). |
 | `entity_id` | `UUID` | NO | - | INDEX (`entity_name`, `entity_id`) | UUID de la entidad en cuestión. |
 | `old_values` | `JSONB` | SÍ | `NULL` | - | Estado anterior en formato JSON. |

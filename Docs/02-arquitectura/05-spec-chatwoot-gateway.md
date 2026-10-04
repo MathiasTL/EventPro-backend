@@ -113,6 +113,7 @@ Roles `ENCARGADO` y `SUPERADMIN`:
 |---|---|
 | `GET /conversations` | Bandeja con filtros: bot, humano, asignadas al usuario. |
 | `GET /conversations/{id}/messages` | Mensajes de la conversación (consultados a Chatwoot). |
+| `GET /conversations/{id}/attachments/{attachment_id}` | Sirve un adjunto de la conversación a través de EventPro (proxy hacia Chatwoot); sus URL no se exponen al navegador. |
 | `POST /conversations/{id}/messages` | Envía texto o adjuntos como el agente de servicio. |
 | `POST /conversations/{id}/takeover` | Pasa a `open`, asigna al encargado; el bot deja de responder. |
 | `POST /conversations/{id}/release` | Vuelve a `pending`; responde el bot. |
