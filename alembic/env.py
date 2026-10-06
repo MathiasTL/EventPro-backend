@@ -15,12 +15,15 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from app.core.config import settings
+from app.core.config import get_settings
 
 # Importar los modelos para poblar Base.metadata (autogenerate y create_all).
 from app.infrastructure.adapters.secondary.persistence.models import (  # noqa: F401
+    audit_log,
     catalog_models,
-    user_model,
+    refresh_token,
+    role,
+    user,
 )
 from app.infrastructure.adapters.secondary.persistence.models.base import Base
 
@@ -33,7 +36,7 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    return config.get_main_option("sqlalchemy.url") or settings.database_url
+    return config.get_main_option("sqlalchemy.url") or get_settings().database_url
 
 
 def run_migrations_offline() -> None:

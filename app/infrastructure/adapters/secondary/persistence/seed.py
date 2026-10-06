@@ -22,7 +22,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.adapters.secondary.persistence.database import SessionFactory
+from app.infrastructure.adapters.secondary.persistence.database import get_sessionmaker
+from app.infrastructure.adapters.secondary.persistence.models import Role
 from app.infrastructure.adapters.secondary.persistence.models.catalog_models import (
     ExtraModel,
     InventoryItemModel,
@@ -30,7 +31,6 @@ from app.infrastructure.adapters.secondary.persistence.models.catalog_models imp
     PackageModel,
     ThemeModel,
 )
-from app.infrastructure.adapters.secondary.persistence.models.user_model import RoleModel
 
 # --- Roles del sistema (UUID fijos del documento de seeds) ---
 ROLES: list[dict[str, Any]] = [
@@ -44,7 +44,7 @@ ROLES: list[dict[str, Any]] = [
         "id": uuid.UUID("b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a22"),
         "code": "ENCARGADO",
         "name": "Encargado del Negocio",
-        "description": ("Gestión de cotizaciones, overrides, aprobación de shows y reportes."),
+        "description": "Gestión de cotizaciones, overrides, aprobación de shows y reportes.",
     },
     {
         "id": uuid.UUID("c2eebc99-9c0b-4ef8-bb6d-6bb9bd380a33"),
@@ -237,7 +237,7 @@ async def seed(session: AsyncSession) -> dict[str, int]:
     for role in ROLES:
         _, created = await _get_or_create(
             session,
-            RoleModel,
+            Role,
             defaults={
                 "id": role["id"],
                 "name": role["name"],
@@ -315,7 +315,7 @@ async def seed(session: AsyncSession) -> dict[str, int]:
 async def run_seed() -> dict[str, int]:
     """Abre una sesión, siembra y confirma la transacción."""
 
-    async with SessionFactory() as session:
+    async with get_sessionmaker()() as session:
         counts = await seed(session)
         await session.commit()
         return counts

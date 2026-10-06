@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 from redis.asyncio import Redis
-from testcontainers.redis import RedisContainer
+from testcontainers.community.redis import RedisContainer
 
 from app.infrastructure.adapters.secondary.cache import RedisLockAdapter
 
