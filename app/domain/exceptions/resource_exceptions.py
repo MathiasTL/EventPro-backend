@@ -36,6 +36,12 @@ class ResourceInUseError(DomainError):
     code = "resource-in-use"
 
 
+class InvalidPaymentStateError(ValidationError):
+    """La transición solicitada no está permitida en el estado actual."""
+
+    code = "invalid-payment-state"
+
+
 class InvalidServiceCategoryError(ValidationError):
     """La categoría de servicio no es válida para el contexto solicitado."""
 
