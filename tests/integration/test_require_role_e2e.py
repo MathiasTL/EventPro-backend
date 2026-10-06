@@ -48,7 +48,9 @@ async def _seed_user(role: str) -> str:
 async def _token_for(email: str) -> str:
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/auth/login", json={"email": email, "password": PASSWORD})
+        response = await client.post(
+            "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
+        )
     assert response.status_code == 200
     return response.json()["access_token"]
 

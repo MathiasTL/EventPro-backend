@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
     install_exception_handlers(application)
     install_rate_limit(application)
     application.include_router(health_router.router)
-    application.include_router(auth_router.router)
+    application.include_router(auth_router.router, prefix=settings.api_v1_prefix)
     return application
 
 

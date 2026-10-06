@@ -60,7 +60,7 @@ async def _seed_user(*, role: str = "ENCARGADO", is_active: bool = True) -> str:
 
 
 async def _login(email: str) -> httpx.Response:
-    return await _request("POST", "/auth/login", json={"email": email, "password": PASSWORD})
+    return await _request("POST", "/api/v1/auth/login", json={"email": email, "password": PASSWORD})
 
 
 async def test_login_ok(infra: None) -> None:
@@ -80,7 +80,7 @@ async def test_login_ok(infra: None) -> None:
 async def test_login_wrong_password_is_invalid_credentials(infra: None) -> None:
     email = await _seed_user()
     response = await _request(
-        "POST", "/auth/login", json={"email": email, "password": "OtraClave123!"}
+        "POST", "/api/v1/auth/login", json={"email": email, "password": "OtraClave123!"}
     )
 
     assert response.status_code == 401
@@ -88,13 +88,13 @@ async def test_login_wrong_password_is_invalid_credentials(infra: None) -> None:
     body = response.json()
     assert body["type"] == "https://errors.eventpro.pe/invalid-credentials"
     assert body["status"] == 401
-    assert body["instance"] == "/auth/login"
+    assert body["instance"] == "/api/v1/auth/login"
 
 
 async def test_login_unknown_email_is_invalid_credentials(infra: None) -> None:
     response = await _request(
         "POST",
-        "/auth/login",
+        "/api/v1/auth/login",
         json={"email": "nadie@eventpro.pe", "password": PASSWORD},
     )
 
@@ -111,7 +111,7 @@ async def test_login_inactive_user_is_403(infra: None) -> None:
 
 
 async def test_login_validation_error_is_problem_json(infra: None) -> None:
-    response = await _request("POST", "/auth/login", json={"email": "corto"})
+    response = await _request("POST", "/api/v1/auth/login", json={"email": "corto"})
 
     assert response.status_code == 422
     body = response.json()
@@ -123,20 +123,26 @@ async def test_refresh_rotates_tokens(infra: None) -> None:
     email = await _seed_user()
     login = (await _login(email)).json()
 
-    first = await _request("POST", "/auth/refresh", json={"refresh_token": login["refresh_token"]})
+    first = await _request(
+        "POST", "/api/v1/auth/refresh", json={"refresh_token": login["refresh_token"]}
+    )
     assert first.status_code == 200
     rotated = first.json()
     assert rotated["refresh_token"] != login["refresh_token"]
     assert rotated["expires_in"] == 3600
     assert "user" not in rotated
 
-    replay = await _request("POST", "/auth/refresh", json={"refresh_token": login["refresh_token"]})
+    replay = await _request(
+        "POST", "/api/v1/auth/refresh", json={"refresh_token": login["refresh_token"]}
+    )
     assert replay.status_code == 401
     assert replay.json()["type"] == "https://errors.eventpro.pe/invalid-credentials"
 
 
 async def test_refresh_rejects_unknown_token(infra: None) -> None:
-    response = await _request("POST", "/auth/refresh", json={"refresh_token": uuid.uuid4().hex})
+    response = await _request(
+        "POST", "/api/v1/auth/refresh", json={"refresh_token": uuid.uuid4().hex}
+    )
 
     assert response.status_code == 401
 
@@ -147,24 +153,26 @@ async def test_logout_revokes_refresh_token(infra: None) -> None:
     auth = {"Authorization": f"Bearer {login['access_token']}"}
 
     first = await _request(
-        "POST", "/auth/logout", json={"refresh_token": login["refresh_token"]}, headers=auth
+        "POST", "/api/v1/auth/logout", json={"refresh_token": login["refresh_token"]}, headers=auth
     )
     assert first.status_code == 204
     assert first.content == b""
 
     again = await _request(
-        "POST", "/auth/logout", json={"refresh_token": login["refresh_token"]}, headers=auth
+        "POST", "/api/v1/auth/logout", json={"refresh_token": login["refresh_token"]}, headers=auth
     )
     assert again.status_code == 204
 
     refresh = await _request(
-        "POST", "/auth/refresh", json={"refresh_token": login["refresh_token"]}
+        "POST", "/api/v1/auth/refresh", json={"refresh_token": login["refresh_token"]}
     )
     assert refresh.status_code == 401
 
 
 async def test_logout_requires_access_token(infra: None) -> None:
-    response = await _request("POST", "/auth/logout", json={"refresh_token": uuid.uuid4().hex})
+    response = await _request(
+        "POST", "/api/v1/auth/logout", json={"refresh_token": uuid.uuid4().hex}
+    )
 
     assert response.status_code == 401
     assert response.headers["content-type"].startswith("application/problem+json")
@@ -173,7 +181,7 @@ async def test_logout_requires_access_token(infra: None) -> None:
 async def test_logout_rejects_invalid_access_token(infra: None) -> None:
     response = await _request(
         "POST",
-        "/auth/logout",
+        "/api/v1/auth/logout",
         json={"refresh_token": uuid.uuid4().hex},
         headers={"Authorization": "Bearer token-falso"},
     )
