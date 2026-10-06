@@ -22,6 +22,7 @@ from app.infrastructure.adapters.secondary.persistence.models import (  # noqa: 
     audit_log,
     catalog_models,
     event_model,
+    payment_model,
     refresh_token,
     role,
     user,
