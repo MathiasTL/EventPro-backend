@@ -1072,6 +1072,41 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Response `204 No Content`.** **Errores:** `409` (`invalid-event-state`).
 
+#### `POST /events/{id}/start` — US-17 parcial
+* **Descripción:** Inicia desde `SCHEDULED` o `AWAITING_BALANCE`, previa
+  verificación del 100% del saldo de servicios y movilidad mediante un puerto.
+  Actualiza juntos `status = IN_PROGRESS`, `pre_show_balance_paid` (total
+  verificado, sin volver a sumarlo) y `actual_start_time` (hora UTC del servidor).
+  Un inicio repetido responde `409` y conserva el primer instante registrado.
+* **Seguridad:** `ENCARGADO` y `SUPERADMIN` para cualquier evento existente;
+  `OPERADOR` solo con asignación. En esta ruta provisional un operador fuera
+  de alcance recibe `403` antes de buscar el evento, incluso si el ID no existe.
+* **Request Body:** ausente o `{}`. Los campos adicionales se rechazan con `422`;
+  no se aceptan importes, indicadores de pago ni una hora enviada por el cliente.
+* **Response `200 OK`:**
+  ```json
+  {
+    "event_id": "77a88888-8888-4888-8888-888888888888",
+    "status": "IN_PROGRESS",
+    "actual_start_time": "2026-10-15T21:35:00Z"
+  }
+  ```
+* **Errores:** `400` (`balance-pending`), `401` (`invalid-credentials`),
+  `403` (`forbidden`, sin asignación), `404` (`not-found`, evento inexistente
+  dentro del alcance autorizado), `409` (`invalid-event-state`),
+  `422` (`validation-error`, UUID/cuerpo inválidos).
+* **Dependencias provisionales:** se reutiliza el Fake de asignaciones de US-16.
+  `FakePreShowPaymentVerificationAdapter` recibe un mapa `event_id -> Money`
+  con el total `BALANCE` verificado; sin entrada devuelve cero. La DI por defecto
+  usa un mapa vacío: no autoriza un evento con saldo pendiente, aunque
+  `events.pre_show_balance_paid` aparente estar pagado. Para una demostración o
+  test se inyecta un Fake configurado mediante `get_pre_show_payment_verification_port`
+  y `get_crew_schedule_read_port`; no hay un endpoint para simular pagos.
+  E5 sustituirá el Fake por su lectura real de pagos `BALANCE` en `VERIFIED`.
+* **Límite de la entrega:** no crea pagos ni recibe evidencia; el flujo completo
+  de US-17 requiere los endpoints siguientes. `show_started_at` corresponde a
+  `/check-in-and-collect`, mientras esta ruta nueva expone `actual_start_time`.
+
 #### `POST /events/{id}/arrive`
 * **Descripción:** El personal registra su llegada al lugar del evento (`SCHEDULED` → `AWAITING_BALANCE`). A partir de este estado se habilita el cobro del saldo.
 * **Seguridad:** Roles `OPERADOR` (solo eventos propios), `ENCARGADO` o `SUPERADMIN`.
@@ -1412,6 +1447,7 @@ Todos los errores usan `Content-Type: application/problem+json` con los campos `
 | `invalid-event-state` | `409` | La acción no es válida en el estado actual del evento. |
 | `invalid-contract-state` | `409` | La acción no es válida en el estado actual del contrato (por ejemplo, firmar un contrato `VOIDED`). |
 | `balance-amount-mismatch` | `400` | El monto cobrado in situ no completa el 100% del saldo pendiente. |
+| `balance-pending` | `400` | El total BALANCE verificado no cubre el saldo de servicios y movilidad requerido para iniciar. |
 | `transit-interval-insufficient` | `409` | El intervalo entre shows del mismo elenco es menor que el mínimo (RN-05). Incluye `minimum_interval_minutes`. |
 | `inventory-in-use` | `409` | El ítem de inventario está consumido por paquetes activos o tiene reservas `ACTIVE` futuras. |
 | `invalid-signature-token` | `404` | El token del enlace de firma no existe. |

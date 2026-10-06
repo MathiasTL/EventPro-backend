@@ -6,9 +6,14 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
+from app.application.ports.input.event_start_port import IStartEventPort
 from app.application.ports.output.audit_log_port import IAuditLogPort
 from app.application.ports.output.cache_port import ICachePort
+from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
+from app.application.ports.output.pre_show_payment_verification_port import (
+    IPreShowPaymentVerificationPort,
+)
 from app.application.ports.output.quote_schedule_read_port import IQuoteScheduleReadPort
 from app.application.ports.output.refresh_token_repository_port import IRefreshTokenRepositoryPort
 from app.application.ports.output.repository_health_port import IRepositoryHealthPort
@@ -18,8 +23,13 @@ from app.application.use_cases.auth.login import LoginUseCase
 from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
 from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
+from app.application.use_cases.event.start_event import StartEventUseCase
 from app.core.config import get_settings
 from app.infrastructure.adapters.secondary.cache.redis_cache_adapter import RedisCacheAdapter
+from app.infrastructure.adapters.secondary.external_services import (
+    fake_payment_verification_adapter,
+    system_clock_adapter,
+)
 from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapters import (
     FakeCrewScheduleReadAdapter,
     FakeQuoteScheduleReadAdapter,
@@ -126,6 +136,29 @@ def get_crew_schedule_read_port() -> ICrewScheduleReadPort:
     return FakeCrewScheduleReadAdapter()
 
 
+@lru_cache
+def get_pre_show_payment_verification_port() -> IPreShowPaymentVerificationPort:
+    return fake_payment_verification_adapter.FakePreShowPaymentVerificationAdapter()
+
+
+@lru_cache
+def get_clock_port() -> IClockPort:
+    return system_clock_adapter.SystemClockAdapter()
+
+
+def get_start_event_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    payments: Annotated[
+        IPreShowPaymentVerificationPort, Depends(get_pre_show_payment_verification_port)
+    ],
+    crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+    clock: Annotated[IClockPort, Depends(get_clock_port)],
+) -> IStartEventPort:
+    return StartEventUseCase(
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session), payments, crews, clock
+    )
+
+
 def get_event_schedule_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
     quotes: Annotated[IQuoteScheduleReadPort, Depends(get_quote_schedule_read_port)],
@@ -147,6 +180,8 @@ def clear_application_caches() -> None:
     get_audit_service.cache_clear()
     get_quote_schedule_read_port.cache_clear()
     get_crew_schedule_read_port.cache_clear()
+    get_pre_show_payment_verification_port.cache_clear()
+    get_clock_port.cache_clear()
 
 
 async def shutdown_infrastructure() -> None:

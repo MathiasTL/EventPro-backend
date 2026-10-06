@@ -25,6 +25,7 @@ def event_to_domain(row: EventModel) -> Event:
         pre_show_balance_paid=Money(row.pre_show_balance_paid),
         extra_hours_amount=Money(row.extra_hours_amount),
         created_at=row.created_at,
+        actual_start_time=row.actual_start_time,
     )
 
 
@@ -47,4 +48,5 @@ def event_to_model(event: Event) -> EventModel:
         pre_show_balance_paid=event.pre_show_balance_paid.amount,
         extra_hours_amount=event.extra_hours_amount.amount,
         created_at=event.created_at,
+        actual_start_time=event.actual_start_time,
     )

@@ -24,7 +24,7 @@ def test_events_upgrade_constraints_and_downgrade(database_url: str) -> None:
     assert len(scripts.get_heads()) == 1
     assert scripts.get_revision("0004_events").down_revision == "0003_auth_audit_tables"
     command.upgrade(config, "0003_auth_audit_tables")
-    command.upgrade(config, "0004_events")
+    command.upgrade(config, "head")
 
     async def exercise() -> None:
         engine = build_engine(database_url)
@@ -51,6 +51,7 @@ def test_events_upgrade_constraints_and_downgrade(database_url: str) -> None:
                     "pre_show_balance_paid",
                     "extra_hours_amount",
                     "created_at",
+                    "actual_start_time",
                 }
                 assert (
                     await connection.run_sync(lambda conn: inspect(conn).get_foreign_keys("events"))
@@ -128,4 +129,4 @@ def test_events_upgrade_constraints_and_downgrade(database_url: str) -> None:
             await engine.dispose()
 
     asyncio.run(check_removed())
-    command.upgrade(config, "0004_events")
+    command.upgrade(config, "head")

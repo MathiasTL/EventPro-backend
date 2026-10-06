@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID, uuid4
 
+from app.domain.exceptions.event_exceptions import BalancePendingError, InvalidEventStateError
 from app.domain.exceptions.resource_exceptions import ValidationError
 from app.domain.value_objects.event_status import EventStatus
 from app.domain.value_objects.money import Money
@@ -33,6 +34,7 @@ class Event:
     pre_show_balance_paid: Money = field(default_factory=Money.zero)
     extra_hours_amount: Money = field(default_factory=Money.zero)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    actual_start_time: datetime | None = None
 
     def __post_init__(self) -> None:
         for name, limit in (("event_code", 30), ("address", 255), ("district", 80)):
@@ -61,6 +63,38 @@ class Event:
             raise ValidationError("Las horas del evento deben ser locales, sin zona horaria")
         if self.start_time == self.end_time:
             raise ValidationError("El evento debe tener una duración mayor que cero")
+
+    def validate_start_state(self) -> None:
+        """Rechaza estados incompatibles antes de consultar dependencias externas."""
+        if (
+            self.status not in (EventStatus.SCHEDULED, EventStatus.AWAITING_BALANCE)
+            or self.actual_start_time is not None
+        ):
+            raise InvalidEventStateError(
+                "Solo se puede iniciar un evento SCHEDULED o AWAITING_BALANCE sin inicio previo."
+            )
+
+    def start(self, *, verified_pre_show_amount: Money, started_at: datetime) -> None:
+        """Inicia con el total BALANCE verificado, sin acumular nuevamente el saldo."""
+        self.validate_start_state()
+        if (
+            not isinstance(verified_pre_show_amount, Money)
+            or verified_pre_show_amount.currency != "PEN"
+            or not verified_pre_show_amount.amount.is_finite()
+            or verified_pre_show_amount.amount < 0
+        ):
+            raise ValidationError("El saldo verificado debe ser un importe no negativo en PEN")
+        if self.advance_paid + verified_pre_show_amount < self.final_total_amount:
+            raise BalancePendingError(
+                "Se requiere verificar el 100% del saldo de servicios y movilidad antes de iniciar."
+            )
+        if started_at.tzinfo is None or started_at.utcoffset() is None:
+            raise ValidationError("La hora real de inicio debe incluir zona horaria")
+        actual_start_time = started_at.astimezone(UTC)
+        # Todas las guardas preceden a las mutaciones del agregado.
+        self.pre_show_balance_paid = verified_pre_show_amount
+        self.status = EventStatus.IN_PROGRESS
+        self.actual_start_time = actual_start_time
 
     @property
     def time_window(self) -> TimeWindow:

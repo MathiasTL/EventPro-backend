@@ -308,6 +308,15 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Cuando** confirma el cobro,
   * **Entonces** el pago `BALANCE` se registra directamente en `VERIFIED` con `audit_status = UNREVIEWED`, el evento pasa a `IN_PROGRESS` sin esperar al encargado, y este puede auditarlo después como `REVIEWED` o `FLAGGED`.
 
+> **Entrega parcial US-17 — inicio desacoplado:** se implementa
+> `POST /events/{id}/start` desde `SCHEDULED` o `AWAITING_BALANCE`, únicamente
+> si el puerto de pagos confirma el total del saldo pre-show. Registra
+> `actual_start_time` en UTC y sincroniza `pre_show_balance_paid` con el total
+> verificado. El puerto usa temporalmente un Fake configurado por evento;
+> no utiliza el importe guardado en `events` como prueba de verificación.
+> La llegada, el registro del cobro con medio/fotografía y la auditoría quedan
+> pendientes; esta entrega todavía no completa todos los criterios de US-17.
+
 ---
 
 ### US-18: Registro de Extensiones en Caliente y Cierre de Evento

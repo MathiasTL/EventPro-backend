@@ -25,6 +25,13 @@ posterior, comprobar y resolver referencias huérfanas; no crear cotizaciones
 ficticias ni modificar esta revisión después de fusionarla. Los fakes del
 cronograma no escriben datos en PostgreSQL.
 
+### US-17 — inicio real del evento
+`0005_event_actual_start_time` parte de `0004_events`, se genera con autogenerate
+y añade `events.actual_start_time TIMESTAMPTZ`, nullable y sin default. No se
+rellenan horas históricas. El downgrade elimina solo esa columna, conservando
+los eventos. Se mantiene la ausencia temporal de FK a `quotes` y no se crean
+tablas de pagos. Comprobar el head de develop antes de generar e integrar.
+
 ### 1.2 Migración de `conversation_links`
 La tabla `conversation_links` (ADR-10) se crea en una migración incremental posterior a las de `users`, `clients` y `quotes`, porque contiene claves foráneas hacia las tres (`assigned_user_id`, `client_id` y `quote_id`). La migración debe crear también el índice único sobre `chatwoot_conversation_id`, el índice sobre `client_id`, el índice parcial sobre `assigned_user_id` y la restricción `CHECK` de `handoff_reason`, y su `downgrade()` elimina la tabla. No requiere datos semilla: los vínculos se crean en tiempo de ejecución cuando llega la primera conversación de un cliente.
 
