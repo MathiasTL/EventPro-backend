@@ -995,6 +995,24 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
   ```
   `client_name` se obtiene de `clients` a través de la cotización del evento.
 
+> **Implementación provisional — US-16, Slice 1:** la ruta publicada es
+> `GET /api/v1/events/schedule`. Se implementan `from_date`, `to_date` y `status`
+> (opcionales, combinables, límites inclusivos). `district`, `theme_id` y `crew_id`
+> responden `422` hasta la entrega de esos filtros. Un rango invertido también
+> responde `422`; sin coincidencias se devuelve `[]`. El orden es fecha, hora e ID.
+>
+> Los eventos se consultan en PostgreSQL. Mientras E1/E3 integran sus tablas, los
+> puertos de enriquecimiento se conectan a fakes reemplazables en DI: sin datos
+> asociados devuelven `Cliente pendiente de integración`, `Paquete pendiente de
+> integración`, `Temática pendiente de integración` y `crews: []`. No se insertan
+> datos simulados en la base. `ENCARGADO` y `SUPERADMIN` pueden consultar todos los
+> eventos; `OPERADOR` solo los IDs asignados por el fake y, sin asignaciones,
+> recibe `403` indicando que requiere asignación activa. Esta excepción temporal
+> se sustituirá por la lectura de `crews.user_id` y `crew_assignments`.
+> `client_observations` conserva el texto literal y puede ser `null`; las horas
+> se serializan como `HH:MM` y el saldo como número JSON en PEN, calculado con
+> decimales: `max(final_total_amount - advance_paid - pre_show_balance_paid, 0)`.
+
 #### `GET /events/{id}`
 * **Descripción:** Detalle operativo del evento: datos de la locación, observaciones, extras, elencos asignados, desglose económico y pagos registrados.
 * **Seguridad:** Autenticado. `OPERADOR` solo para eventos propios.
