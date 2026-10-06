@@ -1,27 +1,49 @@
+"""Entorno de Alembic para EventPro (PostgreSQL + asyncpg).
+
+La URL se toma de la variable ``DATABASE_URL`` (configuración global) salvo que el
+llamador la fije explícitamente con ``config.set_main_option('sqlalchemy.url', ...)``,
+lo que permite apuntar las pruebas de integración a un contenedor temporal.
+"""
+
+from __future__ import annotations
+
 import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import Connection, pool
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.core.config import get_settings
-from app.infrastructure.adapters.secondary.persistence.models import Base
+
+# Importar los modelos para poblar Base.metadata (autogenerate y create_all).
+from app.infrastructure.adapters.secondary.persistence.models import (  # noqa: F401
+    audit_log,
+    catalog_models,
+    refresh_token,
+    role,
+    user,
+)
+from app.infrastructure.adapters.secondary.persistence.models.base import Base
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
-
 target_metadata = Base.metadata
 
 
+def _database_url() -> str:
+    return config.get_main_option("sqlalchemy.url") or get_settings().database_url
+
+
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    """Genera el SQL sin conectarse a la base de datos."""
+
     context.configure(
-        url=url,
+        url=_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -42,8 +64,10 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = _database_url()
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

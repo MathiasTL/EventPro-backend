@@ -1,8 +1,11 @@
-"""esquema inicial: roles, users, refresh_tokens, audit_logs
+"""tokens de refresco y auditoría
 
-Revision ID: 0001_initial
-Revises:
+Revision ID: 0003_auth_audit_tables
+Revises: 0002_catalog_and_crews
 Create Date: 2026-10-05
+
+Completa el esquema de identidad (E2): ``refresh_tokens`` y ``audit_logs``, que
+dependen de ``users`` (creada en ``0001_base_roles_users``).
 """
 
 from collections.abc import Sequence
@@ -12,8 +15,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "0001_initial"
-down_revision: str | None = None
+revision: str = "0003_auth_audit_tables"
+down_revision: str | None = "0002_catalog_and_crews"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -31,35 +34,6 @@ AUDIT_ACTIONS = (
 
 
 def upgrade() -> None:
-    op.create_table(
-        "roles",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
-        sa.Column("code", sa.String(length=30), nullable=False),
-        sa.Column("name", sa.String(length=60), nullable=False),
-        sa.Column("description", sa.Text(), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("code"),
-    )
-    op.create_table(
-        "users",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
-        sa.Column("role_id", sa.Uuid(), nullable=False),
-        sa.Column("full_name", sa.String(length=120), nullable=False),
-        sa.Column("email", sa.String(length=150), nullable=False),
-        sa.Column("phone", sa.String(length=20), nullable=False),
-        sa.Column("hashed_password", sa.String(length=255), nullable=False),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("CURRENT_TIMESTAMP"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(["role_id"], ["roles.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("email"),
-        sa.UniqueConstraint("phone"),
-    )
     op.create_table(
         "refresh_tokens",
         sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
@@ -110,5 +84,3 @@ def downgrade() -> None:
     op.drop_index("ix_refresh_tokens_expires_at", table_name="refresh_tokens")
     op.drop_index("ix_refresh_tokens_user_id", table_name="refresh_tokens")
     op.drop_table("refresh_tokens")
-    op.drop_table("users")
-    op.drop_table("roles")

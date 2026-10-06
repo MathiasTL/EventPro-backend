@@ -1,4 +1,11 @@
-"""Fixtures de integración: PostgreSQL y Redis reales con testcontainers."""
+"""Fixtures de integración: PostgreSQL y Redis reales con testcontainers.
+
+``infra`` (sesión) levanta PostgreSQL + Redis, exporta sus variables de entorno y aplica
+las migraciones con Alembic. ``database_url`` (módulo) entrega un PostgreSQL efímero a
+las pruebas de catálogo (E3), con un contenedor limpio por módulo de prueba.
+"""
+
+from __future__ import annotations
 
 import os
 import subprocess
@@ -36,6 +43,15 @@ def infra() -> Iterator[None]:
         )
         yield
         get_settings.cache_clear()
+
+
+@pytest.fixture(scope="module")
+def database_url() -> str:
+    """URL asyncpg de un PostgreSQL temporal con Testcontainers."""
+
+    with PostgresContainer("postgres:16-alpine") as postgres:
+        raw = postgres.get_connection_url()
+        yield raw.replace("+psycopg2", "").replace("postgresql://", "postgresql+asyncpg://")
 
 
 @pytest.fixture(autouse=True)

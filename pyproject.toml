@@ -4,13 +4,26 @@ target-version = "py312"
 extend-exclude = ["Docs"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 files = ["app"]
 
+[[tool.mypy.overrides]]
+module = ["alembic.*", "testcontainers.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: pruebas de integración con Testcontainers (requieren Docker en ejecución)",
+]
+
+[tool.coverage.run]
+source = ["app"]
