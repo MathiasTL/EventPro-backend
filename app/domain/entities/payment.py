@@ -81,7 +81,8 @@ class Payment:
             ):
                 raise ValidationError("ADVANCE solo puede tener event_id una vez resuelto")
             if (
-                self.validation_status in (
+                self.validation_status
+                in (
                     PaymentValidationStatus.VERIFIED,
                     PaymentValidationStatus.REFUNDED,
                 )

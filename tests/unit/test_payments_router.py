@@ -109,24 +109,24 @@ def web_app() -> Iterator[FastAPI]:
     repo = FakePaymentRepository()
     storage = FakeEvidenceStorage()
     audits = FakeAuditService()
-    app.dependency_overrides[containers.get_register_advance_payment_use_case] = (
-        lambda: RegisterAdvancePaymentUseCase(repo)
+    app.dependency_overrides[containers.get_register_advance_payment_use_case] = lambda: (
+        RegisterAdvancePaymentUseCase(repo)
     )
-    app.dependency_overrides[containers.get_list_payments_use_case] = (
-        lambda: ListPaymentsUseCase(repo)
+    app.dependency_overrides[containers.get_list_payments_use_case] = lambda: ListPaymentsUseCase(
+        repo
     )
     app.dependency_overrides[containers.get_get_payment_use_case] = lambda: GetPaymentUseCase(repo)
-    app.dependency_overrides[containers.get_get_payment_evidence_use_case] = (
-        lambda: GetPaymentEvidenceUseCase(repo, storage)
+    app.dependency_overrides[containers.get_get_payment_evidence_use_case] = lambda: (
+        GetPaymentEvidenceUseCase(repo, storage)
     )
-    app.dependency_overrides[containers.get_verify_payment_use_case] = (
-        lambda: VerifyPaymentUseCase(repo)
+    app.dependency_overrides[containers.get_verify_payment_use_case] = lambda: VerifyPaymentUseCase(
+        repo
     )
-    app.dependency_overrides[containers.get_audit_payment_use_case] = (
-        lambda: AuditPaymentUseCase(repo, audits)
+    app.dependency_overrides[containers.get_audit_payment_use_case] = lambda: AuditPaymentUseCase(
+        repo, audits
     )
-    app.dependency_overrides[containers.get_refund_payment_use_case] = (
-        lambda: RefundPaymentUseCase(repo)
+    app.dependency_overrides[containers.get_refund_payment_use_case] = lambda: RefundPaymentUseCase(
+        repo
     )
     app.dependency_overrides[containers.get_evidence_storage] = lambda: storage
     yield app
@@ -162,9 +162,7 @@ async def test_register_advance_payment_rejects_invalid_file(
     web_app: FastAPI,
 ) -> None:
     class RejectingStorage(FakeEvidenceStorage):
-        async def store(
-            self, *, data: bytes, content_type: str, original_filename: str
-        ) -> str:
+        async def store(self, *, data: bytes, content_type: str, original_filename: str) -> str:
             from app.domain.exceptions.resource_exceptions import ValidationError
 
             raise ValidationError("Tipo de archivo no permitido")
@@ -187,9 +185,7 @@ async def test_register_duplicate_active_advance_conflicts(web_app: FastAPI) -> 
         first = await client.post(ADVANCE_PATH, headers=authorization(), data=data, files=files)
         assert first.status_code == 201
         data2, files2 = _multipart()
-        second = await client.post(
-            ADVANCE_PATH, headers=authorization(), data=data2, files=files2
-        )
+        second = await client.post(ADVANCE_PATH, headers=authorization(), data=data2, files=files2)
     assert second.status_code == 409
 
 
@@ -296,8 +292,8 @@ async def test_audit_balance_payment_records_audit_log(web_app: FastAPI) -> None
     )
     await repo.save(payment)
     audits = FakeAuditService()
-    web_app.dependency_overrides[containers.get_audit_payment_use_case] = (
-        lambda: AuditPaymentUseCase(repo, audits)
+    web_app.dependency_overrides[containers.get_audit_payment_use_case] = lambda: (
+        AuditPaymentUseCase(repo, audits)
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=web_app), base_url="http://test"
