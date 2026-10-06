@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     advance_percent: int = 10
     transit_rest_buffer_minutes: int = 30
 
+    # --- Almacenamiento de comprobantes/evidencias (E5) ---
+    storage_backend: str = "local"
+    local_storage_path: str = "./uploads"
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
