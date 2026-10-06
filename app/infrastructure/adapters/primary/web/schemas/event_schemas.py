@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerializer
 
 from app.domain.value_objects.event_status import EventStatus
 
@@ -40,3 +40,17 @@ class EventScheduleResponse(BaseModel):
     client_observations: str | None
     status: EventStatus
     pending_balance_to_collect: ScheduleAmount
+
+
+class StartEventRequest(BaseModel):
+    """Inicio sin datos del cliente: el pago y la hora se obtienen de puertos."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class StartEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    event_id: UUID
+    status: EventStatus
+    actual_start_time: AwareDatetime

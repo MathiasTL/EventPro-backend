@@ -138,11 +138,18 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `POST /events/{id}/crew-assignments` | Sí | Sí | - | - | Con override del intervalo (RF-22) audita `OVERRIDE_TRANSIT_INTERVAL`. |
 | `DELETE /events/{id}/crew-assignments/{assignment_id}` | Sí | Sí | - | - | Solo antes de `IN_PROGRESS`. |
 | `POST /events/{id}/arrive` | Sí | Sí | Propios | - | `SCHEDULED` → `AWAITING_BALANCE`. |
+| `POST /events/{id}/start` | Sí | Sí | Propios | - | US-17 parcial: saldo verificado por puerto; operador sin asignación recibe `403` antes de buscar el evento. |
 | `POST /events/{id}/check-in-and-collect` | Sí | Sí | Propios | - | Crea un pago `BALANCE` `VERIFIED` con evidencia obligatoria. |
 | `POST /events/{id}/extensions` | Sí | Sí | Propios | - | Crea un pago `EXTENSION` `VERIFIED` con evidencia obligatoria. |
 | `POST /events/{id}/settle` | Sí | Sí | Propios | - | `IN_PROGRESS` o `EXTENDED` → `SETTLED`. |
 | `POST /events/{id}/cancel` | Sí | Sí | - | - | Libera inventario y anula el contrato. |
 | `PATCH /overrides/crew-assignments/{id}/transit-interval` | Sí | Sí | - | - | Audita `OVERRIDE_TRANSIT_INTERVAL`. |
+
+> **US-17 parcial:** `/start` reutiliza el Fake de asignaciones de US-16. Su
+> respuesta `403` para IDs fuera del alcance del operador es una excepción
+> explícita a la regla general de `404` del módulo. El Fake de pagos no registra
+> cobros y, por defecto, no confirma ningún saldo; el registro con fotografía
+> en `/check-in-and-collect` sigue pendiente de implementación.
 
 ### 2.9 Analítica Financiera y BI
 

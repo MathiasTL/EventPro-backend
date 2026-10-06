@@ -237,6 +237,7 @@ Entidad principal del cronograma y ejecución operativa del servicio. Se crea ú
 | `pre_show_balance_paid` | `NUMERIC(10,2)` | NO | `0.00` | - | Saldo + movilidad cobrado antes de iniciar el show (suma de pagos `BALANCE`). |
 | `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | - | Monto adicional por extensiones en vivo (suma de pagos `EXTENSION`). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de registro. |
+| `actual_start_time` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Inicio real en UTC, registrado por el servidor al pasar a `IN_PROGRESS` (US-17 parcial). Eventos históricos conservan `NULL`. |
 
 > **US-16, Slice 1:** la revisión `0004_events` crea `events` con sus columnas,
 > defaults, índices, CHECK de estados y unicidad de `event_code`/`quote_id`.
@@ -245,6 +246,12 @@ Entidad principal del cronograma y ejecución operativa del servicio. Se crea ú
 > después de integrar E1 y verificar referencias existentes, añadirá esa FK.
 > No se crean tablas de E1/E3/E5 en esta revisión; `events.id` ya puede ser
 > referenciado por `payments.event_id` y `crew_assignments.event_id`.
+
+> **US-17 parcial:** `0005_event_actual_start_time` añade únicamente la columna
+> de inicio real. `/start` sincroniza `pre_show_balance_paid` con el total
+> `BALANCE` verificado por el puerto de E5, no con una declaración del cliente.
+> Estado, total verificado e instante se persisten en una misma transacción
+> bajo bloqueo de fila. La revisión `0004_events` permanece inmutable.
 
 ---
 

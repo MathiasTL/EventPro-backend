@@ -171,11 +171,20 @@ stateDiagram-v2
 
 ### 3.3 Ciclo de Vida del Evento
 El evento se crea únicamente cuando el adelanto es validado.
+
+> **US-17 parcial — inicio desacoplado:** `/events/{id}/start` permite iniciar
+> directamente desde `SCHEDULED` o `AWAITING_BALANCE` cuando el puerto confirma
+> que adelanto + total BALANCE verificado cubren el total final. No basta con
+> el saldo almacenado en `events`, no se reciben declaraciones de pago del
+> cliente y no existe un estado `CONFIRMED`. La transición registra la hora
+> real UTC una sola vez; un reintento devuelve `409`. Llegada, cobro con
+> evidencia y auditoría de US-17 siguen pendientes.
 ```mermaid
 stateDiagram-v2
     [*] --> AWAITING_SIGNATURE: Adelanto validado, evento creado
     AWAITING_SIGNATURE --> SCHEDULED: Cliente firma el contrato
     SCHEDULED --> AWAITING_BALANCE: Personal llega al lugar del evento
+    SCHEDULED --> IN_PROGRESS: US-17 parcial, saldo verificado por puerto
     AWAITING_BALANCE --> IN_PROGRESS: Saldo y movilidad cobrados
     IN_PROGRESS --> EXTENDED: Cliente solicita tiempo adicional
     EXTENDED --> SETTLED: Cobro de extensión registrado
