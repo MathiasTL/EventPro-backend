@@ -9,10 +9,12 @@ def test_settings_from_env_file():
     assert settings.refresh_token_expire_days == 7
 
 
-def test_cors_origins_parsed_as_list():
-    origins = get_settings().cors_origins
+def test_cors_origins_parsed_as_list(monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000, http://admin.test")
+    monkeypatch.setenv("SECRET_KEY", "s" * 40)
+    origins = Settings().cors_origins
     assert isinstance(origins, list)
-    assert "http://localhost:3000" in origins
+    assert origins == ["http://localhost:3000", "http://admin.test"]
 
 
 def test_settings_accepts_overrides():
