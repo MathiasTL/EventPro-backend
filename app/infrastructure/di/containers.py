@@ -11,6 +11,7 @@ from app.application.ports.output.audit_log_port import IAuditLogPort
 from app.application.ports.output.cache_port import ICachePort
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
+from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
 from app.application.ports.output.pre_show_payment_verification_port import (
     IPreShowPaymentVerificationPort,
 )
@@ -24,6 +25,13 @@ from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
 from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
+from app.application.use_cases.payment.audit_payment import AuditPaymentUseCase
+from app.application.use_cases.payment.get_payment import GetPaymentUseCase
+from app.application.use_cases.payment.get_payment_evidence import GetPaymentEvidenceUseCase
+from app.application.use_cases.payment.list_payments import ListPaymentsUseCase
+from app.application.use_cases.payment.refund_payment import RefundPaymentUseCase
+from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
+from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
 from app.core.config import get_settings
 from app.infrastructure.adapters.secondary.cache.redis_cache_adapter import RedisCacheAdapter
 from app.infrastructure.adapters.secondary.external_services import (
@@ -47,12 +55,16 @@ from app.infrastructure.adapters.secondary.persistence.refresh_token_repository 
 )
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_repository,
+    sqlalchemy_payment_repository,
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
     SQLAlchemyHealthAdapter,
 )
 from app.infrastructure.adapters.secondary.persistence.user_repository import (
     SQLAlchemyUserRepository,
+)
+from app.infrastructure.adapters.secondary.storage.local_evidence_storage import (
+    LocalEvidenceStorage,
 )
 
 
@@ -169,6 +181,59 @@ def get_event_schedule_use_case(
     )
 
 
+@lru_cache
+def get_evidence_storage() -> LocalEvidenceStorage:
+    return LocalEvidenceStorage()
+
+
+def get_payment_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IPaymentRepositoryPort:
+    return sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session)
+
+
+def get_register_advance_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RegisterAdvancePaymentUseCase:
+    return RegisterAdvancePaymentUseCase(get_payment_repository(session))
+
+
+def get_verify_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VerifyPaymentUseCase:
+    return VerifyPaymentUseCase(get_payment_repository(session))
+
+
+def get_audit_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AuditPaymentUseCase:
+    return AuditPaymentUseCase(get_payment_repository(session), get_audit_service())
+
+
+def get_refund_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RefundPaymentUseCase:
+    return RefundPaymentUseCase(get_payment_repository(session))
+
+
+def get_list_payments_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ListPaymentsUseCase:
+    return ListPaymentsUseCase(get_payment_repository(session))
+
+
+def get_get_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GetPaymentUseCase:
+    return GetPaymentUseCase(get_payment_repository(session))
+
+
+def get_get_payment_evidence_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GetPaymentEvidenceUseCase:
+    return GetPaymentEvidenceUseCase(get_payment_repository(session), get_evidence_storage())
+
+
 def clear_application_caches() -> None:
     """Suelta repositorios, servicios y casos de uso (sujetos al engine/loop activos)."""
     get_user_repository.cache_clear()
@@ -178,6 +243,7 @@ def clear_application_caches() -> None:
     get_logout_use_case.cache_clear()
     get_audit_log_port.cache_clear()
     get_audit_service.cache_clear()
+    get_evidence_storage.cache_clear()
     get_quote_schedule_read_port.cache_clear()
     get_crew_schedule_read_port.cache_clear()
     get_pre_show_payment_verification_port.cache_clear()
