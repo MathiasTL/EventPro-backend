@@ -20,6 +20,7 @@ from app.core.config import settings
 # Importar los modelos para poblar Base.metadata (autogenerate y create_all).
 from app.infrastructure.adapters.secondary.persistence.models import (  # noqa: F401
     catalog_models,
+    payment_models,
     user_model,
 )
 from app.infrastructure.adapters.secondary.persistence.models.base import Base

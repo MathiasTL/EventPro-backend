@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     redis_password: str = ""
     redis_db: int = 0
 
+    # --- Almacenamiento ---
+    storage_backend: str = "local"
+    local_storage_path: str = "./uploads"
+
     # --- Reglas de negocio configurables ---
     simultaneous_shows_threshold: int = 3
     advance_percent: int = 10
