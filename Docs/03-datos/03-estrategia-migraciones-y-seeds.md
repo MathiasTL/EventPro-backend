@@ -10,6 +10,20 @@ Para la evolución del esquema en PostgreSQL, EventPro utiliza **Alembic**, la h
 1. **Inmutabilidad de Migraciones Aplicadas:** Una migración fusionada en la rama `main` o `develop` no debe ser modificada jamás; cualquier cambio debe aplicarse mediante una nueva migración incremental.
 2. **Reversibilidad Obligatoria:** Toda migración generada debe implementar tanto el método `upgrade()` como el método `downgrade()`.
 3. **Generación Automatizada y Revisión Manual:** Las migraciones se generan con `alembic revision --autogenerate -m "descripcion"` y deben ser auditadas línea por línea antes de su commit para verificar índices y restricciones `CHECK`.
+4. **Una sola cadena:** cada revisión nueva parte del head vigente de `develop`.
+   Actualizar y comprobar nuevamente antes de integrar; no modificar revisiones
+   ya fusionadas ni generar una segunda rama de migraciones.
+
+### US-16 — tabla base `events`
+`0004_events` parte de `0003_auth_audit_tables`. Se generó con autogenerate contra
+PostgreSQL 16 y se revisó manualmente. Su downgrade elimina únicamente `events`
+y sus índices. No requiere seeds.
+
+La FK `events.quote_id -> quotes.id` queda pendiente de la integración de E1:
+`quote_id` conserva NOT NULL y UNIQUE. Antes de añadir la FK en una revisión
+posterior, comprobar y resolver referencias huérfanas; no crear cotizaciones
+ficticias ni modificar esta revisión después de fusionarla. Los fakes del
+cronograma no escriben datos en PostgreSQL.
 
 ### 1.2 Migración de `conversation_links`
 La tabla `conversation_links` (ADR-10) se crea en una migración incremental posterior a las de `users`, `clients` y `quotes`, porque contiene claves foráneas hacia las tres (`assigned_user_id`, `client_id` y `quote_id`). La migración debe crear también el índice único sobre `chatwoot_conversation_id`, el índice sobre `client_id`, el índice parcial sobre `assigned_user_id` y la restricción `CHECK` de `handoff_reason`, y su `downgrade()` elimina la tabla. No requiere datos semilla: los vínculos se crean en tiempo de ejecución cuando llega la primera conversación de un cliente.

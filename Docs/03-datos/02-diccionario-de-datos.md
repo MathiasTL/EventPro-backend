@@ -238,6 +238,14 @@ Entidad principal del cronograma y ejecución operativa del servicio. Se crea ú
 | `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | - | Monto adicional por extensiones en vivo (suma de pagos `EXTENSION`). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de registro. |
 
+> **US-16, Slice 1:** la revisión `0004_events` crea `events` con sus columnas,
+> defaults, índices, CHECK de estados y unicidad de `event_code`/`quote_id`.
+> Por acuerdo de integración, `quote_id` es UUID obligatorio y único pero aún
+> **no tiene FOREIGN KEY**: `quotes` no existe en develop. Una revisión posterior,
+> después de integrar E1 y verificar referencias existentes, añadirá esa FK.
+> No se crean tablas de E1/E3/E5 en esta revisión; `events.id` ya puede ser
+> referenciado por `payments.event_id` y `crew_assignments.event_id`.
+
 ---
 
 ### 2.14 Tabla: `contracts`
