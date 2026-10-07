@@ -103,5 +103,32 @@ Variables leídas únicamente por el comando de arranque `python -m app.infrastr
 * `.env.example` se versiona con valores de ejemplo seguros; `.env` (copia local) **nunca** se versiona.
 * Docker Compose carga `.env` mediante `env_file` en los servicios `api` y `worker`, y sobrescribe solo lo que depende de la red interna (`POSTGRES_HOST=db`, `REDIS_HOST=redis`, `DATABASE_URL`, `LOCAL_STORAGE_PATH`, `SIGNATURE_PKCS12_PATH`).
 * `chatwoot.env` (secretos de Chatwoot) se ignora por git igual que `.env`; `chatwoot.env.example` es la plantilla versionada. Ver sección 2.4.1.
+* `CREDENCIALES-SUPABASE.md` (credenciales de la BD compartida en Supabase) se ignora por git y se distribuye por un canal privado; ver sección 4.
 * El certificado `.p12` reside en `secrets/` (ignorado por git, junto con `*.p12` y `*.pfx`). Para generar uno autofirmado de desarrollo, ver el [README](../../README.md#inicio-rápido).
 * En producción, los secretos (`SECRET_KEY`, `POSTGRES_PASSWORD`, `CHATWOOT_BOT_TOKEN`, `CHATWOOT_AGENT_TOKEN`, `CHATWOOT_WEBHOOK_SECRET`, `SIGNATURE_PKCS12_PASSWORD`, `PAYMENT_*`) se inyectan desde el gestor de secretos de la plataforma de despliegue, no desde un archivo en el repositorio.
+
+---
+
+## 4. Base de datos compartida (Supabase)
+
+El equipo comparte una única base de datos **Supabase** (PostgreSQL gestionado) para desarrollo. Las credenciales completas (cadena `DATABASE_URL`, usuario, contraseña y arranque del `SUPERADMIN`) viven en `CREDENCIALES-SUPABASE.md`, archivo **ignorado por git** y distribuido por privado.
+
+Para conectarse (una vez por desarrollador):
+
+1. Copiar `.env.example` a `.env` y reemplazar `DATABASE_URL` por la cadena de `CREDENCIALES-SUPABASE.md`.
+2. Verificar: `alembic current` debe responder `0002_event_extensions (head)`.
+
+Dos formas de ejecutar la app contra esa BD:
+
+* **venv local** (recomendada): `uvicorn app.main:app --reload`; el `.env` ya apunta a Supabase.
+* **Docker**: `docker-compose.yml` fuerza `DATABASE_URL` hacia el contenedor `db` local, así que existe el override `docker-compose.supabase.yml`, que usa la URL del `.env` y no levanta el Postgres local:
+  ```powershell
+  docker compose -f docker-compose.yml -f docker-compose.supabase.yml up -d api worker redis
+  ```
+
+Reglas del entorno compartido:
+
+* Las migraciones se aplican **solo con Alembic** desde `develop` (`alembic upgrade head`), nunca con DDL manual.
+* En GitHub Actions existe el job `db-migrate` (disparo manual con *workflow_dispatch*) que ejecuta `alembic upgrade head` con el secret `SUPABASE_DATABASE_URL`, registrado por el líder según `CREDENCIALES-SUPABASE.md`.
+* Los tests de integración **no** usan esta BD (usan contenedores locales); no usarla como base de pruebas destructivas.
+* Al rotar la contraseña en Supabase hay que actualizar `CREDENCIALES-SUPABASE.md`, el secret de GitHub y los `.env` locales.
