@@ -51,7 +51,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `GET /users` | Sí | - | - | - | |
 | `POST /users` | Sí | - | - | - | |
 | `GET /users/{id}` | Sí | - | - | - | |
-| `PATCH /users/{id}` | Sí | - | - | - | Desactivar o cambiar contraseña revoca los refresh tokens. |
+| `PATCH /users/{id}` | Sí | - | - | - | Desactivar o cambiar contraseña revoca los refresh tokens en la misma transacción atómica del cambio. |
 | `GET /audit-logs` | Sí | Sí | - | - | Solo lectura. |
 
 ### 2.3 Catálogo Comercial y Elencos
@@ -187,12 +187,12 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 1. **Access Token:**
    * Algoritmo: HMAC-SHA256 (`HS256`) o Asimétrico (`RS256`). Biblioteca: **PyJWT** (ADR-09).
    * Tiempo de vida: **60 minutos**.
-   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`.
+   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`. El claim `role` es **informativo** (se emite en el login); la autorización se resuelve con la cuenta en PostgreSQL, como describe la sección 3.2.
 2. **Refresh Token:**
    * UUID aleatorio criptográfico opaco; solo se almacena su hash en la tabla `refresh_tokens`.
    * Tiempo de vida: **7 días**.
    * **Rotación Obligatoria:** Cada uso genera un nuevo refresh token e invalida el anterior, mitigando ataques de secuestro de sesión. Presentar un token ya revocado devuelve `401`.
-   * **Cierre de sesión:** `POST /auth/logout` revoca el refresh token indicado. Desactivar un usuario o cambiar su contraseña revoca todos sus refresh tokens.
+   * **Cierre de sesión:** `POST /auth/logout` revoca el refresh token indicado. Desactivar un usuario o cambiar su contraseña revoca todos sus refresh tokens en la misma transacción que el cambio; si la revocación falla, la actualización se deshace y la API responde `500` sin efectos parciales.
 3. **Token del enlace de firma (CLIENTE):**
    * Valor criptográfico aleatorio de un solo uso, entregado por WhatsApp; solo se almacena su hash SHA-256 (`signature_token_hash`) con expiración (`signature_token_expires_at`).
    * No es un JWT y no otorga ningún rol del panel: solo permite operar el contrato al que pertenece.
@@ -200,7 +200,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 4. **Prueba de OTP (`otp_proof`):** credencial de corta duración (15 minutos), ligada a un contrato, emitida al verificar el OTP y exigida en `POST /contracts/sign/{token}`.
 
 ### 3.2 Alcance por Rol
-* **Control por endpoint:** cada ruta valida el rol del JWT contra la matriz de la sección 2 mediante una dependencia de autorización; un rol no permitido recibe `403`.
+* **Control por endpoint (autenticación fresca):** antes de evaluar la matriz de la sección 2, cada ruta protegida resuelve la cuenta del `sub` del JWT en PostgreSQL: si la cuenta no existe o está desactivada responde `401` (`invalid-credentials`) **aunque el JWT siga vigente**; con la cuenta activa se aplica el rol vigente de la base de datos, no el claim `role` del token. Un rol no permitido recibe `403`. Por eso, desactivar o degradar a un usuario surte efecto inmediato en sus access tokens: no hace falta esperar los 60 minutos de vida del JWT.
 * **Alcance del `OPERADOR`:** además del rol, las rutas marcadas `Propios` verifican que el evento tenga una asignación (`crew_assignments`) de un elenco cuyo `crews.user_id` sea el usuario autenticado. Si no, responden `404` para no revelar la existencia del evento.
 * **Alcance del `CLIENTE`:** el token del enlace identifica un único contrato; no puede listar ni consultar otros recursos.
 * **Datos sensibles:** los costos directos (`direct_cost`) y los datos personales de clientes (teléfono, DNI, RUC) no se exponen a `OPERADOR` ni a consultas públicas.

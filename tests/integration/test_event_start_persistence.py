@@ -28,6 +28,10 @@ from app.infrastructure.adapters.secondary.persistence.models.event_model import
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_repository,
 )
+from app.infrastructure.adapters.secondary.persistence.user_repository import (
+    SQLAlchemyUserRepository,
+)
+from app.infrastructure.di import containers
 from app.infrastructure.di.containers import (
     get_clock_port,
     get_crew_schedule_read_port,
@@ -37,7 +41,7 @@ from app.main import create_app
 from tests.event_support import make_event
 from tests.start_event_support import STARTED_AT, FixedClock, RecordingPayments
 
-from ._support import insert_quotes, run_migrations
+from ._support import insert_quotes, insert_user, run_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -90,7 +94,9 @@ def test_start_api_persists_state_balance_and_utc(database_url: str) -> None:
     async def exercise() -> None:
         engine = build_engine(database_url)
         factory = async_sessionmaker(engine, expire_on_commit=False)
-        user_id = uuid4()
+        superadmin_id = await insert_user(engine, "SUPERADMIN")
+        operador_id = await insert_user(engine, "OPERADOR")
+        encargado_id = await insert_user(engine, "ENCARGADO")
         events = [
             make_event(status=EventStatus.SCHEDULED),
             make_event(status=EventStatus.AWAITING_BALANCE),
@@ -111,19 +117,25 @@ def test_start_api_persists_state_balance_and_utc(database_url: str) -> None:
                 {events[0].id: Money(Decimal("980.50")), events[1].id: Money(Decimal("1000"))}
             )
             app.dependency_overrides[get_session] = session_override
+            app.dependency_overrides[containers.get_user_repository] = lambda: (
+                SQLAlchemyUserRepository(factory)
+            )
             app.dependency_overrides[get_clock_port] = FixedClock
             app.dependency_overrides[get_pre_show_payment_verification_port] = lambda: payments
             app.dependency_overrides[get_crew_schedule_read_port] = lambda: (
                 FakeCrewScheduleReadAdapter(
-                    assigned_events_by_user={user_id: frozenset({events[1].id})}
+                    assigned_events_by_user={operador_id: frozenset({events[1].id})}
                 )
             )
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as client:
-                for index, role in ((0, Role.SUPERADMIN), (1, Role.OPERADOR)):
+                for index, role, subject in (
+                    (0, Role.SUPERADMIN, superadmin_id),
+                    (1, Role.OPERADOR, operador_id),
+                ):
                     token = create_access_token(
-                        subject=str(user_id), role=role.value, secret_key=get_settings().secret_key
+                        subject=str(subject), role=role.value, secret_key=get_settings().secret_key
                     )
                     response = await client.post(
                         f"/api/v1/events/{events[index].id}/start",
@@ -132,7 +144,7 @@ def test_start_api_persists_state_balance_and_utc(database_url: str) -> None:
                     assert response.status_code == 200
                     assert response.json()["actual_start_time"] == "2026-10-15T21:35:00Z"
                 token = create_access_token(
-                    subject=str(user_id),
+                    subject=str(encargado_id),
                     role=Role.ENCARGADO.value,
                     secret_key=get_settings().secret_key,
                 )

@@ -52,6 +52,9 @@ from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_repository,
     sqlalchemy_payment_repository,
 )
+from app.infrastructure.adapters.secondary.persistence.user_repository import (
+    SQLAlchemyUserRepository,
+)
 from app.infrastructure.adapters.secondary.storage.local_evidence_storage import (
     LocalEvidenceStorage,
 )
@@ -265,6 +268,9 @@ def test_real_api_payment_audit_and_settlement(database_url, tmp_path):
                     yield session
 
             app.dependency_overrides[get_session] = session_override
+            app.dependency_overrides[containers.get_user_repository] = lambda: (
+                SQLAlchemyUserRepository(factory)
+            )
             app.dependency_overrides[containers.get_clock_port] = FixedClock
             app.dependency_overrides[containers.get_crew_schedule_read_port] = lambda: crews
             app.dependency_overrides[containers.get_extension_evidence_storage] = lambda: storage

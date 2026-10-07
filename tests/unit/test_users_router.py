@@ -1,32 +1,59 @@
 from collections.abc import Iterator, Sequence
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
-from app.application.dtos.user_dto import UserFilters
+from app.application.dtos.user_dto import UserFilters, UserPatch
 from app.application.use_cases.users.create_user import CreateUserUseCase
 from app.application.use_cases.users.get_user import GetUserUseCase
 from app.application.use_cases.users.list_users import ListUsersUseCase
 from app.application.use_cases.users.update_user import UpdateUserUseCase
 from app.core.config import get_settings
 from app.core.security import create_access_token
-from app.domain.entities.refresh_token import RefreshToken
 from app.domain.entities.user import User
-from app.domain.exceptions.resource_exceptions import DuplicateResourceError, ValidationError
+from app.domain.exceptions.resource_exceptions import (
+    DuplicateResourceError,
+    ResourceNotFoundError,
+    ValidationError,
+)
 from app.domain.value_objects.role import Role
 from app.infrastructure.di import containers
 from app.main import create_app
+from tests.auth_support import CURRENT, set_role
 
 PATH = "/api/v1/users"
 ACTOR_ID = uuid4()
 PASSWORD = "PasswordTemporal123!"
+DUPLICATE_MESSAGE = "El correo o el teléfono ya están registrados."
+LAST_SUPERADMIN_MESSAGE = "El sistema debe conservar al menos un SUPERADMIN activo."
+
+
+class FakeTokenRepository:
+    """Revocación de refresh tokens observada por los tests (US-23)."""
+
+    def __init__(self) -> None:
+        self.revoked: set[UUID] = set()
+
+    async def revoke_for(self, user_id: UUID) -> None:
+        self.revoked.add(user_id)
 
 
 class FakeUserRepository:
-    def __init__(self) -> None:
+    """Repositorio de usuarios con la semántica de la implementación SQL.
+
+    `update` replica el contrato del puerto: parche atómico, invariantes,
+    revocación de refresh tokens previa a la escritura y errores de dominio.
+    El actor de prueba (ACTOR_ID) no existe en la base del test: si no está
+    sembrado, `get_by_id` devuelve una cuenta sintética con el rol vigente
+    fijado por `set_role` (auth fresca).
+    """
+
+    def __init__(self, tokens: FakeTokenRepository | None = None) -> None:
         self._items: dict[UUID, User] = {}
+        self.tokens = tokens if tokens is not None else FakeTokenRepository()
 
     def seed(self, user: User) -> User:
         self._items[user.id] = user
@@ -40,19 +67,60 @@ class FakeUserRepository:
         return None
 
     async def get_by_id(self, user_id: UUID) -> User | None:
-        return self._items.get(user_id)
+        existing = self._items.get(user_id)
+        if existing is not None:
+            return existing
+        if user_id == ACTOR_ID:
+            return User(
+                id=ACTOR_ID,
+                full_name="Super Admin",
+                email="super@eventpro.pe",
+                phone="+519000000001",
+                role=CURRENT.role,
+                hashed_password="x",
+            )
+        return None
 
     async def add(self, user: User) -> None:
         if await self.get_by_email(user.email) is not None:
-            raise DuplicateResourceError("El correo o el teléfono ya están registrados.")
+            raise DuplicateResourceError(DUPLICATE_MESSAGE)
         if any(item.phone == user.phone for item in self._items.values()):
-            raise DuplicateResourceError("El correo o el teléfono ya están registrados.")
+            raise DuplicateResourceError(DUPLICATE_MESSAGE)
         self._items[user.id] = user
 
-    async def update(self, user: User) -> None:
-        if any(item.phone == user.phone and item.id != user.id for item in self._items.values()):
-            raise DuplicateResourceError("El correo o el teléfono ya están registrados.")
-        self._items[user.id] = user
+    async def update(self, user_id: UUID, patch: UserPatch) -> User:
+        user = await self.get_by_id(user_id)
+        if user is None:
+            raise ResourceNotFoundError("El usuario no existe.")
+        candidate = replace(
+            user,
+            full_name=patch.full_name if patch.full_name is not None else user.full_name,
+            phone=patch.phone if patch.phone is not None else user.phone,
+            role=patch.role if patch.role is not None else user.role,
+            is_active=patch.is_active if patch.is_active is not None else user.is_active,
+            hashed_password=(
+                patch.password_hash if patch.password_hash is not None else user.hashed_password
+            ),
+        )
+        if any(
+            item.phone == candidate.phone and item.id != user_id for item in self._items.values()
+        ):
+            raise DuplicateResourceError(DUPLICATE_MESSAGE)
+        was_active_superadmin = user.is_active and user.role is Role.SUPERADMIN
+        still_active_superadmin = candidate.is_active and candidate.role is Role.SUPERADMIN
+        if (
+            was_active_superadmin
+            and not still_active_superadmin
+            and not any(
+                item.is_active and item.role is Role.SUPERADMIN and item.id != user_id
+                for item in self._items.values()
+            )
+        ):
+            raise ValidationError(LAST_SUPERADMIN_MESSAGE)
+        if patch.revoke_refresh_tokens:
+            await self.tokens.revoke_for(user_id)
+        self._items[user_id] = candidate
+        return candidate
 
     async def list(self, filters: UserFilters) -> Sequence[User]:
         matches = self._matching(filters)
@@ -81,24 +149,8 @@ class FakeUserRepository:
         return matches
 
 
-class FakeTokenRepository:
-    def __init__(self) -> None:
-        self.revoked: set[UUID] = set()
-
-    async def add(self, token: RefreshToken) -> None:
-        return None
-
-    async def get_by_hash(self, token_hash: str) -> RefreshToken | None:
-        return None
-
-    async def revoke(self, token_hash: str) -> None:
-        return None
-
-    async def revoke_all_for_user(self, user_id: UUID) -> None:
-        self.revoked.add(user_id)
-
-
 def authorization(role: Role = Role.SUPERADMIN, user_id: UUID = ACTOR_ID) -> dict[str, str]:
+    set_role(role)
     token = create_access_token(
         subject=str(user_id), role=role.value, secret_key=get_settings().secret_key
     )
@@ -120,16 +172,15 @@ def payload(**overrides: object) -> dict[str, object]:
 @pytest.fixture
 def web_app() -> Iterator[FastAPI]:
     app = create_app()
-    users = FakeUserRepository()
     tokens = FakeTokenRepository()
+    users = FakeUserRepository(tokens)
     app.state.users = users
     app.state.tokens = tokens
+    app.dependency_overrides[containers.get_user_repository] = lambda: users
     app.dependency_overrides[containers.get_list_users_use_case] = lambda: ListUsersUseCase(users)
     app.dependency_overrides[containers.get_create_user_use_case] = lambda: CreateUserUseCase(users)
     app.dependency_overrides[containers.get_get_user_use_case] = lambda: GetUserUseCase(users)
-    app.dependency_overrides[containers.get_update_user_use_case] = lambda: UpdateUserUseCase(
-        users, tokens
-    )
+    app.dependency_overrides[containers.get_update_user_use_case] = lambda: UpdateUserUseCase(users)
     yield app
     app.dependency_overrides.clear()
 
@@ -406,3 +457,89 @@ async def test_patch_without_fields_returns_422(web_app: FastAPI) -> None:
             f"{PATH}/{created.json()['id']}", headers=authorization(), json={}
         )
     assert response.status_code == 422
+
+
+async def test_token_of_unknown_account_gets_401(web_app: FastAPI) -> None:
+    token = create_access_token(
+        subject=str(uuid4()), role=Role.SUPERADMIN.value, secret_key=get_settings().secret_key
+    )
+    async with _client(web_app) as client:
+        response = await client.get(PATH, headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+async def test_deactivated_account_gets_401(web_app: FastAPI) -> None:
+    web_app.state.users.seed(
+        User(
+            id=ACTOR_ID,
+            full_name="Super Admin",
+            email="super@eventpro.pe",
+            phone="+519000000001",
+            role=Role.SUPERADMIN,
+            hashed_password="x",
+            is_active=False,
+        )
+    )
+    async with _client(web_app) as client:
+        response = await client.get(PATH, headers=authorization())
+    assert response.status_code == 401
+
+
+async def test_role_comes_from_database_not_token_claim(web_app: FastAPI) -> None:
+    set_role(Role.OPERADOR)
+    token = create_access_token(
+        subject=str(ACTOR_ID), role=Role.SUPERADMIN.value, secret_key=get_settings().secret_key
+    )
+    async with _client(web_app) as client:
+        response = await client.get(PATH, headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+
+
+def _superadmin(**overrides: object) -> User:
+    body: dict[str, object] = {
+        "id": uuid4(),
+        "full_name": "Super Admin",
+        "email": "admin@eventpro.pe",
+        "phone": "+519000000009",
+        "role": Role.SUPERADMIN,
+        "hashed_password": "x",
+    }
+    body.update(overrides)
+    return User(**body)  # type: ignore[arg-type]
+
+
+async def test_patch_last_superadmin_returns_422(web_app: FastAPI) -> None:
+    target = web_app.state.users.seed(_superadmin(email="unico@eventpro.pe"))
+    async with _client(web_app) as client:
+        response = await client.patch(
+            f"{PATH}/{target.id}", headers=authorization(), json={"role": "OPERADOR"}
+        )
+        detail = await client.get(f"{PATH}/{target.id}", headers=authorization())
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/validation-error")
+    assert response.json()["detail"] == LAST_SUPERADMIN_MESSAGE
+    assert detail.json()["role"] == "SUPERADMIN"
+
+
+async def test_patch_demotes_superadmin_when_another_active_remains(web_app: FastAPI) -> None:
+    target = web_app.state.users.seed(_superadmin(email="uno@eventpro.pe"))
+    web_app.state.users.seed(_superadmin(email="dos@eventpro.pe", phone="+519000000002"))
+    async with _client(web_app) as client:
+        response = await client.patch(
+            f"{PATH}/{target.id}", headers=authorization(), json={"role": "ENCARGADO"}
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["role"] == "ENCARGADO"
+
+
+async def test_patch_demotion_ignores_inactive_superadmins(web_app: FastAPI) -> None:
+    target = web_app.state.users.seed(_superadmin(email="activo@eventpro.pe"))
+    web_app.state.users.seed(
+        _superadmin(email="inactivo@eventpro.pe", phone="+519000000003", is_active=False)
+    )
+    async with _client(web_app) as client:
+        response = await client.patch(
+            f"{PATH}/{target.id}", headers=authorization(), json={"role": "ENCARGADO"}
+        )
+    assert response.status_code == 422
+    assert response.json()["detail"] == LAST_SUPERADMIN_MESSAGE

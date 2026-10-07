@@ -1,10 +1,13 @@
 """Gestión de usuarios E2E contra PostgreSQL real (testcontainers)."""
 
 import uuid
+from unittest.mock import patch
 
 import httpx
+import pytest
 from httpx import ASGITransport
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.core.security import hash_password
 from app.main import app
@@ -187,3 +190,185 @@ async def test_unknown_user_returns_404(infra: None) -> None:
     detail = await _request("GET", f"{PATH}/{uuid.uuid4()}", headers=headers)
 
     assert detail.status_code == 404
+
+
+async def test_deactivated_user_access_token_stops_working(infra: None) -> None:
+    superadmin = await _headers_for(await _seed_user(role="SUPERADMIN"))
+    operator_email = await _seed_user(role="OPERADOR")
+    operator = await _headers_for(operator_email)
+    target = await _find_by_email(operator_email, superadmin)
+    assert target is not None
+
+    before = await _request("GET", PATH, headers=operator)
+    patched = await _request(
+        "PATCH", f"{PATH}/{target['id']}", json={"is_active": False}, headers=superadmin
+    )
+    after = await _request("GET", PATH, headers=operator)
+
+    assert before.status_code == 403
+    assert patched.status_code == 200, patched.text
+    assert after.status_code == 401
+    assert after.json()["type"].endswith("invalid-credentials")
+
+
+async def test_demoted_user_access_token_loses_privilege(infra: None) -> None:
+    superadmin = await _headers_for(await _seed_user(role="SUPERADMIN"))
+    victim_email = await _seed_user(role="SUPERADMIN")
+    victim = await _headers_for(victim_email)
+    target = await _find_by_email(victim_email, superadmin)
+    assert target is not None
+
+    before = await _request("GET", PATH, headers=victim)
+    demoted = await _request(
+        "PATCH", f"{PATH}/{target['id']}", json={"role": "OPERADOR"}, headers=superadmin
+    )
+    after = await _request("GET", PATH, headers=victim)
+
+    assert before.status_code == 200
+    assert demoted.status_code == 200, demoted.text
+    assert after.status_code == 403
+
+
+async def test_repository_blocks_removing_the_last_superadmin(infra: None) -> None:
+    from app.application.dtos.user_dto import UserPatch
+    from app.domain.exceptions.resource_exceptions import ValidationError
+    from app.domain.value_objects.role import Role
+    from app.infrastructure.adapters.secondary.persistence.database import get_sessionmaker
+    from app.infrastructure.adapters.secondary.persistence.user_repository import (
+        SQLAlchemyUserRepository,
+    )
+
+    email = await _seed_user(role="SUPERADMIN")
+    factory = get_sessionmaker()
+    async with factory() as session:
+        user_id = await session.scalar(
+            text("SELECT id FROM users WHERE email = :email"), {"email": email}
+        )
+        assert user_id is not None
+        superseded = (
+            (
+                await session.execute(
+                    text(
+                        "UPDATE users SET is_active = false "
+                        "WHERE is_active AND id <> :target AND role_id IN "
+                        "(SELECT id FROM roles WHERE code = 'SUPERADMIN') RETURNING id"
+                    ),
+                    {"target": user_id},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        await session.commit()
+    try:
+        with pytest.raises(ValidationError):
+            await SQLAlchemyUserRepository(factory).update(user_id, UserPatch(role=Role.OPERADOR))
+        async with factory() as session:
+            role_code = await session.scalar(
+                text(
+                    "SELECT r.code FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = :id"
+                ),
+                {"id": user_id},
+            )
+        assert role_code == "SUPERADMIN"
+    finally:
+        if superseded:
+            async with factory() as session:
+                await session.execute(
+                    text("UPDATE users SET is_active = true WHERE id = ANY(:ids)"),
+                    {"ids": list(superseded)},
+                )
+                await session.commit()
+
+
+async def test_failed_token_revocation_rolls_back_the_update(infra: None) -> None:
+    from app.application.dtos.user_dto import UserPatch
+    from app.infrastructure.adapters.secondary.persistence.database import get_sessionmaker
+    from app.infrastructure.adapters.secondary.persistence.user_repository import (
+        SQLAlchemyUserRepository,
+    )
+
+    email = await _seed_user(role="OPERADOR")
+    factory = get_sessionmaker()
+    async with factory() as session:
+        user_id = await session.scalar(
+            text("SELECT id FROM users WHERE email = :email"), {"email": email}
+        )
+        assert user_id is not None
+
+    with (
+        patch(
+            "app.infrastructure.adapters.secondary.persistence.user_repository"
+            "._revoke_refresh_tokens",
+            side_effect=RuntimeError("fallo simulado de revocación"),
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        await SQLAlchemyUserRepository(factory).update(
+            user_id, UserPatch(is_active=False, revoke_refresh_tokens=True)
+        )
+
+    async with factory() as session:
+        is_active = await session.scalar(
+            text("SELECT is_active FROM users WHERE id = :id"), {"id": user_id}
+        )
+    assert is_active is True
+
+
+async def test_database_rejects_duplicate_email_and_phone(infra: None) -> None:
+    from app.infrastructure.adapters.secondary.persistence.database import get_sessionmaker
+
+    email = f"unicidad-{uuid.uuid4().hex[:10]}@eventpro.pe"
+    phone = f"+519{uuid.uuid4().int % 10**8:08d}"
+    factory = get_sessionmaker()
+    async with factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO roles (code, name) VALUES "
+                "('ENCARGADO', 'Encargado'), ('OPERADOR', 'Operador') "
+                "ON CONFLICT (code) DO NOTHING"
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO users (role_id, full_name, email, phone, hashed_password) "
+                "SELECT id, 'Unicidad', :email, :phone, :password "
+                "FROM roles WHERE code = 'OPERADOR'"
+            ),
+            {"email": email, "phone": phone, "password": _HASHED_PASSWORD},
+        )
+        await session.commit()
+
+    async with factory() as session:
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                text(
+                    "INSERT INTO users (role_id, full_name, email, phone, hashed_password) "
+                    "SELECT id, 'Unicidad duplicada', :email, :phone, :password "
+                    "FROM roles WHERE code = 'ENCARGADO'"
+                ),
+                {
+                    "email": email.upper(),
+                    "phone": f"+518{uuid.uuid4().int % 10**8:08d}",
+                    "password": _HASHED_PASSWORD,
+                },
+            )
+            await session.commit()
+        await session.rollback()
+
+    async with factory() as session:
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                text(
+                    "INSERT INTO users (role_id, full_name, email, phone, hashed_password) "
+                    "SELECT id, 'Unicidad duplicada', :email, :phone, :password "
+                    "FROM roles WHERE code = 'ENCARGADO'"
+                ),
+                {
+                    "email": f"otro-{uuid.uuid4().hex[:10]}@eventpro.pe",
+                    "phone": phone,
+                    "password": _HASHED_PASSWORD,
+                },
+            )
+            await session.commit()
+        await session.rollback()

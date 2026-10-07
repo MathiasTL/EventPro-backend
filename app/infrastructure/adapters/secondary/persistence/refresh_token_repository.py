@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -46,18 +44,6 @@ class SQLAlchemyRefreshTokenRepository:
             await session.execute(
                 update(RefreshTokenModel)
                 .where(RefreshTokenModel.token_hash == token_hash)
-                .values(is_revoked=True)
-            )
-            await session.commit()
-
-    async def revoke_all_for_user(self, user_id: UUID) -> None:
-        async with self._session_factory() as session:
-            await session.execute(
-                update(RefreshTokenModel)
-                .where(
-                    RefreshTokenModel.user_id == user_id,
-                    RefreshTokenModel.is_revoked.is_(False),
-                )
                 .values(is_revoked=True)
             )
             await session.commit()

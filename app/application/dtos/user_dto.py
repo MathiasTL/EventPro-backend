@@ -51,3 +51,21 @@ class UpdateUserInput:
     role: Role | None = None
     is_active: bool | None = None
     password: str | None = None
+
+
+@dataclass(frozen=True)
+class UserPatch:
+    """Campos a aplicar en una actualización.
+
+    Solo los campos con valor se escriben (PATCH semántico): los omitidos nunca
+    se copian desde una lectura previa, lo que evita pisar cambios concurrentes.
+    `password_hash` viene ya hasheado; `revoke_refresh_tokens` marca que la
+    revocación debe ejecutarse en la misma transacción que la actualización.
+    """
+
+    full_name: str | None = None
+    phone: str | None = None
+    role: Role | None = None
+    is_active: bool | None = None
+    password_hash: str | None = None
+    revoke_refresh_tokens: bool = False

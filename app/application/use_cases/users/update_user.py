@@ -2,8 +2,7 @@
 
 from uuid import UUID
 
-from app.application.dtos.user_dto import UpdateUserInput, UserReadDTO
-from app.application.ports.output.refresh_token_repository_port import IRefreshTokenRepositoryPort
+from app.application.dtos.user_dto import UpdateUserInput, UserPatch, UserReadDTO
 from app.application.ports.output.user_repository_port import IUserRepositoryPort
 from app.application.use_cases.users.errors import SelfModificationError
 from app.application.use_cases.users.mappers import to_user_dto
@@ -13,15 +12,17 @@ from app.domain.value_objects.role import Role
 
 
 class UpdateUserUseCase:
-    def __init__(
-        self,
-        users: IUserRepositoryPort,
-        tokens: IRefreshTokenRepositoryPort,
-    ) -> None:
+    def __init__(self, users: IUserRepositoryPort) -> None:
         self._users = users
-        self._tokens = tokens
 
     async def execute(self, actor_id: UUID, user_id: UUID, data: UpdateUserInput) -> UserReadDTO:
+        """Aplica el parche de forma atómica en el repositorio.
+
+        Solo se envían los campos indicados (nunca una copia leída antes), y la
+        revocación de refresh tokens viaja en el mismo parche para que ocurra en
+        la misma transacción que la actualización. El repositorio garantiza el
+        invariante del último SUPERADMIN activo.
+        """
         user = await self._users.get_by_id(user_id)
         if user is None:
             raise ResourceNotFoundError("El usuario no existe.")
@@ -30,17 +31,13 @@ class UpdateUserUseCase:
                 raise SelfModificationError("No puedes desactivar tu propia cuenta.")
             if data.role is not None and data.role is not Role.SUPERADMIN:
                 raise SelfModificationError("No puedes cambiar tu propio rol de SUPERADMIN.")
-        if data.full_name is not None:
-            user.full_name = data.full_name.strip()
-        if data.phone is not None:
-            user.phone = data.phone.strip()
-        if data.role is not None:
-            user.role = data.role
-        if data.is_active is not None:
-            user.is_active = data.is_active
-        if data.password is not None:
-            user.hashed_password = hash_password(data.password)
-        await self._users.update(user)
-        if data.is_active is False or data.password is not None:
-            await self._tokens.revoke_all_for_user(user_id)
-        return to_user_dto(user)
+        patch = UserPatch(
+            full_name=data.full_name.strip() if data.full_name is not None else None,
+            phone=data.phone.strip() if data.phone is not None else None,
+            role=data.role,
+            is_active=data.is_active,
+            password_hash=hash_password(data.password) if data.password is not None else None,
+            revoke_refresh_tokens=data.is_active is False or data.password is not None,
+        )
+        updated = await self._users.update(user_id, patch)
+        return to_user_dto(updated)

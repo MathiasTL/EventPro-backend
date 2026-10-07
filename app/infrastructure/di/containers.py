@@ -176,7 +176,7 @@ def get_get_user_use_case() -> GetUserUseCase:
 
 @lru_cache
 def get_update_user_use_case() -> UpdateUserUseCase:
-    return UpdateUserUseCase(get_user_repository(), get_refresh_token_repository())
+    return UpdateUserUseCase(get_user_repository())
 
 
 @lru_cache

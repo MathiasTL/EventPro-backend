@@ -1,11 +1,14 @@
 """Esquemas de la API de usuarios del panel (US-23)."""
 
+import re
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain.value_objects.role import Role
+
+_EMAIL_PATTERN = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]{2,}")
 
 
 class UserReadResponse(BaseModel):
@@ -34,7 +37,7 @@ class UserCreateRequest(BaseModel):
     role: Role
     password: str = Field(min_length=8, max_length=128)
 
-    @field_validator("full_name", "email", "phone")
+    @field_validator("email", "phone")
     @classmethod
     def _strip(cls, value: str) -> str:
         cleaned = value.strip()
@@ -42,11 +45,18 @@ class UserCreateRequest(BaseModel):
             raise ValueError("El campo no puede estar vacío.")
         return cleaned
 
+    @field_validator("full_name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if len(cleaned) < 2:
+            raise ValueError("El nombre debe tener al menos 2 caracteres.")
+        return cleaned
+
     @field_validator("email")
     @classmethod
     def _email_shape(cls, value: str) -> str:
-        local, _, domain = value.partition("@")
-        if not local or not domain or "." not in domain:
+        if _EMAIL_PATTERN.fullmatch(value) is None:
             raise ValueError("El correo no tiene un formato válido.")
         return value
 
@@ -58,7 +68,7 @@ class UserUpdateRequest(BaseModel):
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
 
-    @field_validator("full_name", "phone")
+    @field_validator("phone")
     @classmethod
     def _strip(cls, value: str | None) -> str | None:
         if value is None:
@@ -66,6 +76,16 @@ class UserUpdateRequest(BaseModel):
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("El campo no puede estar vacío.")
+        return cleaned
+
+    @field_validator("full_name")
+    @classmethod
+    def _strip_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if len(cleaned) < 2:
+            raise ValueError("El nombre debe tener al menos 2 caracteres.")
         return cleaned
 
     @model_validator(mode="after")
