@@ -79,6 +79,8 @@ async def create_user(
         )
     except DuplicateResourceError as exc:
         raise _duplicate(exc) from exc
+    except ValidationError as exc:
+        raise ProblemError(422, exc.code, "Error de validación", str(exc)) from exc
     return UserReadResponse.model_validate(result)
 
 

@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.domain.entities.refresh_token import RefreshToken
 from app.domain.entities.user import User
-from app.domain.exceptions.resource_exceptions import DuplicateResourceError
+from app.domain.exceptions.resource_exceptions import DuplicateResourceError, ValidationError
 from app.domain.value_objects.role import Role
 from app.infrastructure.di import containers
 from app.main import create_app
@@ -207,6 +207,33 @@ async def test_create_invalid_payload_returns_422(web_app: FastAPI) -> None:
     assert short.status_code == 422
     assert bad_role.status_code == 422
     assert bad_email.status_code == 422
+
+
+async def test_phone_exceeding_column_length_returns_422(web_app: FastAPI) -> None:
+    long_phone = "+519" + "1" * 17
+    assert len(long_phone) == 21
+    async with _client(web_app) as client:
+        created = await client.post(PATH, headers=authorization(), json=payload())
+        on_create = await client.post(PATH, headers=authorization(), json=payload(phone=long_phone))
+        on_patch = await client.patch(
+            f"{PATH}/{created.json()['id']}",
+            headers=authorization(),
+            json={"phone": long_phone},
+        )
+    assert on_create.status_code == 422
+    assert on_patch.status_code == 422
+
+
+async def test_create_maps_domain_validation_error_to_422(web_app: FastAPI) -> None:
+    class _MissingRoleSeed:
+        async def execute(self, data: object) -> object:
+            raise ValidationError("El rol OPERADOR no existe; ejecute el seed de roles.")
+
+    web_app.dependency_overrides[containers.get_create_user_use_case] = lambda: _MissingRoleSeed()
+    async with _client(web_app) as client:
+        response = await client.post(PATH, headers=authorization(), json=payload())
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("validation-error")
 
 
 async def test_list_users_paginates_and_filters(web_app: FastAPI) -> None:

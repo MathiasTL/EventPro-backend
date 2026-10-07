@@ -30,7 +30,7 @@ class UserPageResponse(BaseModel):
 class UserCreateRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: str = Field(min_length=3, max_length=150)
-    phone: str = Field(pattern=r"^\+?\d{7,20}$")
+    phone: str = Field(pattern=r"^\+?\d{7,20}$", max_length=20)
     role: Role
     password: str = Field(min_length=8, max_length=128)
 
@@ -53,7 +53,7 @@ class UserCreateRequest(BaseModel):
 
 class UserUpdateRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=2, max_length=120)
-    phone: str | None = Field(default=None, pattern=r"^\+?\d{7,20}$")
+    phone: str | None = Field(default=None, pattern=r"^\+?\d{7,20}$", max_length=20)
     role: Role | None = None
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
