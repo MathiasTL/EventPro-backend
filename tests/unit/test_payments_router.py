@@ -28,6 +28,7 @@ from app.domain.entities.payment import (
 from app.domain.value_objects.role import Role
 from app.infrastructure.di import containers
 from app.main import create_app
+from tests.auth_support import install, set_role
 
 PATH = "/api/v1/payments"
 ADVANCE_PATH = f"{PATH}/advance"
@@ -97,6 +98,7 @@ class FakeAuditService:
 
 
 def authorization(role: Role = Role.ENCARGADO) -> dict[str, str]:
+    set_role(role)
     token = create_access_token(
         subject=str(USER_ID), role=role.value, secret_key=get_settings().secret_key
     )
@@ -106,6 +108,7 @@ def authorization(role: Role = Role.ENCARGADO) -> dict[str, str]:
 @pytest.fixture
 def web_app() -> Iterator[FastAPI]:
     app = create_app()
+    install(app)
     repo = FakePaymentRepository()
     storage = FakeEvidenceStorage()
     audits = FakeAuditService()

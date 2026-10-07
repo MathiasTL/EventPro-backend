@@ -18,6 +18,7 @@ from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapt
 from app.infrastructure.di.containers import get_event_schedule_use_case
 from app.main import create_app
 from tests.application.test_get_event_schedule import FakeEventRepository
+from tests.auth_support import install, set_role
 from tests.event_support import make_event
 
 PATH = "/api/v1/events/schedule"
@@ -26,6 +27,7 @@ EVENT = make_event(status=EventStatus.SCHEDULED, client_observations="  Sin regg
 
 
 def authorization(role: Role = Role.ENCARGADO) -> dict[str, str]:
+    set_role(role)
     token = create_access_token(
         subject=str(USER_ID), role=role.value, secret_key=get_settings().secret_key
     )
@@ -35,6 +37,7 @@ def authorization(role: Role = Role.ENCARGADO) -> dict[str, str]:
 @pytest.fixture
 def web_app() -> Iterator[FastAPI]:
     app = create_app()
+    install(app)
     app.dependency_overrides[get_event_schedule_use_case] = lambda: GetEventScheduleUseCase(
         FakeEventRepository([EVENT]), FakeQuoteScheduleReadAdapter(), FakeCrewScheduleReadAdapter()
     )

@@ -5,17 +5,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alembic import command
+from app.core.security import hash_password
 from app.infrastructure.adapters.secondary.persistence.database import build_engine
 from app.infrastructure.adapters.secondary.persistence.seed import seed
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_HASHED_PASSWORD = hash_password("PasswordSeguro123!")
 
 
 def run_migrations(database_url: str) -> None:
@@ -72,3 +74,31 @@ async def insert_quotes(engine: AsyncEngine, quote_ids: Iterable[UUID]) -> None:
                 ),
                 {"id": quote_id, "client_id": client_id, "package_id": package_id},
             )
+
+
+async def insert_user(engine: AsyncEngine, role_code: str) -> UUID:
+    """Crea una cuenta activa con el rol indicado (el auth fresco exige cuenta en BD)."""
+
+    email = f"user-{uuid4().hex[:12]}@eventpro.pe"
+    phone = f"+519{uuid4().int % 10**8:08d}"
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO roles (code, name) VALUES "
+                "('SUPERADMIN', 'Superadministrador'), "
+                "('ENCARGADO', 'Encargado'), "
+                "('OPERADOR', 'Operador') "
+                "ON CONFLICT (code) DO NOTHING"
+            )
+        )
+        user_id = await connection.scalar(
+            text(
+                "INSERT INTO users (role_id, full_name, email, phone, hashed_password) "
+                "SELECT id, 'Usuario de prueba', :email, :phone, :password "
+                "FROM roles WHERE code = :role RETURNING id"
+            ),
+            {"email": email, "phone": phone, "password": _HASHED_PASSWORD, "role": role_code},
+        )
+    if user_id is None:
+        raise RuntimeError(f"Rol desconocido para insert_user: {role_code}")
+    return user_id

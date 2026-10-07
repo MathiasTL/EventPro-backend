@@ -130,7 +130,7 @@
 * **Response `200 OK`:** el usuario (mismo formato que un ítem de `GET /users`).
 
 #### `PATCH /users/{id}`
-* **Descripción:** Actualiza datos, rol, estado o contraseña de un usuario. Desactivar un usuario (`is_active = false`) o cambiar su contraseña revoca todos sus refresh tokens. Un `SUPERADMIN` no puede desactivarse a sí mismo ni quitarse su propio rol.
+* **Descripción:** Actualiza datos, rol, estado o contraseña de un usuario en una única transacción atómica (fila bloqueada con `SELECT … FOR UPDATE` y bloqueo de sesión): desactivar un usuario (`is_active = false`) o cambiar su contraseña revoca todos sus refresh tokens **en esa misma transacción** — si la revocación falla, el cambio se deshace por completo. Un `SUPERADMIN` no puede desactivarse a sí mismo ni quitarse su propio rol, y la operación conserva siempre al menos un `SUPERADMIN` activo. El efecto sobre los access tokens vigentes es inmediato: la autorización se resuelve con la cuenta en cada petición, así que una cuenta desactivada responde `401` y un rol degradado pierde sus permisos sin esperar a la expiración del JWT.
 * **Seguridad:** Rol `SUPERADMIN`.
 * **Request Body (todos los campos son opcionales):**
   ```json
@@ -143,6 +143,7 @@
   }
   ```
 * **Response `200 OK`:** el usuario actualizado.
+* **Errores:** `403` (modificación de sí mismo), `404` (`not-found`), `409` (`duplicate-resource`, correo o teléfono ya registrado), `422` (`validation-error`; por ejemplo, «Debe permanecer al menos un SUPERADMIN activo»).
 
 ---
 

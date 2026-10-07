@@ -17,6 +17,7 @@ from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapt
 )
 from app.infrastructure.di.containers import get_start_event_use_case
 from app.main import create_app
+from tests.auth_support import install, set_role
 from tests.event_support import make_event
 from tests.start_event_support import FakeStartEventRepository, FixedClock, RecordingPayments
 
@@ -24,6 +25,7 @@ USER_ID = uuid4()
 
 
 def headers(role: Role = Role.ENCARGADO, *, expires: int = 60) -> dict[str, str]:
+    set_role(role)
     token = create_access_token(
         subject=str(USER_ID),
         role=role.value,
@@ -40,6 +42,7 @@ def setup() -> Iterator[tuple[FastAPI, FakeStartEventRepository, RecordingPaymen
     payments = RecordingPayments({event.id: Money(Decimal("980.50"))})
     crews = FakeCrewScheduleReadAdapter(assigned_events_by_user={USER_ID: frozenset({event.id})})
     app = create_app()
+    install(app)
     app.dependency_overrides[get_start_event_use_case] = lambda: StartEventUseCase(
         repo, payments, crews, FixedClock()
     )
