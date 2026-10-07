@@ -4,6 +4,10 @@ from app.infrastructure.adapters.secondary.persistence.models.event_extension_mo
     EventExtensionModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
+from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
+    CrewAssignmentModel,
+    InventoryReservationModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.payment_model import PaymentModel
 from app.infrastructure.adapters.secondary.persistence.models.refresh_token import (
     RefreshToken,
@@ -16,6 +20,8 @@ __all__ = [
     "Base",
     "EventModel",
     "EventExtensionModel",
+    "CrewAssignmentModel",
+    "InventoryReservationModel",
     "PaymentModel",
     "RefreshToken",
     "Role",

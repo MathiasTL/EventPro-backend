@@ -27,6 +27,7 @@ def event_to_domain(row: EventModel) -> Event:
         created_at=row.created_at,
         actual_start_time=row.actual_start_time,
         extra_minutes_total=row.extra_minutes_total,
+        legacy_extra_hours_amount=Money(row.legacy_extra_hours_amount),
     )
 
 
@@ -51,4 +52,5 @@ def event_to_model(event: Event) -> EventModel:
         created_at=event.created_at,
         actual_start_time=event.actual_start_time,
         extra_minutes_total=event.extra_minutes_total,
+        legacy_extra_hours_amount=event.legacy_extra_hours_amount.amount,
     )

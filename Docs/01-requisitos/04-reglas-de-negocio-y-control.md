@@ -74,6 +74,18 @@ $$\text{Intervalo Mínimo} = \text{Tiempo de Tránsito (Google Maps)} + \text{Ma
 * El saldo pendiente es `max(final_total_amount - advance_paid -
   pre_show_balance_paid - extra_hours_amount, 0)`: las extensiones ya cobradas no
   se cobran nuevamente. `SETTLED` no admite otro cierre ni nuevas extensiones.
+* La ventana `scheduled_time_window` conserva el contrato; `time_window` y su
+  alias `extended_time_window` incorporan los minutos acumulados. Cronograma,
+  concurrencia y asignaciones usan el fin operativo, incluida su fecha.
+* Una extensión se rechaza con `409` si el elenco se solapa, el inventario activo
+  no alcanza, no se conoce el intervalo aplicado del siguiente traslado o este
+  no cabe. Superar el umbral de simultaneidad requiere aprobación manual y
+  también responde `409`; US-18 no incorpora un override.
+* El cierre exige `extra_hours_amount = legacy_extra_hours_amount + extensiones
+  verificadas`, coincidencia de minutos y cobertura del total final mediante
+  cobros base, crédito histórico y extensiones verificadas. El crédito histórico
+  solo lo fija la migración en eventos sin pagos de extensión previos; un pago
+  real huérfano nunca se convierte automáticamente en crédito.
 
 ---
 

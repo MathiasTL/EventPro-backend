@@ -4,12 +4,16 @@ from uuid import UUID
 
 from app.application.dtos.event_extension_dto import VerifiedExtensionTotals
 from app.application.dtos.event_schedule_dto import EventScheduleFilters
+from app.application.ports.output.event_occupancy_port import IEventOccupancyPort
 from app.domain.entities.event import Event
 from app.domain.entities.event_extension import EventExtension
 from app.domain.entities.payment import Payment
 
 
-class IEventRepositoryPort(Protocol):
+class IEventRepositoryPort(IEventOccupancyPort, Protocol):
+    async def rollback_operation(self) -> None:
+        """Libera la transacción y sus bloqueos tras una operación rechazada."""
+
     async def can_discard_extension_evidence(self, payment_id: UUID) -> bool:
         """Confirma que el pago no quedó persistido antes de eliminar su evidencia."""
 

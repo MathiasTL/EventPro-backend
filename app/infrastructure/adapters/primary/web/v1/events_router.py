@@ -1,12 +1,10 @@
 """Adaptador primario de cronograma e inicio: traduce HTTP a puertos de aplicación."""
 
 from datetime import date
-from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, File, Form, Query, Request, UploadFile
-from pydantic import ValidationError as PydanticValidationError
+from fastapi import APIRouter, Body, Depends, Form, Query, Request
 
 from app.application.dtos.event_extension_dto import RegisterEventExtensionInput
 from app.application.dtos.event_schedule_dto import EventScheduleFilters, ScheduleActor
@@ -16,16 +14,17 @@ from app.application.ports.input.event_extension_port import (
 )
 from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
 from app.application.ports.input.event_start_port import IStartEventPort
+from app.application.use_cases.event.access_errors import EventRoleForbiddenError
 from app.application.use_cases.event.get_event_schedule import ScheduleAssignmentRequiredError
 from app.application.use_cases.event.start_event import EventAccessDeniedError
-from app.domain.entities.payment import PaymentMethod
 from app.domain.exceptions.event_exceptions import (
     BalancePendingError,
+    EventResourceConflictError,
     ExtensionPaymentMismatchError,
     InvalidEventStateError,
-    InvalidEvidenceError,
 )
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
+from app.domain.exceptions.storage_exceptions import EvidenceValidationError
 from app.domain.value_objects.event_status import EventStatus
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import AuthContext, get_auth_context, require_role
@@ -120,7 +119,7 @@ async def start_event(
         result = await use_case.execute(
             event_id, ScheduleActor(user_id=context.user_id, role=context.role)
         )
-    except EventAccessDeniedError as exc:
+    except (EventAccessDeniedError, EventRoleForbiddenError) as exc:
         raise ProblemError(403, "forbidden", "Prohibido", str(exc)) from exc
     except ResourceNotFoundError as exc:
         raise ProblemError(404, "not-found", "No encontrado", str(exc)) from exc
@@ -145,31 +144,22 @@ async def start_event(
         401: {"description": "Autenticación requerida"},
         403: {"description": "Rol no permitido"},
         404: {"description": "Evento inexistente o fuera de alcance"},
-        409: {"description": "Estado incompatible"},
+        409: {"description": "Estado incompatible o conflicto de recursos/traslado/sobrecupo"},
         422: {"description": "Datos o evidencia inválidos"},
     },
 )
 async def register_event_extension(
     event_id: UUID,
-    request: Request,
     context: Annotated[
         AuthContext, Depends(require_role(Role.OPERADOR, Role.ENCARGADO, Role.SUPERADMIN))
     ],
     use_case: Annotated[
         IRegisterEventExtensionPort, Depends(get_register_event_extension_use_case)
     ],
-    extra_minutes: Annotated[int, Form(gt=0, le=2147483647)],
-    agreed_rate: Annotated[Decimal, Form(gt=0, max_digits=10, decimal_places=2)],
-    payment_method: Annotated[PaymentMethod, Form()],
-    evidence_file: Annotated[UploadFile, File()],
-    transaction_reference: Annotated[str | None, Form(min_length=1, max_length=60)] = None,
+    payload: Annotated[EventExtensionRequest, Form(media_type="multipart/form-data")],
 ) -> EventExtensionResponse:
     try:
-        form = await request.form()
-        payload = EventExtensionRequest.model_validate(
-            {name: value for name, value in form.items() if name != "evidence_file"}
-        )
-        data = await evidence_file.read(5 * 1024 * 1024 + 1)
+        data = await payload.evidence_file.read(5 * 1024 * 1024 + 1)
         result = await use_case.execute(
             RegisterEventExtensionInput(
                 event_id,
@@ -177,21 +167,25 @@ async def register_event_extension(
                 payload.agreed_rate,
                 payload.payment_method,
                 data,
-                evidence_file.content_type or "",
-                evidence_file.filename or "evidence",
+                payload.evidence_file.content_type or "",
+                payload.evidence_file.filename or "evidence",
                 payload.transaction_reference,
             ),
             ScheduleActor(context.user_id, context.role),
         )
-    except PydanticValidationError as exc:
-        raise ProblemError(422, "validation-error", "Error de validación", str(exc)) from exc
-    except InvalidEvidenceError as exc:
+    except EventRoleForbiddenError as exc:
+        raise ProblemError(403, "forbidden", "Prohibido", str(exc)) from exc
+    except EvidenceValidationError as exc:
         raise ProblemError(422, exc.code, "Comprobante inválido", str(exc)) from exc
     except ValidationError as exc:
         raise ProblemError(422, "validation-error", "Error de validación", str(exc)) from exc
     except ResourceNotFoundError as exc:
         raise ProblemError(404, "not-found", "No encontrado", str(exc)) from exc
-    except (InvalidEventStateError, ExtensionPaymentMismatchError) as exc:
+    except (
+        InvalidEventStateError,
+        ExtensionPaymentMismatchError,
+        EventResourceConflictError,
+    ) as exc:
         raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
     return EventExtensionResponse.model_validate(result)
 
@@ -222,6 +216,8 @@ async def settle_event(
 ) -> SettleEventResponse:
     try:
         result = await use_case.execute(event_id, ScheduleActor(context.user_id, context.role))
+    except EventRoleForbiddenError as exc:
+        raise ProblemError(403, "forbidden", "Prohibido", str(exc)) from exc
     except ResourceNotFoundError as exc:
         raise ProblemError(404, "not-found", "No encontrado", str(exc)) from exc
     except (InvalidEventStateError, ExtensionPaymentMismatchError) as exc:

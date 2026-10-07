@@ -24,6 +24,9 @@ from app.infrastructure.adapters.secondary.persistence.models.base import Base
 class EventModel(Base):
     __tablename__ = "events"
     __table_args__ = (
+        CheckConstraint(
+            "legacy_extra_hours_amount >= 0", name="ck_events_legacy_extra_nonnegative"
+        ),
         CheckConstraint("extra_minutes_total >= 0", name="ck_events_extra_minutes_nonnegative"),
         CheckConstraint(
             "status IN ('AWAITING_SIGNATURE', 'SCHEDULED', 'AWAITING_BALANCE', "
@@ -80,4 +83,7 @@ class EventModel(Base):
     )
     extra_minutes_total: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
+    )
+    legacy_extra_hours_amount: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), nullable=False, server_default=text("0")
     )

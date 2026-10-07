@@ -31,6 +31,18 @@ class FakeExtensionRepository(FakeStartEventRepository):
         self.extensions = []
         self.payments = []
         self.total_reads = []
+        self.locks = 0
+
+    async def lock_availability(self):
+        self.locks += 1
+
+    async def load_occupancy(self, event, added_minutes):
+        from app.application.dtos.event_occupancy_dto import EventOccupancy
+
+        return EventOccupancy()
+
+    async def rollback_operation(self):
+        pass
 
     async def save_extension(self, event, extension, payment):
         if self.fail_save:

@@ -235,10 +235,11 @@ Entidad principal del cronograma y ejecución operativa del servicio. Se crea ú
 | `final_total_amount` | `NUMERIC(10,2)` | NO | - | CHECK (`>= 0`) | Total final facturado. |
 | `advance_paid` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Adelanto verificado (suma de pagos `ADVANCE` en `VERIFIED`). |
 | `pre_show_balance_paid` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Saldo + movilidad cobrado antes de iniciar el show (suma de pagos `BALANCE`). |
-| `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Monto adicional por extensiones en vivo (suma de pagos `EXTENSION`). |
+| `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Crédito histórico más extensiones en vivo respaldadas por pagos `EXTENSION`. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de registro. |
 | `actual_start_time` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Inicio real en UTC, registrado por el servidor al pasar a `IN_PROGRESS` (US-17 parcial). Eventos históricos conservan `NULL`. |
 | `extra_minutes_total` | `INTEGER` | NO | `0` | CHECK (`extra_minutes_total >= 0`) | Minutos acumulados de las extensiones cobradas; el horario contratado se conserva. |
+| `legacy_extra_hours_amount` | `NUMERIC(10,2)` | NO | `0` | CHECK (`>= 0`) | Crédito histórico fijado por `0002` para eventos sin pagos `EXTENSION` previos. Sin entrada pública. |
 
 > **Claves foráneas y restricciones de `events`:** `quote_id` es UUID obligatorio y
 > único, con FOREIGN KEY a `quotes.id` (sin `ON DELETE`: una cotización con evento no
@@ -357,14 +358,20 @@ Extensiones de tiempo registradas durante el show (RF-19). El cobro vive en `pay
 | `agreed_rate` | `NUMERIC(10,2)` | NO | - | CHECK (`agreed_rate > 0`) | Tarifa pactada por la extensión. |
 | `requested_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora del pedido del cliente. |
 
-> **US-18:** `0007_event_extensions`, encadenada a `0006_payments`, crea esta tabla
-> y añade `events.extra_minutes_total`. Los eventos existentes reciben cero minutos.
+> **US-18:** `0002_event_extensions`, encadenada a `0001_initial_schema`, crea esta
+> tabla y añade `events.extra_minutes_total` y `legacy_extra_hours_amount`.
+> Los eventos existentes reciben cero minutos. El crédito histórico copia
+> `extra_hours_amount` únicamente si no hay pagos `EXTENSION` para ese evento;
+> no crea pagos, comprobantes ni minutos. Un pago real sin detalle exige reconciliación.
 > `agreed_rate` es el importe total de la extensión y debe coincidir con
 > `payments.amount`. El pago vinculado pertenece al mismo evento y cotización,
 > tiene concepto `EXTENSION` y estado `VERIFIED`; esas correspondencias se validan
-> en aplicación y persistencia. Pago, extensión y acumulados se guardan juntos.
+> en aplicación y persistencia. Pago, extensión, reservas activas prolongadas y
+> acumulados se guardan juntos.
 > `requested_at` se obtiene del reloj del servidor y se normaliza a UTC.
-> La revisión no añade FK hacia `quotes`, que sigue pendiente de E1.
+> Las FK hacia `quotes` ya existen en el baseline y se conservan.
+> El fin operativo se calcula con el horario contratado más los minutos acumulados;
+> el cronograma devuelve su hora y fecha (`end_time`, `end_date`).
 
 ---
 

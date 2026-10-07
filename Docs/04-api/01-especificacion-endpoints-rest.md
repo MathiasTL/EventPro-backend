@@ -982,6 +982,7 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
       "event_date": "2026-10-15",
       "start_time": "21:30",
       "end_time": "22:30",
+      "end_date": "2026-10-15",
       "district": "Miraflores",
       "client_name": "Carlos Rodríguez",
       "package_name": "Hora Loca Medium",
@@ -1011,7 +1012,13 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 > se sustituirá por la lectura de `crews.user_id` y `crew_assignments`.
 > `client_observations` conserva el texto literal y puede ser `null`; las horas
 > se serializan como `HH:MM` y el saldo como número JSON en PEN, calculado con
-> decimales: `max(final_total_amount - advance_paid - pre_show_balance_paid, 0)`.
+> decimales: `max(final_total_amount - advance_paid - pre_show_balance_paid - extra_hours_amount, 0)`.
+
+> **US-18:** `end_time` y `end_date` describen el fin operativo con los minutos
+> adicionales, incluso al cruzar medianoche o extenderse varios días. El horario
+> contratado en PostgreSQL se conserva. La comprobación de disponibilidad usa
+> asignaciones y reservas reales; el enriquecimiento y autorización del operador
+> siguen usando el puerto Fake hasta la integración E3.
 
 #### `GET /events/{id}`
 * **Descripción:** Detalle operativo del evento: datos de la locación, observaciones, extras, elencos asignados, desglose económico y pagos registrados.
@@ -1166,9 +1173,9 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
     }
   }
   ```
-* **Errores:** `401` (autenticación), `403` (`forbidden`, rol no permitido), `404` (`not-found`, inexistente o fuera del alcance del operador), `409` (`invalid-event-state`, el evento no está `IN_PROGRESS` ni `EXTENDED`; `extension-payment-mismatch`, vínculos inconsistentes), `422` (`invalid-file`, `validation-error`).
+* **Errores:** `401` (autenticación), `403` (`forbidden`, rol no permitido), `404` (`not-found`, inexistente o fuera del alcance del operador), `409` (`invalid-event-state`, el evento no está `IN_PROGRESS` ni `EXTENDED`; `extension-payment-mismatch`, vínculos inconsistentes; `extension-resource-conflict`, conflicto de elenco, stock, traslado desconocido/insuficiente o sobrecupo que requiere aprobación manual), `422` (`invalid-file`, `validation-error`).
 * **Comportamiento US-18:** permite extensiones sucesivas; acumula minutos y cargos conservando el horario original. La fotografía se valida por contenido, exclusivamente JPEG, PNG o WebP, hasta 5 MiB. La referencia opcional admite entre 1 y 60 caracteres y no puede contener solo espacios. Los campos adicionales se rechazan. El servidor obtiene la fecha UTC y el usuario registrador del JWT. Los importes acumulados deben caber en `NUMERIC(10,2)` y el fin calculado debe ser representable.
-* **Transacción y reintentos:** cada registro exitoso crea una extensión y un pago distinto. No hay clave de idempotencia en esta entrega. Pago, detalle y evento se confirman conjuntamente bajo bloqueo del evento; ante rollback se elimina el comprobante nuevo si se confirma que el pago no quedó persistido.
+* **Transacción y reintentos:** cada registro exitoso crea una extensión y un pago distinto. No hay clave de idempotencia en esta entrega. La evidencia se almacena antes de bloquear. Pago, detalle, reservas activas prolongadas y evento se confirman conjuntamente bajo candado transaccional de disponibilidad y bloqueo de fila. Datos independientes de persistencia inválidos responden `422` antes de evaluar el estado. Un conflicto posterior compensa el archivo; si hubo intento de commit, solo se elimina al confirmar que el pago no quedó persistido. Un commit incierto conserva la evidencia y se registra. El formulario rechaza campos adicionales y sus errores no exponen entradas ni URLs internas.
 
 #### `POST /events/{id}/settle`
 * **Descripción:** Cierra definitivamente el evento marcándolo como `SETTLED` (desde `IN_PROGRESS` o `EXTENDED`) y consolida los totales cobrados.
@@ -1176,7 +1183,7 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 * **Request Body:** vacío o `{}`; se rechazan campos adicionales.
 * **Response `200 OK`:** `{"event_id": "evt-77a8...", "status": "SETTLED"}`
 * **Errores:** `401` (autenticación), `403` (`forbidden`, rol no permitido), `404` (`not-found`, inexistente o fuera del alcance del operador), `400` (`balance-pending`, cobros insuficientes), `409` (`invalid-event-state`, incluido un segundo cierre; `extension-payment-mismatch`, extensiones y pagos inconsistentes), `422` (`validation-error`, cuerpo inválido).
-* **Cobertura US-18:** usa `advance_paid` y `pre_show_balance_paid` guardados para los cobros base y contrasta las extensiones con pagos reales `EXTENSION` `VERIFIED`. Los minutos, importes y vínculos deben coincidir; ningún pago de extensión puede carecer de detalle asociado. La auditoría `UNREVIEWED` o `FLAGGED` no impide el cierre. Liquidar no suma cargos nuevamente y bloquea nuevas extensiones. La consulta y transición se serializan con los registros de extensiones mediante el mismo bloqueo de fila.
+* **Cobertura US-18:** usa `advance_paid` y `pre_show_balance_paid` guardados para los cobros base y contrasta las extensiones con pagos reales `EXTENSION` `VERIFIED`. Los minutos, importes y vínculos deben coincidir; ningún pago de extensión puede carecer de detalle asociado. El crédito `legacy_extra_hours_amount`, fijado por la migración para históricos sin pagos de extensión, se incluye en la cobertura y en la igualdad de importes; no puede editarse públicamente. La auditoría `UNREVIEWED` o `FLAGGED` no impide el cierre. Liquidar no suma cargos nuevamente y bloquea nuevas extensiones. La consulta y transición se serializan con los registros de extensiones mediante el mismo bloqueo de fila.
 
 #### `POST /events/{id}/cancel`
 * **Descripción:** Cancela el evento desde cualquier estado previo a `IN_PROGRESS` (`AWAITING_SIGNATURE`, `SCHEDULED` o `AWAITING_BALANCE`). Libera sus reservas de inventario (`RELEASED`), anula el contrato vigente (`VOIDED`) y deja de contar para el umbral de simultaneidad. El destino del adelanto se resuelve fuera de este endpoint.

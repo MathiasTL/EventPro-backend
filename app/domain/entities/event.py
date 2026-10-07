@@ -45,6 +45,7 @@ class Event:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     actual_start_time: datetime | None = None
     extra_minutes_total: int = 0
+    legacy_extra_hours_amount: Money = field(default_factory=Money.zero)
 
     def __post_init__(self) -> None:
         validate_extra_minutes(self.extra_minutes_total, allow_zero=True)
@@ -61,6 +62,7 @@ class Event:
             "advance_paid",
             "pre_show_balance_paid",
             "extra_hours_amount",
+            "legacy_extra_hours_amount",
         ):
             amount = getattr(self, name)
             if (
@@ -109,12 +111,14 @@ class Event:
 
     @property
     def extended_time_window(self) -> TimeWindow:
-        """Horario local contratado más extensiones, conservando el día del fin."""
-        original = self.time_window
+        """Alias compatible de la ventana operativa."""
+        return self.time_window
+
+    def window_with_extra_minutes(self, minutes: int) -> TimeWindow:
+        validate_extra_minutes(minutes, allow_zero=True)
         try:
-            return TimeWindow(
-                original.start, original.end + timedelta(minutes=self.extra_minutes_total)
-            )
+            original = self.scheduled_time_window
+            return TimeWindow(original.start, original.end + timedelta(minutes=minutes))
         except OverflowError as exc:
             raise ValidationError(
                 "El horario extendido excede el rango de fechas permitido."
@@ -146,12 +150,7 @@ class Event:
         final_amount = self.final_total_amount + agreed_rate
         validate_extension_amount(extra_amount)
         validate_extension_amount(final_amount)
-        try:
-            self.time_window.end + timedelta(minutes=minutes)
-        except OverflowError as exc:
-            raise ValidationError(
-                "El horario extendido excede el rango de fechas permitido."
-            ) from exc
+        self.window_with_extra_minutes(minutes)
         self.extra_minutes_total = minutes
         self.extra_hours_amount = extra_amount
         self.final_total_amount = final_amount
@@ -163,14 +162,17 @@ class Event:
         validate_extension_amount(verified_extension_amount, allow_zero=True)
         validate_extra_minutes(verified_extra_minutes, allow_zero=True)
         if (
-            verified_extension_amount != self.extra_hours_amount
+            self.legacy_extra_hours_amount + verified_extension_amount != self.extra_hours_amount
             or verified_extra_minutes != self.extra_minutes_total
         ):
             raise ExtensionPaymentMismatchError(
                 "Las extensiones no coinciden con sus cobros verificados."
             )
         if (
-            self.advance_paid + self.pre_show_balance_paid + verified_extension_amount
+            self.advance_paid
+            + self.pre_show_balance_paid
+            + self.legacy_extra_hours_amount
+            + verified_extension_amount
             < self.final_total_amount
         ):
             raise BalancePendingError("Se requiere cubrir el total final antes de liquidar.")
@@ -178,6 +180,11 @@ class Event:
 
     @property
     def time_window(self) -> TimeWindow:
+        """Ventana operativa usada por cronograma y disponibilidad."""
+        return self.window_with_extra_minutes(self.extra_minutes_total)
+
+    @property
+    def scheduled_time_window(self) -> TimeWindow:
         """Ventana local: un fin anterior al inicio pertenece al día siguiente."""
         start = datetime.combine(self.event_date, self.start_time)
         end = datetime.combine(self.event_date, self.end_time)

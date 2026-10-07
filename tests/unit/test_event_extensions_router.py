@@ -4,6 +4,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from app.application.dtos.event_occupancy_dto import EventOccupancy
 from app.application.use_cases.event.register_event_extension import RegisterEventExtensionUseCase
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.core.config import get_settings
@@ -162,6 +163,10 @@ async def test_invalid_forms_have_no_side_effects(setup, field, value):
     response = await extension(app, event.id, headers=auth(), data=data)
     assert response.status_code == 422
     assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["detail"] == "El cuerpo o los parámetros no cumplen el esquema."
+    assert "errors.pydantic.dev" not in response.text
+    assert '"input"' not in response.text
+    assert '"ctx"' not in response.text
     assert repo.saves == repo.payments == []
 
 
@@ -216,3 +221,32 @@ async def test_disallowed_role_is_forbidden_before_use_case(setup):
     assert (await extension(app, event.id)).status_code == 403
     assert (await settle(app, event.id)).status_code == 403
     assert repo.loads == []
+
+
+async def test_resource_conflict_is_409_and_compensates_evidence(setup, tmp_path):
+    app, event, repo, _ = setup
+
+    async def occupancy(event, added_minutes):
+        return EventOccupancy(simultaneous_windows=(event.time_window,) * 3)
+
+    repo.load_occupancy = occupancy
+    response = await extension(app, event.id, headers=auth())
+    assert response.status_code == 409
+    assert response.json()["type"].endswith("/extension-resource-conflict")
+    assert "aprobación manual" in response.json()["detail"]
+    assert repo.payments == []
+    assert list((tmp_path / "evidence").iterdir()) == []
+
+
+async def test_invalid_data_on_settled_event_returns_422_before_load(setup):
+    app, event, repo, _ = setup
+    repo.events[event.id].status = EventStatus.SETTLED
+    response = await extension(
+        app,
+        event.id,
+        headers=auth(),
+        data={"extra_minutes": "30", "agreed_rate": "0", "payment_method": "CASH"},
+    )
+    assert response.status_code == 422
+    assert repo.loads == []
+    assert repo.locks == 0

@@ -5,11 +5,31 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from app.domain.entities.payment import PaymentMethod
 from app.domain.exceptions.resource_exceptions import ValidationError
 from app.domain.value_objects.money import Money
 
 MAX_AMOUNT = Decimal("99999999.99")
 MAX_MINUTES = 2147483647
+
+
+def validate_extension_terms(
+    minutes: int, amount: Decimal, method: PaymentMethod, reference: str | None
+) -> Money:
+    """Valida la solicitud pura antes de consultar persistencia."""
+    validate_extra_minutes(minutes)
+    if (
+        not isinstance(amount, Decimal)
+        or not amount.is_finite()
+        or not 0 < amount <= MAX_AMOUNT
+        or amount != amount.quantize(Decimal("0.01"))
+    ):
+        raise ValidationError("El importe debe ser positivo, finito y tener hasta dos decimales.")
+    if not isinstance(method, PaymentMethod):
+        raise ValidationError("El medio de pago no es válido.")
+    if reference is not None and (not reference.strip() or len(reference) > 60):
+        raise ValidationError("La referencia debe contener entre 1 y 60 caracteres.")
+    return Money(amount)
 
 
 def validate_extra_minutes(value: int, *, allow_zero: bool = False) -> None:

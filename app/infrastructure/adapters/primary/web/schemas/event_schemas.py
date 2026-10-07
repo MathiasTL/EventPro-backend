@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
+from fastapi import UploadFile
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerializer
 
 from app.domain.entities.payment import (
@@ -38,6 +39,7 @@ class EventScheduleResponse(BaseModel):
     event_date: date
     start_time: ScheduleTime
     end_time: ScheduleTime
+    end_date: date
     district: str
     client_name: str
     package_name: str
@@ -69,6 +71,7 @@ class EventExtensionRequest(BaseModel):
     agreed_rate: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
     payment_method: PaymentMethod
     transaction_reference: str | None = Field(default=None, min_length=1, max_length=60)
+    evidence_file: UploadFile
 
 
 class ExtensionPaymentResponse(BaseModel):

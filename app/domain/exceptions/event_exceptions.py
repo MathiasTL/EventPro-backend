@@ -1,6 +1,6 @@
 """Errores puros de las transiciones del evento."""
 
-from app.domain.exceptions.resource_exceptions import DomainError, ValidationError
+from app.domain.exceptions.resource_exceptions import DomainError
 
 
 class InvalidEventStateError(DomainError):
@@ -15,5 +15,5 @@ class ExtensionPaymentMismatchError(DomainError):
     code = "extension-payment-mismatch"
 
 
-class InvalidEvidenceError(ValidationError):
-    code = "invalid-file"
+class EventResourceConflictError(DomainError):
+    code = "extension-resource-conflict"

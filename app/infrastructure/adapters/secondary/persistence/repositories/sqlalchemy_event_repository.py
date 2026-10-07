@@ -1,12 +1,14 @@
 """Cronograma y persistencia transaccional del inicio del evento sobre PostgreSQL."""
 
 from collections.abc import Sequence
+from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, or_, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.dtos.event_extension_dto import VerifiedExtensionTotals
+from app.application.dtos.event_occupancy_dto import EventOccupancy
 from app.application.dtos.event_schedule_dto import EventScheduleFilters
 from app.domain.entities.event import Event
 from app.domain.entities.event_extension import EventExtension
@@ -28,12 +30,29 @@ from app.infrastructure.adapters.secondary.persistence.models.event_extension_mo
     EventExtensionModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
+from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
+    InventoryReservationModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.payment_model import PaymentModel
+from app.infrastructure.adapters.secondary.persistence.repositories import (
+    sqlalchemy_event_occupancy,
+)
 
 
 class SqlAlchemyEventRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def rollback_operation(self) -> None:
+        await self._session.rollback()
+
+    async def lock_availability(self) -> None:
+        await sqlalchemy_event_occupancy.SqlAlchemyEventOccupancy(self._session).lock_availability()
+
+    async def load_occupancy(self, event: Event, added_minutes: int) -> EventOccupancy:
+        return await sqlalchemy_event_occupancy.SqlAlchemyEventOccupancy(
+            self._session
+        ).load_occupancy(event, added_minutes)
 
     async def can_discard_extension_evidence(self, payment_id: UUID) -> bool:
         """Consulta PostgreSQL después del rollback; no supone que un commit fallido no llegó."""
@@ -86,43 +105,66 @@ class SqlAlchemyEventRepository:
             )
             if (await self._session.execute(stmt)).scalar_one_or_none() is None:
                 raise InvalidEventStateError("El evento ya no admite esta extensión.")
+            await self._session.execute(
+                update(InventoryReservationModel)
+                .where(
+                    InventoryReservationModel.event_id == event.id,
+                    InventoryReservationModel.status == "ACTIVE",
+                )
+                .values(
+                    ends_at=InventoryReservationModel.ends_at
+                    + timedelta(minutes=extension.extra_minutes)
+                )
+            )
             await self._session.commit()
         except BaseException:
             await self._session.rollback()
             raise
 
     async def get_verified_extension_totals(self, event_id: UUID) -> VerifiedExtensionTotals:
-        stmt = (
-            select(EventExtensionModel, PaymentModel, EventModel.quote_id)
+        invalid = or_(
+            PaymentModel.id.is_(None),
+            PaymentModel.event_id != event_id,
+            PaymentModel.quote_id != EventModel.quote_id,
+            PaymentModel.concept != PaymentConcept.EXTENSION.value,
+            PaymentModel.validation_status != PaymentValidationStatus.VERIFIED.value,
+            PaymentModel.amount != EventExtensionModel.agreed_rate,
+        )
+        extensions = (
+            select(
+                func.count(EventExtensionModel.id).label("count"),
+                func.coalesce(func.sum(EventExtensionModel.extra_minutes), 0).label("minutes"),
+                func.coalesce(func.sum(EventExtensionModel.agreed_rate), 0).label("amount"),
+                func.coalesce(func.sum(case((invalid, 1), else_=0)), 0).label("invalid"),
+            )
             .join(EventModel, EventModel.id == EventExtensionModel.event_id)
             .outerjoin(PaymentModel, PaymentModel.id == EventExtensionModel.payment_id)
             .where(EventExtensionModel.event_id == event_id)
-        )
-        rows = (await self._session.execute(stmt)).all()
-        count = await self._session.scalar(
-            select(func.count(PaymentModel.id)).where(
+        ).subquery()
+        payments = (
+            select(func.count(PaymentModel.id).label("count"))
+            .where(
                 PaymentModel.event_id == event_id,
                 PaymentModel.concept == PaymentConcept.EXTENSION.value,
             )
+            .subquery()
         )
-        amount, minutes = Money.zero(), 0
-        if count != len(rows):
-            raise ExtensionPaymentMismatchError("Hay cobros de extensión sin detalle asociado.")
-        for extension, payment, quote_id in rows:
-            if (
-                payment is None
-                or payment.event_id != event_id
-                or payment.quote_id != quote_id
-                or payment.concept != PaymentConcept.EXTENSION.value
-                or payment.validation_status != PaymentValidationStatus.VERIFIED.value
-                or payment.amount != extension.agreed_rate
-            ):
-                raise ExtensionPaymentMismatchError(
-                    "Una extensión no tiene su cobro verificado correcto."
-                )
-            amount += Money(payment.amount)
-            minutes += extension.extra_minutes
-        return VerifiedExtensionTotals(amount, minutes)
+        row = (
+            await self._session.execute(
+                select(
+                    extensions.c.amount,
+                    extensions.c.minutes,
+                    extensions.c.invalid,
+                    extensions.c.count,
+                    payments.c.count,
+                ).select_from(extensions.join(payments, true()))
+            )
+        ).one()
+        if row.invalid or row[3] != row[4]:
+            raise ExtensionPaymentMismatchError(
+                "Las extensiones no coinciden con sus pagos verificados."
+            )
+        return VerifiedExtensionTotals(Money(row.amount), row.minutes)
 
     async def save_settlement(self, event: Event) -> None:
         try:
@@ -140,6 +182,7 @@ class SqlAlchemyEventRepository:
                     EventModel.final_total_amount == event.final_total_amount.amount,
                     EventModel.advance_paid == event.advance_paid.amount,
                     EventModel.pre_show_balance_paid == event.pre_show_balance_paid.amount,
+                    EventModel.legacy_extra_hours_amount == event.legacy_extra_hours_amount.amount,
                 )
                 .values(status=event.status.value)
                 .returning(EventModel.id)

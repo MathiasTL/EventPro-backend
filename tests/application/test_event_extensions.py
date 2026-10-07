@@ -70,17 +70,18 @@ async def test_operator_outside_scope_is_not_found_before_load_or_storage():
     assert repo.loads == storage.paths == repo.saves == []
 
 
-async def test_missing_event_has_no_side_effects():
+async def test_missing_event_compensates_evidence():
     _, actor, repo, storage, crews = setup()
     with pytest.raises(ResourceNotFoundError):
         await RegisterEventExtensionUseCase(repo, storage, crews, FixedClock()).execute(
             extension_input(uuid4()), actor
         )
-    assert storage.paths == repo.saves == []
+    assert storage.deleted == storage.paths
+    assert repo.saves == []
 
 
 @pytest.mark.parametrize("status", [EventStatus.SCHEDULED, EventStatus.SETTLED])
-async def test_invalid_state_precedes_storage_and_payment_reads(status):
+async def test_invalid_state_compensates_storage_without_payment_reads(status):
     event, actor, repo, storage, crews = setup(status)
     with pytest.raises(InvalidEventStateError):
         await RegisterEventExtensionUseCase(repo, storage, crews, FixedClock()).execute(
@@ -88,7 +89,8 @@ async def test_invalid_state_precedes_storage_and_payment_reads(status):
         )
     with pytest.raises(InvalidEventStateError):
         await SettleEventUseCase(repo, crews).execute(event.id, actor)
-    assert storage.paths == repo.saves == repo.total_reads == []
+    assert storage.deleted == storage.paths
+    assert repo.saves == repo.total_reads == []
 
 
 @pytest.mark.parametrize(

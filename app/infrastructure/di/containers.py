@@ -200,7 +200,11 @@ def get_register_event_extension_use_case(
     clock: Annotated[IClockPort, Depends(get_clock_port)],
 ) -> IRegisterEventExtensionPort:
     return RegisterEventExtensionUseCase(
-        sqlalchemy_event_repository.SqlAlchemyEventRepository(session), storage, crews, clock
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+        storage,
+        crews,
+        clock,
+        simultaneous_threshold=get_settings().simultaneous_shows_threshold,
     )
 
 

@@ -57,6 +57,7 @@ def test_events_upgrade_constraints_and_downgrade(database_url: str) -> None:
                     "created_at",
                     "actual_start_time",
                     "extra_minutes_total",
+                    "legacy_extra_hours_amount",
                 }
                 foreign_keys = await connection.run_sync(
                     lambda conn: inspect(conn).get_foreign_keys("events")

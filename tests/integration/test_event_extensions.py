@@ -1,7 +1,9 @@
 """US-18 sobre PostgreSQL 16: migración, API, atomicidad y concurrencia."""
 
 import asyncio
+from datetime import date, timedelta
 from decimal import Decimal
+from itertools import count
 from typing import Annotated
 from uuid import uuid4
 
@@ -59,7 +61,9 @@ from tests.event_support import make_event
 from tests.extension_support import PNG_BYTES, extension_input
 from tests.start_event_support import STARTED_AT, FixedClock
 
-from ._support import run_migrations
+from ._support import insert_quotes, run_migrations
+
+_SEED_COUNT = count()
 
 pytestmark = pytest.mark.integration
 SqlAlchemyEventRepository = sqlalchemy_event_repository.SqlAlchemyEventRepository
@@ -68,8 +72,11 @@ SqlAlchemyPaymentRepository = sqlalchemy_payment_repository.SqlAlchemyPaymentRep
 
 async def seed_event(factory):
     event = make_event(
-        status=EventStatus.IN_PROGRESS, pre_show_balance_paid=Money(Decimal("980.50"))
+        status=EventStatus.IN_PROGRESS,
+        pre_show_balance_paid=Money(Decimal("980.50")),
+        event_date=date(2026, 10, 15) + timedelta(days=next(_SEED_COUNT)),
     )
+    await insert_quotes(factory.kw["bind"], [event.quote_id])
     actor = ScheduleActor(uuid4(), Role.ENCARGADO)
     async with factory() as session:
         role_id = await session.scalar(select(RoleModel.id).where(RoleModel.code == "ENCARGADO"))
@@ -100,24 +107,53 @@ def test_migration_extends_previous_head_and_preserves_existing_events(database_
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0007_event_extensions"]
-    assert scripts.get_revision("0007_event_extensions").down_revision == "0006_payments"
-    command.upgrade(config, "0006_payments")
-    event_id = uuid4()
+    assert scripts.get_heads() == ["0002_event_extensions"]
+    assert scripts.get_revision("0002_event_extensions").down_revision == "0001_initial_schema"
+    command.upgrade(config, "0001_initial_schema")
+    event_id, quote_id, orphan_id, orphan_quote_id, user_id = [uuid4() for _ in range(5)]
 
     async def legacy_insert():
         engine = build_engine(database_url)
         try:
+            await insert_quotes(engine, [quote_id, orphan_quote_id])
             async with engine.begin() as connection:
+                for id_, quote, code in (
+                    (event_id, quote_id, "US18-LEGACY"),
+                    (orphan_id, orphan_quote_id, "US18-ORPHAN"),
+                ):
+                    await connection.execute(
+                        text(
+                            "INSERT INTO events (id, event_code, quote_id, event_date, start_time, "
+                            "end_time, address, district, status, total_services_amount, "
+                            "total_mobility_amount, final_total_amount, extra_hours_amount, "
+                            "pre_show_balance_paid) VALUES (:id, :code, "
+                            ":quote_id, '2026-10-15', '23:00', '00:00', 'Local', 'Lima', "
+                            "'IN_PROGRESS', 100, 0, 180, 80, 100)"
+                        ),
+                        {"id": id_, "quote_id": quote, "code": code},
+                    )
+                role_id = await connection.scalar(
+                    text(
+                        "INSERT INTO roles (code, name) "
+                        "VALUES ('ENCARGADO', 'Encargado') RETURNING id"
+                    )
+                )
                 await connection.execute(
                     text(
-                        "INSERT INTO events (id, event_code, quote_id, event_date, start_time, "
-                        "end_time, address, district, status, total_services_amount, "
-                        "total_mobility_amount, final_total_amount) VALUES (:id, 'US18-LEGACY', "
-                        "gen_random_uuid(), '2026-10-15', '23:00', '00:00', 'Local', 'Lima', "
-                        "'IN_PROGRESS', 100, 0, 100)"
+                        "INSERT INTO users (id, role_id, full_name, email, phone, hashed_password) "
+                        "VALUES (:id, :role, 'Test', 'legacy@example.test', 'legacy-test', 'test')"
                     ),
-                    {"id": event_id},
+                    {"id": user_id, "role": role_id},
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO payments "
+                        "(quote_id, event_id, concept, payment_method, amount, "
+                        "evidence_path, validation_status, audit_status, registered_by_user_id) "
+                        "VALUES (:quote, :event, 'EXTENSION', 'CASH', 80, 'evidence/legacy.png', "
+                        "'VERIFIED', 'UNREVIEWED', :user)"
+                    ),
+                    {"quote": orphan_quote_id, "event": orphan_id, "user": user_id},
                 )
         finally:
             await engine.dispose()
@@ -137,11 +173,29 @@ def test_migration_extends_previous_head_and_preserves_existing_events(database_
                 )
                 cols = await connection.run_sync(lambda conn: inspect(conn).get_columns("events"))
                 assert ("extra_minutes_total" in {col["name"] for col in cols}) is expected
+                assert ("legacy_extra_hours_amount" in {col["name"] for col in cols}) is expected
+                assert await connection.scalar(
+                    text("SELECT final_total_amount FROM events WHERE id=:id"), {"id": event_id}
+                ) == Decimal("180")
+                assert await connection.scalar(
+                    text("SELECT extra_hours_amount FROM events WHERE id=:id"), {"id": event_id}
+                ) == Decimal("80")
                 if expected:
                     assert (
                         await connection.scalar(
                             text("SELECT extra_minutes_total FROM events WHERE id=:id"),
                             {"id": event_id},
+                        )
+                        == 0
+                    )
+                    assert await connection.scalar(
+                        text("SELECT legacy_extra_hours_amount FROM events WHERE id=:id"),
+                        {"id": event_id},
+                    ) == Decimal("80")
+                    assert (
+                        await connection.scalar(
+                            text("SELECT legacy_extra_hours_amount FROM events WHERE id=:id"),
+                            {"id": orphan_id},
                         )
                         == 0
                     )
@@ -168,9 +222,28 @@ def test_migration_extends_previous_head_and_preserves_existing_events(database_
             await engine.dispose()
 
     asyncio.run(check(True))
-    command.downgrade(config, "0006_payments")
+    command.downgrade(config, "0001_initial_schema")
     asyncio.run(check(False))
     command.upgrade(config, "head")
+
+    async def settle_historical():
+        engine = build_engine(database_url)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with factory() as session:
+                with pytest.raises(ExtensionPaymentMismatchError):
+                    await SqlAlchemyEventRepository(session).get_verified_extension_totals(
+                        orphan_id
+                    )
+            async with factory() as session:
+                result = await SettleEventUseCase(
+                    SqlAlchemyEventRepository(session), FakeCrewScheduleReadAdapter()
+                ).execute(event_id, ScheduleActor(user_id, Role.ENCARGADO))
+                assert result.status is EventStatus.SETTLED
+        finally:
+            await engine.dispose()
+
+    asyncio.run(settle_historical())
 
 
 def test_real_api_payment_audit_and_settlement(database_url, tmp_path):
@@ -373,14 +446,15 @@ def test_concurrent_operations_serialize_without_lost_updates(
         factory = async_sessionmaker(engine, expire_on_commit=False)
         storage = storage_at(tmp_path)
         first_locked, second_query, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        queries, tasks = 0, []
+        tasks = []
 
         def observe(_conn, _cursor, statement, _parameters, _context, _executemany):
-            nonlocal queries
-            if "FOR UPDATE" in statement:
-                queries += 1
-                if queries == 2:
-                    second_query.set()
+            if (
+                len(tasks) > 1
+                and asyncio.current_task() is tasks[1]
+                and ("FOR UPDATE" in statement or "pg_advisory_xact_lock" in statement)
+            ):
+                second_query.set()
 
         try:
             event, actor = await seed_event(factory)
@@ -454,7 +528,9 @@ def test_concurrent_operations_serialize_without_lost_updates(
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("corruption", ["amount", "quote", "cached-minutes", "orphan"])
+@pytest.mark.parametrize(
+    "corruption", ["amount", "quote", "event", "concept", "nonverified", "cached-minutes", "orphan"]
+)
 def test_settlement_rejects_inconsistent_payments(database_url, tmp_path, corruption):
     run_migrations(database_url)
 
@@ -470,6 +546,12 @@ def test_settlement_rejects_inconsistent_payments(database_url, tmp_path, corrup
                     FakeCrewScheduleReadAdapter(),
                     FixedClock(),
                 ).execute(extension_input(event.id), actor)
+            wrong_quote = uuid4()
+            if corruption == "quote":
+                await insert_quotes(engine, [wrong_quote])
+            wrong_event = None
+            if corruption == "event":
+                wrong_event, _ = await seed_event(factory)
             async with factory() as session:
                 if corruption == "amount":
                     await session.execute(
@@ -481,13 +563,32 @@ def test_settlement_rejects_inconsistent_payments(database_url, tmp_path, corrup
                     await session.execute(
                         update(PaymentModel)
                         .where(PaymentModel.event_id == event.id)
-                        .values(quote_id=uuid4())
+                        .values(quote_id=wrong_quote)
                     )
                 elif corruption == "cached-minutes":
                     await session.execute(
                         update(EventModel)
                         .where(EventModel.id == event.id)
                         .values(extra_minutes_total=31)
+                    )
+                elif corruption == "event":
+                    await session.execute(
+                        update(PaymentModel)
+                        .where(PaymentModel.event_id == event.id)
+                        .values(event_id=wrong_event.id)
+                    )
+                elif corruption in {"concept", "nonverified"}:
+                    # El baseline solo permite estados no verificados en ADVANCE.
+                    await session.execute(
+                        update(PaymentModel)
+                        .where(PaymentModel.event_id == event.id)
+                        .values(
+                            concept="ADVANCE",
+                            audit_status=None,
+                            validation_status="PENDING_VERIFICATION"
+                            if corruption == "nonverified"
+                            else "VERIFIED",
+                        )
                     )
                 else:
                     await session.execute(

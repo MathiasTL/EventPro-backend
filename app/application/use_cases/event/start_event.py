@@ -10,13 +10,11 @@ from app.application.ports.output.event_repository_port import IEventRepositoryP
 from app.application.ports.output.pre_show_payment_verification_port import (
     IPreShowPaymentVerificationPort,
 )
+from app.application.use_cases.event.access_errors import (
+    EventAccessDeniedError as EventAccessDeniedError,
+)
+from app.application.use_cases.event.event_operation_access import authorize_event
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
-from app.domain.value_objects.role import Role
-
-
-class EventAccessDeniedError(PermissionError):
-    def __init__(self) -> None:
-        super().__init__("El operador requiere una asignación activa al evento para iniciarlo.")
 
 
 class StartEventUseCase:
@@ -33,10 +31,7 @@ class StartEventUseCase:
         self._clock = clock
 
     async def execute(self, event_id: UUID, actor: ScheduleActor) -> EventStartDTO:
-        if actor.role is Role.OPERADOR:
-            assigned = await self._crews.get_assigned_event_ids(actor.user_id)
-            if event_id not in assigned:
-                raise EventAccessDeniedError
+        await authorize_event(event_id, actor, self._crews, hide_unassigned=False)
         event = await self._events.get_by_id_for_update(event_id)
         if event is None:
             raise ResourceNotFoundError("El evento no existe.")
