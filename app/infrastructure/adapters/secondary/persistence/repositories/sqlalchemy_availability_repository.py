@@ -16,14 +16,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.value_objects.time_window import TimeWindow
-from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
-    InventoryReservationModel,
-)
 from app.infrastructure.adapters.secondary.persistence.models.catalog_models import (
     InventoryItemModel,
     PackageInventoryItemModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
+from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
+    InventoryReservationModel,
+)
 
 
 @dataclass(frozen=True)
