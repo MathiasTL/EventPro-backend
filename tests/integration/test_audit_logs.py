@@ -19,11 +19,12 @@ async def _request(
     path: str,
     *,
     json: dict[str, object] | None = None,
+    params: dict[str, object] | None = None,
     headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        return await client.request(method, path, json=json, headers=headers)
+        return await client.request(method, path, json=json, params=params, headers=headers)
 
 
 async def _seed_user(*, role: str) -> str:
