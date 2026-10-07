@@ -25,7 +25,7 @@ from app.infrastructure.di.containers import get_crew_schedule_read_port
 from app.main import create_app
 from tests.event_support import make_event
 
-from ._support import run_migrations
+from ._support import insert_quotes, run_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -45,6 +45,7 @@ def test_schedule_sql_filters_and_http(database_url: str) -> None:
         ]
         app = create_app()
         try:
+            await insert_quotes(engine, [event.quote_id for event in events])
             async with factory() as session:
                 session.add_all([event_to_model(event) for event in reversed(events)])
                 await session.commit()

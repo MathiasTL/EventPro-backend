@@ -1,4 +1,4 @@
-"""Migración incremental, endpoint real, rollback e inicios concurrentes."""
+"""Columna de inicio real, endpoint real, rollback e inicios concurrentes."""
 
 import asyncio
 from datetime import timedelta
@@ -7,13 +7,10 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from alembic import command
 from app.application.dtos.event_schedule_dto import ScheduleActor
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.core.config import get_settings
@@ -40,74 +37,51 @@ from app.main import create_app
 from tests.event_support import make_event
 from tests.start_event_support import STARTED_AT, FixedClock, RecordingPayments
 
-from ._support import run_migrations
+from ._support import insert_quotes, run_migrations
 
 pytestmark = pytest.mark.integration
 
 
-def test_actual_start_migration_preserves_existing_rows(database_url: str) -> None:
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url)
-    scripts = ScriptDirectory.from_config(config)
-    assert len(scripts.get_heads()) == 1
-    assert scripts.get_revision("0005_event_actual_start_time").down_revision == "0004_events"
-    command.upgrade(config, "0004_events")
+def test_actual_start_time_column_is_nullable_utc_without_default(database_url: str) -> None:
+    run_migrations(database_url)
     event_id = uuid4()
+    quote_id = uuid4()
 
-    async def seed_legacy() -> None:
+    async def exercise() -> None:
         engine = build_engine(database_url)
         try:
+            await insert_quotes(engine, [quote_id])
             async with engine.begin() as connection:
+                columns = await connection.run_sync(
+                    lambda conn: inspect(conn).get_columns("events")
+                )
+                actual = [column for column in columns if column["name"] == "actual_start_time"]
+                assert len(actual) == 1
+                assert actual[0]["nullable"] is True
+                assert actual[0]["default"] is None
+                assert actual[0]["type"].timezone is True
                 await connection.execute(
                     text(
                         "INSERT INTO events (id, event_code, quote_id, event_date, "
                         "start_time, end_time, "
                         "address, district, status, total_services_amount, total_mobility_amount, "
-                        "final_total_amount) VALUES (:id, 'EVT-LEGACY', gen_random_uuid(), "
+                        "final_total_amount) VALUES (:id, 'EVT-LEGACY', :quote_id, "
                         "'2026-10-15', '21:30', '22:30', 'Local', 'Miraflores', "
                         "'IN_PROGRESS', 980, 100.50, 1080.50)"
                     ),
-                    {"id": event_id},
+                    {"id": event_id, "quote_id": quote_id},
                 )
-        finally:
-            await engine.dispose()
-
-    asyncio.run(seed_legacy())
-    command.upgrade(config, "0005_event_actual_start_time")
-
-    async def inspect_column(expected: bool) -> None:
-        engine = build_engine(database_url)
-        try:
-            async with engine.connect() as connection:
-                columns = await connection.run_sync(
-                    lambda conn: inspect(conn).get_columns("events")
-                )
-                actual = [column for column in columns if column["name"] == "actual_start_time"]
-                assert bool(actual) is expected
-                if expected:
-                    assert actual[0]["nullable"] is True
-                    assert actual[0]["default"] is None
-                    assert actual[0]["type"].timezone is True
-                    assert (
-                        await connection.scalar(
-                            text("SELECT actual_start_time FROM events WHERE id = :id"),
-                            {"id": event_id},
-                        )
-                        is None
-                    )
                 assert (
                     await connection.scalar(
-                        text("SELECT status FROM events WHERE id = :id"), {"id": event_id}
+                        text("SELECT actual_start_time FROM events WHERE id = :id"),
+                        {"id": event_id},
                     )
-                    == "IN_PROGRESS"
+                    is None
                 )
         finally:
             await engine.dispose()
 
-    asyncio.run(inspect_column(True))
-    command.downgrade(config, "0004_events")
-    asyncio.run(inspect_column(False))
-    command.upgrade(config, "0005_event_actual_start_time")
+    asyncio.run(exercise())
 
 
 def test_start_api_persists_state_balance_and_utc(database_url: str) -> None:
@@ -124,6 +98,7 @@ def test_start_api_persists_state_balance_and_utc(database_url: str) -> None:
         ]
         app = create_app()
         try:
+            await insert_quotes(engine, [event.quote_id for event in events])
             async with factory() as session:
                 session.add_all([event_to_model(event) for event in events])
                 await session.commit()
@@ -199,6 +174,7 @@ def test_failed_commit_rolls_back_entire_start_and_releases_lock(database_url: s
         actor = ScheduleActor(uuid4(), Role.ENCARGADO)
         payments = RecordingPayments({event.id: Money(Decimal("980.50"))})
         try:
+            await insert_quotes(engine, [event.quote_id])
             async with factory() as session:
                 session.add(event_to_model(event))
                 await session.commit()
@@ -285,6 +261,7 @@ def test_concurrent_starts_have_one_winner_and_one_payment_check(database_url: s
 
         tasks = []
         try:
+            await insert_quotes(engine, [event.quote_id])
             async with factory() as session:
                 session.add(event_to_model(event))
                 await session.commit()

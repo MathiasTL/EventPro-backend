@@ -22,7 +22,7 @@ class AuditLog(Base):
     id: Mapped[UUID] = mapped_column(
         Uuid, primary_key=True, server_default=text("gen_random_uuid()")
     )
-    user_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    user_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), index=True)
     action: Mapped[str] = mapped_column(String(50))
     entity_name: Mapped[str] = mapped_column(String(50))
     entity_id: Mapped[UUID] = mapped_column(Uuid)

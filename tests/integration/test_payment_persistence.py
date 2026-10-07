@@ -1,4 +1,4 @@
-"""Esquema payments sobre PostgreSQL 16: integridad, FK a events/users y reversibilidad."""
+"""Esquema payments sobre PostgreSQL 16: integridad, FK a quotes/events/users y reversibilidad."""
 
 import asyncio
 from decimal import Decimal
@@ -27,6 +27,8 @@ from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_p
     SqlAlchemyPaymentRepository,
 )
 
+from ._support import insert_quotes
+
 pytestmark = pytest.mark.integration
 
 
@@ -47,8 +49,7 @@ def test_payments_upgrade_constraints_and_downgrade(database_url: str) -> None:
     config.set_main_option("sqlalchemy.url", database_url)
     scripts = ScriptDirectory.from_config(config)
     assert len(scripts.get_heads()) == 1
-    assert scripts.get_revision("0006_payments").down_revision == "0005_event_actual_start_time"
-    command.upgrade(config, "0005_event_actual_start_time")
+    assert scripts.get_revision("0001_initial_schema").down_revision is None
     command.upgrade(config, "head")
 
     async def exercise() -> None:
@@ -82,14 +83,17 @@ def test_payments_upgrade_constraints_and_downgrade(database_url: str) -> None:
                     lambda conn: inspect(conn).get_foreign_keys("payments")
                 )
                 referred = {fk["referred_table"] for fk in foreign_keys}
-                assert {"events", "users"} <= referred
-                assert "quotes" not in referred
+                assert {"quotes", "events", "users"} <= referred
+            default_quote_id = uuid4()
+            await insert_quotes(engine, [default_quote_id])
+            async with engine.begin() as connection:
                 result = await connection.execute(
                     text(
                         "INSERT INTO payments (quote_id, concept, payment_method, amount, "
-                        "evidence_path) VALUES (gen_random_uuid(), 'ADVANCE', 'YAPE', 100.00, "
+                        "evidence_path) VALUES (:quote_id, 'ADVANCE', 'YAPE', 100.00, "
                         "'evidence/receipt.png') RETURNING *"
-                    )
+                    ),
+                    {"quote_id": default_quote_id},
                 )
                 row = result.mappings().one()
                 assert row["validation_status"] == "PENDING_VERIFICATION"
@@ -98,6 +102,7 @@ def test_payments_upgrade_constraints_and_downgrade(database_url: str) -> None:
 
             factory = async_sessionmaker(engine, expire_on_commit=False)
             original = _advance()
+            await insert_quotes(engine, [original.quote_id])
             async with factory() as session:
                 session.add(payment_to_model(original))
                 await session.commit()
@@ -114,9 +119,13 @@ def test_payments_upgrade_constraints_and_downgrade(database_url: str) -> None:
                 {"concept": "INVALID"},
                 {"amount": Decimal("0.00")},
                 {"audit_status": "REVIEWED"},
+                {"quote_id": uuid4()},
             ):
+                candidate = _advance()
+                if "quote_id" not in changes:
+                    await insert_quotes(engine, [candidate.quote_id])
                 async with factory() as session:
-                    row = payment_to_model(_advance())
+                    row = payment_to_model(candidate)
                     for key, value in changes.items():
                         setattr(row, key, value)
                     session.add(row)
@@ -127,7 +136,7 @@ def test_payments_upgrade_constraints_and_downgrade(database_url: str) -> None:
             await engine.dispose()
 
     asyncio.run(exercise())
-    command.downgrade(config, "0005_event_actual_start_time")
+    command.downgrade(config, "base")
 
     async def check_removed() -> None:
         engine = build_engine(database_url)
@@ -137,8 +146,8 @@ def test_payments_upgrade_constraints_and_downgrade(database_url: str) -> None:
                     lambda conn: inspect(conn).has_table("payments")
                 )
                 assert not has_payments
-                assert await connection.run_sync(lambda conn: inspect(conn).has_table("events"))
-                assert await connection.run_sync(lambda conn: inspect(conn).has_table("users"))
+                assert not await connection.run_sync(lambda conn: inspect(conn).has_table("events"))
+                assert not await connection.run_sync(lambda conn: inspect(conn).has_table("users"))
         finally:
             await engine.dispose()
 

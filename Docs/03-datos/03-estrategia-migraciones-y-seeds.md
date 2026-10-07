@@ -14,26 +14,23 @@ Para la evolución del esquema en PostgreSQL, EventPro utiliza **Alembic**, la h
    Actualizar y comprobar nuevamente antes de integrar; no modificar revisiones
    ya fusionadas ni generar una segunda rama de migraciones.
 
-### US-16 — tabla base `events`
-`0004_events` parte de `0003_auth_audit_tables`. Se generó con autogenerate contra
-PostgreSQL 16 y se revisó manualmente. Su downgrade elimina únicamente `events`
-y sus índices. No requiere seeds.
+### 1.2 Esquema base `0001_initial_schema`
+El historial de migraciones parte de una única revisión base, `0001_initial_schema` (`down_revision = None`), que crea las 21 tablas documentadas en el [Diccionario de Datos](02-diccionario-de-datos.md) —todas salvo `event_extensions`, ver más abajo— junto con sus claves foráneas, índices y restricciones `CHECK`. Incluye, entre otras, `clients`, `quotes`, `quote_extras`, `inventory_reservations`, `contracts`, `crew_assignments`, `outbox_messages` y `conversation_links`, de modo que cada épica construye sobre tablas ya existentes.
 
-La FK `events.quote_id -> quotes.id` queda pendiente de la integración de E1:
-`quote_id` conserva NOT NULL y UNIQUE. Antes de añadir la FK en una revisión
-posterior, comprobar y resolver referencias huérfanas; no crear cotizaciones
-ficticias ni modificar esta revisión después de fusionarla. Los fakes del
-cronograma no escriben datos en PostgreSQL.
+Particularidades del esquema base:
+* `events.quote_id` y `payments.quote_id` tienen FOREIGN KEY a `quotes.id`; ya no quedan FK diferidas.
+* `conversation_links` se crea después de `users`, `clients` y `quotes`, con su índice único sobre `chatwoot_conversation_id`, el índice sobre `client_id`, el índice parcial sobre `assigned_user_id` y la restricción `CHECK` de `handoff_reason`. No requiere datos semilla: los vínculos se crean en tiempo de ejecución cuando llega la primera conversación de un cliente.
+* El correo de `users` es único sin distinguir mayúsculas (índice único sobre `lower(email)`).
+* Toda columna con clave foránea tiene índice (propio o como primera columna de un índice compuesto o único).
+* Los importes de `events` son no negativos y `end_time <> start_time`.
+* `downgrade()` elimina todas las tablas en orden inverso al de creación.
 
-### US-17 — inicio real del evento
-`0005_event_actual_start_time` parte de `0004_events`, se genera con autogenerate
-y añade `events.actual_start_time TIMESTAMPTZ`, nullable y sin default. No se
-rellenan horas históricas. El downgrade elimina solo esa columna, conservando
-los eventos. Se mantiene la ausencia temporal de FK a `quotes` y no se crean
-tablas de pagos. Comprobar el head de develop antes de generar e integrar.
+`alembic/env.py` compara también los valores por defecto del servidor (`compare_server_default`) y omite en el autogenerate las tablas que existen en la base pero aún no tienen modelo ORM, para que `alembic check` no proponga eliminarlas. Las tablas con modelo se comparan con normalidad.
 
-### 1.2 Migración de `conversation_links`
-La tabla `conversation_links` (ADR-10) se crea en una migración incremental posterior a las de `users`, `clients` y `quotes`, porque contiene claves foráneas hacia las tres (`assigned_user_id`, `client_id` y `quote_id`). La migración debe crear también el índice único sobre `chatwoot_conversation_id`, el índice sobre `client_id`, el índice parcial sobre `assigned_user_id` y la restricción `CHECK` de `handoff_reason`, y su `downgrade()` elimina la tabla. No requiere datos semilla: los vínculos se crean en tiempo de ejecución cuando llega la primera conversación de un cliente.
+### 1.3 Excepción única de consolidación (2026-10-07)
+El 2026-10-07 se reemplazó la cadena incremental `0001`–`0006` por `0001_initial_schema`. Fue una **excepción única** a la regla de inmutabilidad (sección 1.1, regla 1): no existe ninguna base de datos desplegada ni compartida con datos que deba conservarse, por lo que reescribir el historial no tiene costo operativo. Quien tenga una base local creada con las revisiones anteriores debe recrearla (`docker compose down -v` y `alembic upgrade head`).
+
+**Desde esta consolidación la regla 1 vuelve a regir sin excepciones:** `0001_initial_schema` no se modifica una vez fusionada y cualquier cambio de esquema se aplica con una nueva revisión que parte de ella. La siguiente revisión encadena desde `0001_initial_schema`. En particular, la migración de `event_extensions` (y de `events.extra_minutes_total`) del PR #15 debe rebasarse sobre esta revisión: su `down_revision` pasa a ser `"0001_initial_schema"`.
 
 ---
 
