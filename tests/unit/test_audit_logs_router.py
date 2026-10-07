@@ -14,6 +14,7 @@ from app.domain.entities.audit_log import AuditLog
 from app.domain.value_objects.role import Role
 from app.infrastructure.di import containers
 from app.main import create_app
+from tests.auth_support import install, set_role
 
 PATH = "/api/v1/audit-logs"
 USER_ID = uuid4()
@@ -75,6 +76,7 @@ class FakeAuditLogRepository:
 
 
 def authorization(role: Role = Role.SUPERADMIN) -> dict[str, str]:
+    set_role(role)
     token = create_access_token(
         subject=str(USER_ID), role=role.value, secret_key=get_settings().secret_key
     )
@@ -84,6 +86,7 @@ def authorization(role: Role = Role.SUPERADMIN) -> dict[str, str]:
 @pytest.fixture
 def web_app() -> Iterator[FastAPI]:
     app = create_app()
+    install(app)
     repo = FakeAuditLogRepository()
     for minutes, action in (
         (0, "OVERRIDE_MOBILITY"),

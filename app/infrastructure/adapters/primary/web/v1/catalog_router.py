@@ -19,6 +19,7 @@ from app.application.dtos.catalog_dto import (
 )
 from app.application.ports.output.catalog_admin_port import ICatalogAdminPort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
+from app.application.ports.output.user_repository_port import IUserRepositoryPort
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
 from app.core.config import Settings, get_settings
 from app.core.security import decode_access_token
@@ -59,18 +60,28 @@ _BEARER_PREFIX = "Bearer "
 
 async def optional_auth_context(
     settings: Annotated[Settings, Depends(get_settings)],
+    users: Annotated[IUserRepositoryPort, Depends(containers.get_user_repository)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> AuthContext | None:
-    """Contexto opcional para los lectores públicos del catálogo."""
+    """Contexto opcional para los lectores públicos del catálogo.
 
+    Una sesión válida se contrasta con la cuenta vigente: el rol que decide la
+    visibilidad de ``direct_cost`` es el actual de la base de datos, no el claim
+    del JWT. Sin cabecera, con token inválido o con cuenta inexistente/desactivada
+    se atiende como anónimo.
+    """
     if not authorization or not authorization.startswith(_BEARER_PREFIX):
         return None
     token = authorization[len(_BEARER_PREFIX) :].strip()
     try:
         payload = decode_access_token(token, settings.secret_key)
-        return AuthContext(user_id=UUID(str(payload["sub"])), role=Role(str(payload["role"])))
+        user_id = UUID(str(payload["sub"]))
     except Exception:  # noqa: BLE001 - sesión inválida: se atiende como anónimo
         return None
+    user = await users.get_by_id(user_id)
+    if user is None or not user.is_active:
+        return None
+    return AuthContext(user_id=user_id, role=user.role)
 
 
 def _is_staff(context: AuthContext | None) -> bool:

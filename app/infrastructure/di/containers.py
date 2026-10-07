@@ -52,6 +52,10 @@ from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCas
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
 from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
 from app.application.use_cases.quote.register_manual_booking import RegisterManualBookingUseCase
+from app.application.use_cases.users.create_user import CreateUserUseCase
+from app.application.use_cases.users.get_user import GetUserUseCase
+from app.application.use_cases.users.list_users import ListUsersUseCase
+from app.application.use_cases.users.update_user import UpdateUserUseCase
 from app.core.config import get_settings
 from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
 from app.domain.services.inventory_availability import InventoryAvailabilityService
@@ -166,6 +170,26 @@ def get_refresh_use_case() -> RefreshUseCase:
 @lru_cache
 def get_logout_use_case() -> LogoutUseCase:
     return LogoutUseCase(get_refresh_token_repository())
+
+
+@lru_cache
+def get_list_users_use_case() -> ListUsersUseCase:
+    return ListUsersUseCase(get_user_repository())
+
+
+@lru_cache
+def get_create_user_use_case() -> CreateUserUseCase:
+    return CreateUserUseCase(get_user_repository())
+
+
+@lru_cache
+def get_get_user_use_case() -> GetUserUseCase:
+    return GetUserUseCase(get_user_repository())
+
+
+@lru_cache
+def get_update_user_use_case() -> UpdateUserUseCase:
+    return UpdateUserUseCase(get_user_repository())
 
 
 @lru_cache
@@ -370,6 +394,10 @@ def clear_application_caches() -> None:
     get_login_use_case.cache_clear()
     get_refresh_use_case.cache_clear()
     get_logout_use_case.cache_clear()
+    get_list_users_use_case.cache_clear()
+    get_create_user_use_case.cache_clear()
+    get_get_user_use_case.cache_clear()
+    get_update_user_use_case.cache_clear()
     get_audit_log_port.cache_clear()
     get_audit_service.cache_clear()
     get_list_audit_logs_use_case.cache_clear()

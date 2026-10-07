@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import date, time
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 import pytest
@@ -21,11 +21,14 @@ from app.infrastructure.adapters.secondary.persistence.mappers.event_mapper impo
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_repository,
 )
-from app.infrastructure.di.containers import get_crew_schedule_read_port
+from app.infrastructure.adapters.secondary.persistence.user_repository import (
+    SQLAlchemyUserRepository,
+)
+from app.infrastructure.di import containers
 from app.main import create_app
 from tests.event_support import make_event
 
-from ._support import insert_quotes, run_migrations
+from ._support import insert_quotes, insert_user, run_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -83,23 +86,28 @@ def test_schedule_sql_filters_and_http(database_url: str) -> None:
                 async with factory() as session:
                     yield session
 
-            user_id = uuid4()
+            encargado_id = await insert_user(engine, "ENCARGADO")
+            superadmin_id = await insert_user(engine, "SUPERADMIN")
+            operador_id = await insert_user(engine, "OPERADOR")
             app.dependency_overrides[get_session] = session_override
-            app.dependency_overrides[get_crew_schedule_read_port] = lambda: (
+            app.dependency_overrides[containers.get_user_repository] = lambda: (
+                SQLAlchemyUserRepository(factory)
+            )
+            app.dependency_overrides[containers.get_crew_schedule_read_port] = lambda: (
                 FakeCrewScheduleReadAdapter(
-                    assigned_events_by_user={user_id: frozenset({events[2].id})}
+                    assigned_events_by_user={operador_id: frozenset({events[2].id})}
                 )
             )
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as client:
-                for role, expected in (
-                    (Role.ENCARGADO, [1, 2]),
-                    (Role.SUPERADMIN, [1, 2]),
-                    (Role.OPERADOR, [2]),
+                for role, subject, expected in (
+                    (Role.ENCARGADO, encargado_id, [1, 2]),
+                    (Role.SUPERADMIN, superadmin_id, [1, 2]),
+                    (Role.OPERADOR, operador_id, [2]),
                 ):
                     token = create_access_token(
-                        subject=str(user_id), role=role.value, secret_key=get_settings().secret_key
+                        subject=str(subject), role=role.value, secret_key=get_settings().secret_key
                     )
                     response = await client.get(
                         "/api/v1/events/schedule",

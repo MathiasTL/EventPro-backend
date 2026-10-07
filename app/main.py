@@ -19,6 +19,7 @@ from app.infrastructure.adapters.primary.web.v1 import (
     manual_bookings_router,
     overrides_router,
     payments_router,
+    users_router,
 )
 from app.infrastructure.di.containers import shutdown_infrastructure
 
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     install_rate_limit(application)
     application.include_router(health_router.router)
     application.include_router(auth_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(users_router.router, prefix=settings.api_v1_prefix)
     application.include_router(events_router.router, prefix=settings.api_v1_prefix)
     application.include_router(catalog_router.router, prefix=settings.api_v1_prefix)
     application.include_router(crew_router.router, prefix=settings.api_v1_prefix)

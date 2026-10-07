@@ -21,6 +21,7 @@ from app.infrastructure.adapters.secondary.storage.local_evidence_storage import
 )
 from app.infrastructure.di import containers
 from app.main import create_app
+from tests.auth_support import install, set_role
 from tests.event_support import make_event
 from tests.extension_support import PNG_BYTES, FakeExtensionRepository
 from tests.start_event_support import FixedClock
@@ -29,6 +30,7 @@ USER_ID = uuid4()
 
 
 def auth(role=Role.ENCARGADO, expires=60):
+    set_role(role)
     token = create_access_token(
         subject=str(USER_ID),
         role=role.value,
@@ -47,6 +49,7 @@ def setup(tmp_path):
     storage = LocalEvidenceStorage(tmp_path, allowed_mime={"image/jpeg", "image/png", "image/webp"})
     crews = FakeCrewScheduleReadAdapter(assigned_events_by_user={USER_ID: frozenset({event.id})})
     app = create_app()
+    install(app)
     app.dependency_overrides[containers.get_register_event_extension_use_case] = lambda: (
         RegisterEventExtensionUseCase(repo, storage, crews, FixedClock())
     )
