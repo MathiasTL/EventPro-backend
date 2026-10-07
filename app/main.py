@@ -10,7 +10,11 @@ from app.core.logging import configure_logging
 from app.infrastructure.adapters.primary.web import auth_router, health_router
 from app.infrastructure.adapters.primary.web.problem import install_exception_handlers
 from app.infrastructure.adapters.primary.web.rate_limit import install_rate_limit
-from app.infrastructure.adapters.primary.web.v1 import events_router, payments_router
+from app.infrastructure.adapters.primary.web.v1 import (
+    audit_logs_router,
+    events_router,
+    payments_router,
+)
 from app.infrastructure.di.containers import shutdown_infrastructure
 
 SECURITY_HEADERS = {
@@ -59,6 +63,7 @@ def create_app() -> FastAPI:
     application.include_router(auth_router.router, prefix=settings.api_v1_prefix)
     application.include_router(events_router.router, prefix=settings.api_v1_prefix)
     application.include_router(payments_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(audit_logs_router.router, prefix=settings.api_v1_prefix)
     return application
 
 
