@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import Select, func, select
@@ -9,6 +10,16 @@ from app.domain.entities.audit_log import AuditLog
 from app.infrastructure.adapters.secondary.persistence.models.audit_log import (
     AuditLog as AuditLogModel,
 )
+
+
+def _day_start(day: date) -> datetime:
+    """Primer instante (UTC) del día indicado."""
+    return datetime.combine(day, time.min, tzinfo=UTC)
+
+
+def _day_end(day: date) -> datetime:
+    """Primer instante (UTC) del día siguiente: límite exclusivo de `to_date`."""
+    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=UTC)
 
 
 class SQLAlchemyAuditLogAdapter:
@@ -58,9 +69,9 @@ class SQLAlchemyAuditLogAdapter:
         if filters.user_id is not None:
             stmt = stmt.where(AuditLogModel.user_id == filters.user_id)
         if filters.from_date is not None:
-            stmt = stmt.where(AuditLogModel.created_at >= filters.from_date)
+            stmt = stmt.where(AuditLogModel.created_at >= _day_start(filters.from_date))
         if filters.to_date is not None:
-            stmt = stmt.where(AuditLogModel.created_at <= filters.to_date)
+            stmt = stmt.where(AuditLogModel.created_at < _day_end(filters.to_date))
         return stmt
 
     @staticmethod

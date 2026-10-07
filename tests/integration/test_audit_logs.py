@@ -1,6 +1,7 @@
 """Lectura de la bitácora de auditoría E2E contra PostgreSQL real (testcontainers)."""
 
 import uuid
+from datetime import datetime, timedelta
 
 import httpx
 from httpx import ASGITransport
@@ -101,6 +102,37 @@ async def test_written_entry_is_readable_and_filtered(infra: None) -> None:
     assert filtered.status_code == 200
     assert filtered.json()["total"] == 1
     assert filtered.json()["items"][0]["id"] == str(entry.id)
+
+    entry_day = datetime.fromisoformat(match["created_at"]).date()
+    same_day = await _request(
+        "GET",
+        "/api/v1/audit-logs",
+        params={
+            "entity_id": str(entity_id),
+            "from_date": str(entry_day),
+            "to_date": str(entry_day),
+        },
+        headers=auth,
+    )
+    assert same_day.status_code == 200, same_day.text
+    assert same_day.json()["total"] == 1
+    assert same_day.json()["items"][0]["id"] == str(entry.id)
+
+    next_day = await _request(
+        "GET",
+        "/api/v1/audit-logs",
+        params={"entity_id": str(entity_id), "from_date": str(entry_day + timedelta(days=1))},
+        headers=auth,
+    )
+    assert next_day.json()["total"] == 0
+
+    previous_day = await _request(
+        "GET",
+        "/api/v1/audit-logs",
+        params={"entity_id": str(entity_id), "to_date": str(entry_day - timedelta(days=1))},
+        headers=auth,
+    )
+    assert previous_day.json()["total"] == 0
 
     empty = await _request(
         "GET", "/api/v1/audit-logs", params={"entity_name": "cotizaciones"}, headers=auth

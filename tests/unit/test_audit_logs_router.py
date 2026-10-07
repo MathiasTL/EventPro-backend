@@ -66,9 +66,11 @@ class FakeAuditLogRepository:
         if filters.user_id is not None:
             rows = [row for row in rows if row.user_id == filters.user_id]
         if filters.from_date is not None:
-            rows = [row for row in rows if row.created_at >= filters.from_date]
+            rows = [
+                row for row in rows if row.created_at.astimezone(UTC).date() >= filters.from_date
+            ]
         if filters.to_date is not None:
-            rows = [row for row in rows if row.created_at <= filters.to_date]
+            rows = [row for row in rows if row.created_at.astimezone(UTC).date() <= filters.to_date]
         return rows
 
 
@@ -148,6 +150,39 @@ async def test_filters_narrow_the_result(web_app: FastAPI) -> None:
     assert by_action.json()["total"] == 1
     assert by_action.json()["items"][0]["action"] == "AUDIT_PAYMENT"
     assert by_entity.json()["total"] == 0
+
+
+async def test_date_range_covers_whole_days(web_app: FastAPI) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=web_app), base_url="http://test"
+    ) as client:
+        same_day = await client.get(
+            PATH,
+            params={"from_date": "2026-10-01", "to_date": "2026-10-01"},
+            headers=authorization(),
+        )
+        next_day = await client.get(
+            PATH, params={"from_date": "2026-10-02"}, headers=authorization()
+        )
+        previous_day = await client.get(
+            PATH, params={"to_date": "2026-09-30"}, headers=authorization()
+        )
+    assert same_day.status_code == 200
+    assert same_day.json()["total"] == 3
+    assert next_day.json()["total"] == 0
+    assert previous_day.json()["total"] == 0
+
+
+async def test_invalid_date_is_rejected(web_app: FastAPI) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=web_app), base_url="http://test"
+    ) as client:
+        impossible = await client.get(
+            PATH, params={"from_date": "2026-02-30"}, headers=authorization()
+        )
+        malformed = await client.get(PATH, params={"to_date": "ayer"}, headers=authorization())
+    assert impossible.status_code == 422
+    assert malformed.status_code == 422
 
 
 async def test_pagination_slices_and_keeps_total(web_app: FastAPI) -> None:

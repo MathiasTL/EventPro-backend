@@ -1,6 +1,6 @@
 """Router HTTP de la bitácora de auditoría (US-24): solo lectura."""
 
-from datetime import datetime
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
@@ -27,8 +27,8 @@ async def list_audit_logs(
     entity_name: Annotated[str | None, Query(max_length=50)] = None,
     entity_id: Annotated[UUID | None, Query()] = None,
     user_id: Annotated[UUID | None, Query()] = None,
-    from_date: Annotated[datetime | None, Query()] = None,
-    to_date: Annotated[datetime | None, Query()] = None,
+    from_date: Annotated[date | None, Query()] = None,
+    to_date: Annotated[date | None, Query()] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> AuditLogPageResponse:

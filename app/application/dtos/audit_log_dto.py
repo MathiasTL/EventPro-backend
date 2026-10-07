@@ -1,7 +1,7 @@
 """Contratos de aplicación para la bitácora de auditoría (US-24)."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 
@@ -11,8 +11,8 @@ class AuditLogFilters:
     entity_name: str | None = None
     entity_id: UUID | None = None
     user_id: UUID | None = None
-    from_date: datetime | None = None
-    to_date: datetime | None = None
+    from_date: date | None = None
+    to_date: date | None = None
     page: int = 1
     page_size: int = 20
 
