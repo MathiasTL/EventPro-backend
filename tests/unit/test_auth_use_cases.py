@@ -41,10 +41,20 @@ class FakeRefreshTokenRepository:
     async def get_by_hash(self, token_hash: str) -> RefreshToken | None:
         return self._tokens.get(token_hash)
 
-    async def revoke(self, token_hash: str) -> None:
+    async def revoke(self, token_hash: str) -> bool:
         record = self._tokens.get(token_hash)
-        if record is not None:
-            record.is_revoked = True
+        if record is None or record.is_revoked:
+            return False
+        record.is_revoked = True
+        return True
+
+    async def rotate(self, old_token_hash: str, new_token: RefreshToken, now: datetime) -> bool:
+        record = self._tokens.get(old_token_hash)
+        if record is None or not record.is_valid(now):
+            return False
+        record.is_revoked = True
+        self._tokens[new_token.token_hash] = new_token
+        return True
 
 
 def make_user(
@@ -169,6 +179,31 @@ async def test_refresh_rejects_revoked_token() -> None:
     )
     with pytest.raises(InvalidCredentialsError):
         await refresh.execute(issued.refresh_token)
+
+
+async def test_refresh_fails_when_rotation_loses_a_concurrent_revocation() -> None:
+    """Si el token se revoca entre la lectura y la rotación, no se emite sesión."""
+
+    class RevokedDuringRefresh(FakeRefreshTokenRepository):
+        async def rotate(self, old_token_hash: str, new_token: RefreshToken, now: datetime) -> bool:
+            await self.revoke(old_token_hash)  # el PATCH confirma justo antes
+            return await super().rotate(old_token_hash, new_token, now)
+
+    user = make_user()
+    users = FakeUserRepository([user])
+    tokens = RevokedDuringRefresh()
+    issued = await make_login(users, tokens).execute(user.email, PASSWORD)
+
+    refresh = RefreshUseCase(
+        users,
+        tokens,
+        secret_key=SECRET,
+        access_expire_minutes=60,
+        refresh_expire_days=7,
+    )
+    with pytest.raises(InvalidCredentialsError):
+        await refresh.execute(issued.refresh_token)
+    assert len(tokens._tokens) == 1  # no se persistió un token nuevo
 
 
 async def test_refresh_rejects_expired_token() -> None:

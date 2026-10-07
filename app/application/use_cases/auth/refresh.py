@@ -4,7 +4,7 @@ from app.application.ports.output.refresh_token_repository_port import IRefreshT
 from app.application.ports.output.user_repository_port import IUserRepositoryPort
 from app.application.use_cases.auth.dto import AuthSession
 from app.application.use_cases.auth.errors import InvalidCredentialsError, UserInactiveError
-from app.application.use_cases.auth.issuer import issue_session
+from app.application.use_cases.auth.issuer import build_session
 from app.core.security import hash_refresh_token
 
 
@@ -33,11 +33,15 @@ class RefreshUseCase:
             raise InvalidCredentialsError
         if not user.is_active:
             raise UserInactiveError
-        await self._tokens.revoke(record.token_hash)
-        return await issue_session(
-            self._tokens,
+        session, new_record = build_session(
             user,
             secret_key=self._secret_key,
             access_expire_minutes=self._access_expire_minutes,
             refresh_expire_days=self._refresh_expire_days,
         )
+        # Revocación del anterior + alta del nuevo en una transacción serializada con
+        # las mutaciones del usuario: un PATCH concurrente (cambio de contraseña,
+        # desactivación) no puede dejar un refresh token nuevo sin revocar.
+        if not await self._tokens.rotate(record.token_hash, new_record, datetime.now(UTC)):
+            raise InvalidCredentialsError
+        return session

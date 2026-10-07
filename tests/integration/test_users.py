@@ -217,6 +217,59 @@ async def test_deactivating_user_revokes_refresh_tokens(infra: None) -> None:
     assert refreshed.status_code == 401
 
 
+async def test_refresh_concurrent_with_patch_cannot_survive_revocation(infra: None) -> None:
+    """Un refresh en vuelo mientras el PATCH revoca no puede dejar un token vigente."""
+    superadmin = await _headers_for(await _seed_user(role="SUPERADMIN"))
+    operator_email = await _seed_user(role="OPERADOR")
+    login = await _login(operator_email)
+    assert login.status_code == 200, login.text
+    refresh_token = login.json()["refresh_token"]
+    operator = await _find_by_email(operator_email, superadmin)
+    assert operator is not None
+    user_id = UUID(str(operator["id"]))
+
+    # Replica el PATCH: bloquea la fila del usuario y revoca sus tokens, pero retrasa
+    # el commit para que el refresh ya haya leído el token como vigente.
+    async with get_sessionmaker()() as patch_session:
+        await patch_session.execute(
+            text("SELECT id FROM users WHERE id = :id FOR UPDATE"), {"id": user_id}
+        )
+        await patch_session.execute(
+            text("UPDATE refresh_tokens SET is_revoked = true WHERE user_id = :id"),
+            {"id": user_id},
+        )
+        refresh_task = asyncio.create_task(
+            _request("POST", "/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+        )
+        await asyncio.sleep(0.5)  # el refresh queda esperando el bloqueo de la fila
+        assert not refresh_task.done()
+        await patch_session.commit()
+
+    refreshed = await refresh_task
+
+    assert refreshed.status_code == 401
+    async with get_sessionmaker()() as session:
+        active_tokens = await session.scalar(
+            text("SELECT count(*) FROM refresh_tokens WHERE user_id = :id AND NOT is_revoked"),
+            {"id": user_id},
+        )
+    assert active_tokens == 0
+
+
+async def test_refresh_rotation_is_single_use_under_concurrency(infra: None) -> None:
+    email = await _seed_user(role="OPERADOR")
+    login = await _login(email)
+    assert login.status_code == 200, login.text
+    body = {"refresh_token": login.json()["refresh_token"]}
+
+    first, second = await asyncio.gather(
+        _request("POST", "/api/v1/auth/refresh", json=body),
+        _request("POST", "/api/v1/auth/refresh", json=body),
+    )
+
+    assert sorted([first.status_code, second.status_code]) == [200, 401]
+
+
 async def test_superadmin_cannot_disable_or_demote_self(infra: None) -> None:
     email = await _seed_user(role="SUPERADMIN")
     headers = await _headers_for(email)
