@@ -33,7 +33,7 @@ from app.domain.exceptions.resource_exceptions import (
 )
 from app.domain.value_objects.service_category import ServiceCategory
 from app.infrastructure.adapters.secondary.persistence.mappers import catalog_mapper
-from app.infrastructure.adapters.secondary.persistence.models.availability_models import (
+from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
     InventoryReservationModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.catalog_models import (

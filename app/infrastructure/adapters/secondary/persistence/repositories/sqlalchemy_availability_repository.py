@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.value_objects.time_window import TimeWindow
-from app.infrastructure.adapters.secondary.persistence.models.availability_models import (
+from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
     InventoryReservationModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.catalog_models import (

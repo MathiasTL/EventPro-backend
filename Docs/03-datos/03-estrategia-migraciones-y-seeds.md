@@ -28,9 +28,43 @@ Particularidades del esquema base:
 `alembic/env.py` compara también los valores por defecto del servidor (`compare_server_default`) y omite en el autogenerate las tablas que existen en la base pero aún no tienen modelo ORM, para que `alembic check` no proponga eliminarlas. Las tablas con modelo se comparan con normalidad.
 
 ### 1.3 Excepción única de consolidación (2026-10-07)
-El 2026-10-07 se reemplazó la cadena incremental `0001`–`0006` por `0001_initial_schema`. Fue una **excepción única** a la regla de inmutabilidad (sección 1.1, regla 1): no existe ninguna base de datos desplegada ni compartida con datos que deba conservarse, por lo que reescribir el historial no tiene costo operativo. Quien tenga una base local creada con las revisiones anteriores debe recrearla (`docker compose down -v` y `alembic upgrade head`).
+El 2026-10-07 se reemplazó la cadena incremental `0001`–`0006` por `0001_initial_schema`. Fue una **excepción única** a la regla de inmutabilidad (sección 1.1, regla 1): no existe ninguna base de datos desplegada ni compartida con datos que deba conservarse, por lo que reescribir el historial no tiene costo operativo. Quien tenga una base local creada con las revisiones anteriores debe seguir el procedimiento de la sección 1.4, que distingue datos descartables de datos que requieran conservación.
 
 **Desde esta consolidación la regla 1 vuelve a regir sin excepciones:** `0001_initial_schema` no se modifica una vez fusionada y cualquier cambio de esquema se aplica con una nueva revisión que parte de ella. La siguiente revisión encadena desde `0001_initial_schema`. En particular, la migración de `event_extensions` (y de `events.extra_minutes_total`) del PR #15 debe rebasarse sobre esta revisión: su `down_revision` pasa a ser `"0001_initial_schema"`.
+
+### 1.4 US-18: `0002_event_extensions`
+
+La cadena vigente es `base → 0001_initial_schema → 0002_event_extensions`, con un
+único head. `0002` crea el detalle de extensiones y añade los acumuladores
+`extra_minutes_total` y `legacy_extra_hours_amount`. El baseline permanece intacto.
+
+El upgrade copia el importe adicional anterior como crédito histórico únicamente
+en eventos sin ningún pago `EXTENSION`. Conserva `final_total_amount` y
+`extra_hours_amount`, sin fabricar detalles, pagos, fotos ni minutos. Un pago real
+sin detalle requiere reconciliarlo antes del cierre; no recibe crédito automático.
+El crédito no tiene entrada pública. El downgrade elimina la tabla y los dos campos
+nuevos; conserva los totales, pagos y reservas existentes, pero pierde el detalle
+de extensiones: respaldarlo antes de un downgrade con datos que deban conservarse.
+
+Las pruebas usan PostgreSQL 16 efímero: upgrade desde base a `0001`, datos históricos
+con cotizaciones válidas, upgrade a head, downgrade a `0001` y nuevo upgrade.
+Las fixtures crean `clients`, `packages` y `quotes` antes de sus eventos y pagos.
+
+**Bases locales con revisiones eliminadas (`0006_payments` o `0007_event_extensions`):**
+
+1. Comprobar `alembic_version`, `alembic heads` y la base de destino; respaldar datos
+   y evidencias que deban conservarse antes de cualquier recreación.
+2. Para datos descartables, crear una base nueva y configurar la conexión hacia ella.
+   Ejecutar `alembic upgrade head` y después el seed. Verificar un único head
+   `0002_event_extensions` antes de sustituir la conexión anterior.
+3. Para datos que deban conservarse, restaurar una copia aislada y preparar una
+   reconciliación explícita del esquema y datos con el baseline, incluidas las FK
+   de cotizaciones y detalles de pagos. Validar allí primero. No usar `stamp` para
+   aparentar que el esquema fue migrado: solo marca una revisión y no ejecuta DDL.
+
+Este cambio se valida únicamente en bases efímeras; no recrea ni actualiza la base
+local del desarrollador automáticamente. Los nuevos escritores de disponibilidad
+deben respetar el [protocolo de bloqueo de US-18](../02-arquitectura/02-backend-arquitectura-hexagonal.md).
 
 ---
 

@@ -24,7 +24,7 @@ from app.infrastructure.adapters.secondary.persistence import (
     SqlAlchemyAvailabilityRepository,
 )
 from app.infrastructure.adapters.secondary.persistence.database import build_engine
-from app.infrastructure.adapters.secondary.persistence.models.availability_models import (
+from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
     InventoryReservationModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.catalog_models import (

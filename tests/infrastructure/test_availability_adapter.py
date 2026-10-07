@@ -21,7 +21,7 @@ from app.infrastructure.adapters.secondary.persistence import (
     EventWindowRow,
     InventoryRequirementRow,
 )
-from app.infrastructure.adapters.secondary.persistence.models.availability_models import (
+from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
     InventoryReservationModel,
 )
 

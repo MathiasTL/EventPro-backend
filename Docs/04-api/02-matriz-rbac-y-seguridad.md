@@ -140,8 +140,8 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `POST /events/{id}/arrive` | Sí | Sí | Propios | - | `SCHEDULED` → `AWAITING_BALANCE`. |
 | `POST /events/{id}/start` | Sí | Sí | Propios | - | US-17 parcial: saldo verificado por puerto; operador sin asignación recibe `403` antes de buscar el evento. |
 | `POST /events/{id}/check-in-and-collect` | Sí | Sí | Propios | - | Crea un pago `BALANCE` `VERIFIED` con evidencia obligatoria. |
-| `POST /events/{id}/extensions` | Sí | Sí | Propios | - | Crea un pago `EXTENSION` `VERIFIED` con evidencia obligatoria. |
-| `POST /events/{id}/settle` | Sí | Sí | Propios | - | `IN_PROGRESS` o `EXTENDED` → `SETTLED`. |
+| `POST /events/{id}/extensions` | Sí | Sí | Propios | - | US-18: pago real `EXTENSION` `VERIFIED` con fotografía; fuera de alcance responde `404` antes de cargar el evento. |
+| `POST /events/{id}/settle` | Sí | Sí | Propios | - | US-18: `IN_PROGRESS` o `EXTENDED` → `SETTLED`, con cobertura completa y extensiones consistentes; fuera de alcance responde `404`. |
 | `POST /events/{id}/cancel` | Sí | Sí | - | - | Libera inventario y anula el contrato. |
 | `PATCH /overrides/crew-assignments/{id}/transit-interval` | Sí | Sí | - | - | Audita `OVERRIDE_TRANSIT_INTERVAL`. |
 
@@ -150,6 +150,13 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 > explícita a la regla general de `404` del módulo. El Fake de pagos no registra
 > cobros y, por defecto, no confirma ningún saldo; el registro con fotografía
 > en `/check-in-and-collect` sigue pendiente de implementación.
+
+> **US-18:** reutiliza el puerto de asignaciones y su Fake reemplazable mientras
+> E3 integra la lectura real. Sus rutas aplican la regla general `404` para IDs
+> fuera del alcance del operador, conservando la excepción `403` de `/start`.
+> El usuario registrador procede del JWT; no puede elegirse en el formulario.
+> La auditoría y la consulta del comprobante siguen usando las rutas y permisos
+> de E5 para `ENCARGADO` y `SUPERADMIN`.
 
 ### 2.9 Analítica Financiera y BI
 

@@ -9,3 +9,11 @@ class InvalidEventStateError(DomainError):
 
 class BalancePendingError(DomainError):
     code = "balance-pending"
+
+
+class ExtensionPaymentMismatchError(DomainError):
+    code = "extension-payment-mismatch"
+
+
+class EventResourceConflictError(DomainError):
+    code = "extension-resource-conflict"

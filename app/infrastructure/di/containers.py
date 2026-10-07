@@ -5,6 +5,10 @@ from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.input.event_extension_port import (
+    IRegisterEventExtensionPort,
+    ISettleEventPort,
+)
 from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
 from app.application.ports.input.event_start_port import IStartEventPort
 from app.application.ports.output.audit_log_port import IAuditLogPort
@@ -14,6 +18,7 @@ from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, I
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
+from app.application.ports.output.payment_evidence_storage_port import IPaymentEvidenceStoragePort
 from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
 from app.application.ports.output.pre_show_payment_verification_port import (
     IPreShowPaymentVerificationPort,
@@ -29,6 +34,8 @@ from app.application.use_cases.auth.refresh import RefreshUseCase
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
 from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
+from app.application.use_cases.event.register_event_extension import RegisterEventExtensionUseCase
+from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
@@ -202,6 +209,33 @@ def get_event_schedule_use_case(
 
 
 @lru_cache
+def get_extension_evidence_storage() -> IPaymentEvidenceStoragePort:
+    return LocalEvidenceStorage(allowed_mime={"image/jpeg", "image/png", "image/webp"})
+
+
+def get_register_event_extension_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    storage: Annotated[IPaymentEvidenceStoragePort, Depends(get_extension_evidence_storage)],
+    crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+    clock: Annotated[IClockPort, Depends(get_clock_port)],
+) -> IRegisterEventExtensionPort:
+    return RegisterEventExtensionUseCase(
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+        storage,
+        crews,
+        clock,
+        simultaneous_threshold=get_settings().simultaneous_shows_threshold,
+    )
+
+
+def get_settle_event_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+) -> ISettleEventPort:
+    return SettleEventUseCase(sqlalchemy_event_repository.SqlAlchemyEventRepository(session), crews)
+
+
+@lru_cache
 def get_evidence_storage() -> LocalEvidenceStorage:
     return LocalEvidenceStorage()
 
@@ -315,6 +349,7 @@ def clear_application_caches() -> None:
     get_audit_log_port.cache_clear()
     get_audit_service.cache_clear()
     get_evidence_storage.cache_clear()
+    get_extension_evidence_storage.cache_clear()
     get_quote_schedule_read_port.cache_clear()
     get_crew_schedule_read_port.cache_clear()
     get_pre_show_payment_verification_port.cache_clear()

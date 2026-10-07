@@ -158,6 +158,40 @@ Coordina los flujos de interacción del negocio.
   4. Retorno de un DTO con el resultado.
 
 ### 3.3 Capa de Infraestructura (`app/infrastructure`)
+
+**US-18:** los casos de uso de extensión y liquidación reciben DTOs puros,
+el puerto de eventos, el puerto de asignaciones, almacenamiento de evidencia y
+un reloj. El dominio mantiene las transiciones y cálculos sin importar FastAPI,
+Pydantic ni SQLAlchemy. El adaptador de eventos usa una sesión y un bloqueo de
+fila para guardar conjuntamente el pago de E5, `event_extensions` y los
+acumulados; no llama al `save()` de pagos, que confirma por separado. La
+compensación del archivo se realiza por un puerto y solo después de comprobar
+que el pago no quedó persistido. El cierre comprueba los cobros vinculados y usa
+el mismo bloqueo que las extensiones para evitar actualizaciones perdidas.
+
+La lectura real de ocupación usa `IEventOccupancyPort` y DTOs puros. El repositorio
+de eventos implementa ese contrato con un adaptador SQLAlchemy y la misma sesión
+que escribe el pago, detalle, acumulados y reservas `ACTIVE` (solo se prolonga su
+fin, conservando márgenes e inicio). Los servicios puros de E3 comprueban stock,
+solapamiento y traslado sobre ventanas operativas. El intervalo aplicado del
+siguiente evento debe estar presente; no se supone cero cuando falta.
+
+**Protocolo de escritura de disponibilidad:** adquirir primero
+`pg_advisory_xact_lock(180018)`, después los bloqueos de fila de eventos, consultar
+ocupación y confirmar en la misma transacción. El candado es global y transaccional;
+evita carreras entre extensiones de eventos diferentes. Todos los futuros escritores
+E3 que cambien cupos, asignaciones, stock o reservas deberán participar en este
+protocolo y respetar el orden para mantener la protección. El cierre solo toma el
+bloqueo del evento y no pide después el candado global.
+
+La evidencia se valida y almacena antes de bloquear; su escritura, lectura y
+eliminación se ejecutan mediante `asyncio.to_thread`. El contrato de almacenamiento
+usa `EvidenceValidationError` neutral, traducido por Pagos y Eventos a
+`422 invalid-file`; cada adaptador configura sus formatos. Los errores posteriores
+al almacenamiento compensan el archivo, pero un commit incierto conserva la evidencia
+y registra el incidente. Un formulario Pydantic único incluye el archivo y rechaza
+campos adicionales; los errores HTTP sanitizados no contienen valores ni URLs internas.
+
 Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptadores Primarios (Controladores):**
   * `quotes_router.py`: Expone endpoints HTTP (`POST /api/v1/quotes`). Recibe payloads validados con Pydantic, invoca al caso de uso correspondiente e inyecta la respuesta serializada.

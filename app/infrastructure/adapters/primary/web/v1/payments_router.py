@@ -32,6 +32,7 @@ from app.domain.exceptions.resource_exceptions import (
     ResourceNotFoundError,
     ValidationError,
 )
+from app.domain.exceptions.storage_exceptions import EvidenceValidationError
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import AuthContext, require_role
 from app.infrastructure.adapters.primary.web.problem import ProblemError
@@ -90,6 +91,8 @@ async def register_advance_payment(
         )
         return PaymentCreateResponse.model_validate(result)
     except ValidationError as exc:
+        if isinstance(exc, EvidenceValidationError):
+            raise ProblemError(422, "invalid-file", "Comprobante inválido", str(exc)) from exc
         raise _map_validation(exc) from exc
     except ResourceInUseError as exc:
         raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
