@@ -167,10 +167,15 @@ async def test_date_range_covers_whole_days(web_app: FastAPI) -> None:
         previous_day = await client.get(
             PATH, params={"to_date": "2026-09-30"}, headers=authorization()
         )
+        max_to_date = await client.get(
+            PATH, params={"to_date": "9999-12-31"}, headers=authorization()
+        )
     assert same_day.status_code == 200
     assert same_day.json()["total"] == 3
     assert next_day.json()["total"] == 0
     assert previous_day.json()["total"] == 0
+    assert max_to_date.status_code == 200
+    assert max_to_date.json()["total"] == 3
 
 
 async def test_invalid_date_is_rejected(web_app: FastAPI) -> None:

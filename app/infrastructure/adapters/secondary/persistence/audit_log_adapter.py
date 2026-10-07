@@ -18,7 +18,13 @@ def _day_start(day: date) -> datetime:
 
 
 def _day_end(day: date) -> datetime:
-    """Primer instante (UTC) del día siguiente: límite exclusivo de `to_date`."""
+    """Primer instante (UTC) del día siguiente: límite exclusivo de `to_date`.
+
+    `date.max` no admite sumar un día (`OverflowError`), así que se devuelve el
+    último instante posible: incluye toda la jornada de `to_date` sin error interno.
+    """
+    if day == date.max:
+        return datetime.max.replace(tzinfo=UTC)
     return datetime.combine(day + timedelta(days=1), time.min, tzinfo=UTC)
 
 
