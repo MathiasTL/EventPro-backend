@@ -70,3 +70,12 @@ def test_overlapping_shows_are_never_feasible() -> None:
     previous = _window(0, 60)
     following = _window(30, 60)
     assert not service.is_feasible(previous, following, transit_minutes=0, override_minutes=0)
+
+
+def test_is_gap_feasible_uses_required_interval() -> None:
+    service = TravelIntervalService()
+    # 75 min de tránsito + 30 min de margen = 105 min requeridos.
+    assert not service.is_gap_feasible(104, transit_minutes=75)
+    assert service.is_gap_feasible(105, transit_minutes=75)
+    assert service.is_gap_feasible(105, transit_minutes=75, override_minutes=105)
+    assert not service.is_gap_feasible(104, transit_minutes=75, override_minutes=105)
