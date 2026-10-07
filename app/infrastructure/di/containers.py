@@ -28,6 +28,7 @@ from app.application.ports.output.refresh_token_repository_port import IRefreshT
 from app.application.ports.output.repository_health_port import IRepositoryHealthPort
 from app.application.ports.output.user_repository_port import IUserRepositoryPort
 from app.application.services.audit_service import AuditService
+from app.application.use_cases.audit.list_audit_logs import ListAuditLogsUseCase
 from app.application.use_cases.auth.login import LoginUseCase
 from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
@@ -163,6 +164,11 @@ def get_audit_log_port() -> IAuditLogPort:
 @lru_cache
 def get_audit_service() -> AuditService:
     return AuditService(get_audit_log_port())
+
+
+@lru_cache
+def get_list_audit_logs_use_case() -> ListAuditLogsUseCase:
+    return ListAuditLogsUseCase(get_audit_log_port())
 
 
 @lru_cache
@@ -352,6 +358,7 @@ def clear_application_caches() -> None:
     get_logout_use_case.cache_clear()
     get_audit_log_port.cache_clear()
     get_audit_service.cache_clear()
+    get_list_audit_logs_use_case.cache_clear()
     get_evidence_storage.cache_clear()
     get_extension_evidence_storage.cache_clear()
     get_quote_schedule_read_port.cache_clear()
