@@ -1146,8 +1146,8 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 * **Seguridad:** Roles `OPERADOR` (solo eventos propios), `ENCARGADO` o `SUPERADMIN`.
 * **Content-Type:** `multipart/form-data`
 * **Form Data:**
-  * `extra_minutes`: `30`
-  * `agreed_rate`: `100.00`
+  * `extra_minutes`: `30`; entero positivo, hasta el límite de `INTEGER`.
+  * `agreed_rate`: `100.00`; **importe total pactado por esos minutos**, positivo en PEN y con hasta dos decimales. No se prorratea por hora.
   * `payment_method`: `YAPE`, `PLIN`, `BANK_TRANSFER` o `CASH`.
   * `evidence_file`: **obligatorio** (imagen JPEG, PNG o WebP; máximo 5 MB).
   * `transaction_reference`: opcional.
@@ -1166,14 +1166,17 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
     }
   }
   ```
-* **Errores:** `409` (`invalid-event-state`, el evento no está `IN_PROGRESS` ni `EXTENDED`), `422` (`invalid-file`, `validation-error`).
+* **Errores:** `401` (autenticación), `403` (`forbidden`, rol no permitido), `404` (`not-found`, inexistente o fuera del alcance del operador), `409` (`invalid-event-state`, el evento no está `IN_PROGRESS` ni `EXTENDED`; `extension-payment-mismatch`, vínculos inconsistentes), `422` (`invalid-file`, `validation-error`).
+* **Comportamiento US-18:** permite extensiones sucesivas; acumula minutos y cargos conservando el horario original. La fotografía se valida por contenido, exclusivamente JPEG, PNG o WebP, hasta 5 MiB. La referencia opcional admite entre 1 y 60 caracteres y no puede contener solo espacios. Los campos adicionales se rechazan. El servidor obtiene la fecha UTC y el usuario registrador del JWT. Los importes acumulados deben caber en `NUMERIC(10,2)` y el fin calculado debe ser representable.
+* **Transacción y reintentos:** cada registro exitoso crea una extensión y un pago distinto. No hay clave de idempotencia en esta entrega. Pago, detalle y evento se confirman conjuntamente bajo bloqueo del evento; ante rollback se elimina el comprobante nuevo si se confirma que el pago no quedó persistido.
 
 #### `POST /events/{id}/settle`
 * **Descripción:** Cierra definitivamente el evento marcándolo como `SETTLED` (desde `IN_PROGRESS` o `EXTENDED`) y consolida los totales cobrados.
 * **Seguridad:** Roles `OPERADOR` (solo eventos propios), `ENCARGADO` o `SUPERADMIN`.
-* **Request Body:** vacío.
+* **Request Body:** vacío o `{}`; se rechazan campos adicionales.
 * **Response `200 OK`:** `{"event_id": "evt-77a8...", "status": "SETTLED"}`
-* **Errores:** `409` (`invalid-event-state`).
+* **Errores:** `401` (autenticación), `403` (`forbidden`, rol no permitido), `404` (`not-found`, inexistente o fuera del alcance del operador), `400` (`balance-pending`, cobros insuficientes), `409` (`invalid-event-state`, incluido un segundo cierre; `extension-payment-mismatch`, extensiones y pagos inconsistentes), `422` (`validation-error`, cuerpo inválido).
+* **Cobertura US-18:** usa `advance_paid` y `pre_show_balance_paid` guardados para los cobros base y contrasta las extensiones con pagos reales `EXTENSION` `VERIFIED`. Los minutos, importes y vínculos deben coincidir; ningún pago de extensión puede carecer de detalle asociado. La auditoría `UNREVIEWED` o `FLAGGED` no impide el cierre. Liquidar no suma cargos nuevamente y bloquea nuevas extensiones. La consulta y transición se serializan con los registros de extensiones mediante el mismo bloqueo de fila.
 
 #### `POST /events/{id}/cancel`
 * **Descripción:** Cancela el evento desde cualquier estado previo a `IN_PROGRESS` (`AWAITING_SIGNATURE`, `SCHEDULED` o `AWAITING_BALANCE`). Libera sus reservas de inventario (`RELEASED`), anula el contrato vigente (`VOIDED`) y deja de contar para el umbral de simultaneidad. El destino del adelanto se resuelve fuera de este endpoint.

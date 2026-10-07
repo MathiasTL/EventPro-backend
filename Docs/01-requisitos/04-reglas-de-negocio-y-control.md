@@ -61,6 +61,20 @@ $$\text{Intervalo Mínimo} = \text{Tiempo de Tránsito (Google Maps)} + \text{Ma
 * Este concepto se añade a la liquidación final antes de marcar el evento como `SETTLED` («Liquidado»).
 * Como el saldo pre-show, la extensión se registra como un pago de concepto `EXTENSION` directamente en `VERIFIED`, con evidencia obligatoria (medio de pago y fotografía), y queda sujeta a auditoría posterior del encargado.
 
+* **Contrato US-18:** `agreed_rate` es el precio total en PEN pactado por el bloque
+  solicitado; 30 minutos con `agreed_rate = 100` generan un cobro de 100 PEN.
+  Los minutos son enteros positivos; 30 y 60 son ejemplos, no valores exclusivos.
+* Cada extensión incrementa una vez `final_total_amount`, `extra_hours_amount` y
+  `extra_minutes_total`. El horario original se conserva; el fin extendido se
+  obtiene sumando los minutos acumulados al fin contratado, incluida su fecha.
+* `/settle` cierra desde `IN_PROGRESS` o `EXTENDED`, comprobando la correspondencia
+  entre extensiones y pagos `EXTENSION` `VERIFIED` y la cobertura completa del
+  total final. Los cobros base se toman provisionalmente del agregado, conforme
+  al alcance parcial de US-17. La liquidación no exige auditoría `REVIEWED`.
+* El saldo pendiente es `max(final_total_amount - advance_paid -
+  pre_show_balance_paid - extra_hours_amount, 0)`: las extensiones ya cobradas no
+  se cobran nuevamente. `SETTLED` no admite otro cierre ni nuevas extensiones.
+
 ---
 
 ### RN-08: Cálculo de Utilidad Neta y Costos Fijos
@@ -187,7 +201,8 @@ stateDiagram-v2
     SCHEDULED --> IN_PROGRESS: US-17 parcial, saldo verificado por puerto
     AWAITING_BALANCE --> IN_PROGRESS: Saldo y movilidad cobrados
     IN_PROGRESS --> EXTENDED: Cliente solicita tiempo adicional
-    EXTENDED --> SETTLED: Cobro de extensión registrado
+    EXTENDED --> EXTENDED: Otra extensión cobrada con evidencia
+    EXTENDED --> SETTLED: Cierre explícito con todos los cobros cubiertos
     IN_PROGRESS --> SETTLED: Show culminado sin extensiones
     AWAITING_SIGNATURE --> CANCELLED: Cancelación antes de la ejecución
     SCHEDULED --> CANCELLED: Cancelación antes de la ejecución

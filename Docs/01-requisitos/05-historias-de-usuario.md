@@ -334,6 +334,18 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Cuando** confirma el registro,
   * **Entonces** el pago `EXTENSION` queda en `VERIFIED` con `audit_status = UNREVIEWED` y el encargado lo audita después (`REVIEWED` o `FLAGGED`).
 
+> **US-18 implementada:** `/events/{id}/extensions` registra el tiempo adicional,
+> su cobro real con fotografía y los totales del evento en una transacción.
+> `agreed_rate` es el precio total pactado para los minutos indicados, no una tarifa
+> por hora que deba prorratearse. Se admiten varias extensiones desde `IN_PROGRESS`
+> o `EXTENDED`, conservando el horario contratado y acumulando minutos adicionales.
+> El evento permanece `EXTENDED` después del registro; `/events/{id}/settle` realiza
+> el cierre explícito a `SETTLED`, con o sin extensiones, sin volver a sumar cargos.
+> Para el cierre, los cobros base provienen de `advance_paid` y
+> `pre_show_balance_paid` guardados en el evento; las extensiones se contrastan
+> con sus pagos reales de E5. La integración de `/start` con los pagos base reales
+> sigue pendiente en US-17. La auditoría posterior no bloquea la liquidación.
+
 ---
 
 ## 7. Épica 6: Procesos de Control y Sobrescrituras Manuales

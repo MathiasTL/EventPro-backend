@@ -8,7 +8,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID, uuid4
 
-from app.domain.exceptions.event_exceptions import BalancePendingError, InvalidEventStateError
+from app.domain.entities.event_extension import (
+    EventExtension,
+    validate_extension_amount,
+    validate_extra_minutes,
+)
+from app.domain.exceptions.event_exceptions import (
+    BalancePendingError,
+    ExtensionPaymentMismatchError,
+    InvalidEventStateError,
+)
 from app.domain.exceptions.resource_exceptions import ValidationError
 from app.domain.value_objects.event_status import EventStatus
 from app.domain.value_objects.money import Money
@@ -35,8 +44,10 @@ class Event:
     extra_hours_amount: Money = field(default_factory=Money.zero)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     actual_start_time: datetime | None = None
+    extra_minutes_total: int = 0
 
     def __post_init__(self) -> None:
+        validate_extra_minutes(self.extra_minutes_total, allow_zero=True)
         for name, limit in (("event_code", 30), ("address", 255), ("district", 80)):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip() or len(value) > limit:
@@ -97,6 +108,75 @@ class Event:
         self.actual_start_time = actual_start_time
 
     @property
+    def extended_time_window(self) -> TimeWindow:
+        """Horario local contratado más extensiones, conservando el día del fin."""
+        original = self.time_window
+        try:
+            return TimeWindow(
+                original.start, original.end + timedelta(minutes=self.extra_minutes_total)
+            )
+        except OverflowError as exc:
+            raise ValidationError(
+                "El horario extendido excede el rango de fechas permitido."
+            ) from exc
+
+    def validate_operating_state(self) -> None:
+        if self.status not in (EventStatus.IN_PROGRESS, EventStatus.EXTENDED):
+            raise InvalidEventStateError("Solo se admite un evento IN_PROGRESS o EXTENDED.")
+
+    def extend(
+        self,
+        *,
+        extra_minutes: int,
+        agreed_rate: Money,
+        payment_id: UUID,
+        requested_at: datetime,
+    ) -> EventExtension:
+        self.validate_operating_state()
+        extension = EventExtension(
+            event_id=self.id,
+            payment_id=payment_id,
+            extra_minutes=extra_minutes,
+            agreed_rate=agreed_rate,
+            requested_at=requested_at,
+        )
+        minutes = self.extra_minutes_total + extra_minutes
+        validate_extra_minutes(minutes)
+        extra_amount = self.extra_hours_amount + agreed_rate
+        final_amount = self.final_total_amount + agreed_rate
+        validate_extension_amount(extra_amount)
+        validate_extension_amount(final_amount)
+        try:
+            self.time_window.end + timedelta(minutes=minutes)
+        except OverflowError as exc:
+            raise ValidationError(
+                "El horario extendido excede el rango de fechas permitido."
+            ) from exc
+        self.extra_minutes_total = minutes
+        self.extra_hours_amount = extra_amount
+        self.final_total_amount = final_amount
+        self.status = EventStatus.EXTENDED
+        return extension
+
+    def settle(self, *, verified_extension_amount: Money, verified_extra_minutes: int) -> None:
+        self.validate_operating_state()
+        validate_extension_amount(verified_extension_amount, allow_zero=True)
+        validate_extra_minutes(verified_extra_minutes, allow_zero=True)
+        if (
+            verified_extension_amount != self.extra_hours_amount
+            or verified_extra_minutes != self.extra_minutes_total
+        ):
+            raise ExtensionPaymentMismatchError(
+                "Las extensiones no coinciden con sus cobros verificados."
+            )
+        if (
+            self.advance_paid + self.pre_show_balance_paid + verified_extension_amount
+            < self.final_total_amount
+        ):
+            raise BalancePendingError("Se requiere cubrir el total final antes de liquidar.")
+        self.status = EventStatus.SETTLED
+
+    @property
     def time_window(self) -> TimeWindow:
         """Ventana local: un fin anterior al inicio pertenece al día siguiente."""
         start = datetime.combine(self.event_date, self.start_time)
@@ -107,6 +187,11 @@ class Event:
 
     @property
     def pending_balance_to_collect(self) -> Money:
-        """Saldo pre-show pendiente; final_total_amount ya incluye el total final."""
-        remaining = self.final_total_amount - self.advance_paid - self.pre_show_balance_paid
+        """Saldo pendiente sin volver a cobrar las extensiones ya registradas."""
+        remaining = (
+            self.final_total_amount
+            - self.advance_paid
+            - self.pre_show_balance_paid
+            - self.extra_hours_amount
+        )
         return remaining if remaining.amount > 0 else Money.zero()

@@ -4,7 +4,18 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Numeric, String, Text, Time, Uuid, text
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Time,
+    Uuid,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.adapters.secondary.persistence.models.base import Base
@@ -13,6 +24,7 @@ from app.infrastructure.adapters.secondary.persistence.models.base import Base
 class EventModel(Base):
     __tablename__ = "events"
     __table_args__ = (
+        CheckConstraint("extra_minutes_total >= 0", name="ck_events_extra_minutes_nonnegative"),
         CheckConstraint(
             "status IN ('AWAITING_SIGNATURE', 'SCHEDULED', 'AWAITING_BALANCE', "
             "'IN_PROGRESS', 'EXTENDED', 'SETTLED', 'CANCELLED')",
@@ -52,4 +64,7 @@ class EventModel(Base):
     )
     actual_start_time: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    extra_minutes_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
     )

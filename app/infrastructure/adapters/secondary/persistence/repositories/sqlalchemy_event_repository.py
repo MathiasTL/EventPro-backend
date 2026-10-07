@@ -3,20 +3,153 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.dtos.event_extension_dto import VerifiedExtensionTotals
 from app.application.dtos.event_schedule_dto import EventScheduleFilters
 from app.domain.entities.event import Event
-from app.domain.exceptions.event_exceptions import InvalidEventStateError
+from app.domain.entities.event_extension import EventExtension
+from app.domain.entities.payment import Payment, PaymentConcept, PaymentValidationStatus
+from app.domain.exceptions.event_exceptions import (
+    ExtensionPaymentMismatchError,
+    InvalidEventStateError,
+)
 from app.domain.value_objects.event_status import EventStatus
+from app.domain.value_objects.money import Money
+from app.infrastructure.adapters.secondary.persistence.mappers.event_extension_mapper import (
+    extension_to_model,
+)
 from app.infrastructure.adapters.secondary.persistence.mappers.event_mapper import event_to_domain
+from app.infrastructure.adapters.secondary.persistence.mappers.payment_mapper import (
+    payment_to_model,
+)
+from app.infrastructure.adapters.secondary.persistence.models.event_extension_model import (
+    EventExtensionModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
+from app.infrastructure.adapters.secondary.persistence.models.payment_model import PaymentModel
 
 
 class SqlAlchemyEventRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def can_discard_extension_evidence(self, payment_id: UUID) -> bool:
+        """Consulta PostgreSQL después del rollback; no supone que un commit fallido no llegó."""
+        return (
+            await self._session.scalar(select(PaymentModel.id).where(PaymentModel.id == payment_id))
+        ) is None
+
+    async def save_extension(
+        self, event: Event, extension: EventExtension, payment: Payment
+    ) -> None:
+        try:
+            if (
+                event.status is not EventStatus.EXTENDED
+                or extension.event_id != event.id
+                or payment.id != extension.payment_id
+                or payment.event_id != event.id
+                or payment.quote_id != event.quote_id
+                or payment.concept is not PaymentConcept.EXTENSION
+                or payment.validation_status is not PaymentValidationStatus.VERIFIED
+                or payment.amount != extension.agreed_rate
+            ):
+                raise ExtensionPaymentMismatchError(
+                    "La extensión no coincide con su pago o evento."
+                )
+            self._session.add(payment_to_model(payment))
+            await self._session.flush()
+            self._session.add(extension_to_model(extension))
+            await self._session.flush()
+            stmt = (
+                update(EventModel)
+                .where(
+                    EventModel.id == event.id,
+                    EventModel.status.in_(
+                        (EventStatus.IN_PROGRESS.value, EventStatus.EXTENDED.value)
+                    ),
+                    EventModel.extra_minutes_total + extension.extra_minutes
+                    == event.extra_minutes_total,
+                    EventModel.extra_hours_amount + extension.agreed_rate.amount
+                    == event.extra_hours_amount.amount,
+                    EventModel.final_total_amount + extension.agreed_rate.amount
+                    == event.final_total_amount.amount,
+                )
+                .values(
+                    status=event.status.value,
+                    extra_minutes_total=event.extra_minutes_total,
+                    extra_hours_amount=event.extra_hours_amount.amount,
+                    final_total_amount=event.final_total_amount.amount,
+                )
+                .returning(EventModel.id)
+            )
+            if (await self._session.execute(stmt)).scalar_one_or_none() is None:
+                raise InvalidEventStateError("El evento ya no admite esta extensión.")
+            await self._session.commit()
+        except BaseException:
+            await self._session.rollback()
+            raise
+
+    async def get_verified_extension_totals(self, event_id: UUID) -> VerifiedExtensionTotals:
+        stmt = (
+            select(EventExtensionModel, PaymentModel, EventModel.quote_id)
+            .join(EventModel, EventModel.id == EventExtensionModel.event_id)
+            .outerjoin(PaymentModel, PaymentModel.id == EventExtensionModel.payment_id)
+            .where(EventExtensionModel.event_id == event_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        count = await self._session.scalar(
+            select(func.count(PaymentModel.id)).where(
+                PaymentModel.event_id == event_id,
+                PaymentModel.concept == PaymentConcept.EXTENSION.value,
+            )
+        )
+        amount, minutes = Money.zero(), 0
+        if count != len(rows):
+            raise ExtensionPaymentMismatchError("Hay cobros de extensión sin detalle asociado.")
+        for extension, payment, quote_id in rows:
+            if (
+                payment is None
+                or payment.event_id != event_id
+                or payment.quote_id != quote_id
+                or payment.concept != PaymentConcept.EXTENSION.value
+                or payment.validation_status != PaymentValidationStatus.VERIFIED.value
+                or payment.amount != extension.agreed_rate
+            ):
+                raise ExtensionPaymentMismatchError(
+                    "Una extensión no tiene su cobro verificado correcto."
+                )
+            amount += Money(payment.amount)
+            minutes += extension.extra_minutes
+        return VerifiedExtensionTotals(amount, minutes)
+
+    async def save_settlement(self, event: Event) -> None:
+        try:
+            if event.status is not EventStatus.SETTLED:
+                raise InvalidEventStateError("El evento debe haber completado la liquidación.")
+            stmt = (
+                update(EventModel)
+                .where(
+                    EventModel.id == event.id,
+                    EventModel.status.in_(
+                        (EventStatus.IN_PROGRESS.value, EventStatus.EXTENDED.value)
+                    ),
+                    EventModel.extra_minutes_total == event.extra_minutes_total,
+                    EventModel.extra_hours_amount == event.extra_hours_amount.amount,
+                    EventModel.final_total_amount == event.final_total_amount.amount,
+                    EventModel.advance_paid == event.advance_paid.amount,
+                    EventModel.pre_show_balance_paid == event.pre_show_balance_paid.amount,
+                )
+                .values(status=event.status.value)
+                .returning(EventModel.id)
+            )
+            if (await self._session.execute(stmt)).scalar_one_or_none() is None:
+                raise InvalidEventStateError("El evento ya no admite esta liquidación.")
+            await self._session.commit()
+        except BaseException:
+            await self._session.rollback()
+            raise
 
     async def get_by_id_for_update(self, event_id: UUID) -> Event | None:
         stmt = (

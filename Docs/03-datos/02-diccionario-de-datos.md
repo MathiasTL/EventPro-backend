@@ -238,6 +238,7 @@ Entidad principal del cronograma y ejecución operativa del servicio. Se crea ú
 | `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | - | Monto adicional por extensiones en vivo (suma de pagos `EXTENSION`). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de registro. |
 | `actual_start_time` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Inicio real en UTC, registrado por el servidor al pasar a `IN_PROGRESS` (US-17 parcial). Eventos históricos conservan `NULL`. |
+| `extra_minutes_total` | `INTEGER` | NO | `0` | CHECK (`extra_minutes_total >= 0`) | Minutos acumulados de las extensiones cobradas; el horario contratado se conserva. |
 
 > **US-16, Slice 1:** la revisión `0004_events` crea `events` con sus columnas,
 > defaults, índices, CHECK de estados y unicidad de `event_code`/`quote_id`.
@@ -360,6 +361,15 @@ Extensiones de tiempo registradas durante el show (RF-19). El cobro vive en `pay
 | `extra_minutes` | `INTEGER` | NO | - | CHECK (`extra_minutes > 0`) | Minutos adicionales acordados. |
 | `agreed_rate` | `NUMERIC(10,2)` | NO | - | CHECK (`agreed_rate > 0`) | Tarifa pactada por la extensión. |
 | `requested_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora del pedido del cliente. |
+
+> **US-18:** `0007_event_extensions`, encadenada a `0006_payments`, crea esta tabla
+> y añade `events.extra_minutes_total`. Los eventos existentes reciben cero minutos.
+> `agreed_rate` es el importe total de la extensión y debe coincidir con
+> `payments.amount`. El pago vinculado pertenece al mismo evento y cotización,
+> tiene concepto `EXTENSION` y estado `VERIFIED`; esas correspondencias se validan
+> en aplicación y persistencia. Pago, extensión y acumulados se guardan juntos.
+> `requested_at` se obtiene del reloj del servidor y se normaliza a UTC.
+> La revisión no añade FK hacia `quotes`, que sigue pendiente de E1.
 
 ---
 

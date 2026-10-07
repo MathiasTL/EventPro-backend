@@ -79,6 +79,8 @@ def test_event_rejects_empty_window_and_supports_midnight() -> None:
 )
 def test_pending_balance_is_exact_and_never_negative(paid: str, expected: str) -> None:
     event = make_event(
-        pre_show_balance_paid=Money(Decimal(paid)), extra_hours_amount=Money(Decimal("80"))
+        pre_show_balance_paid=Money(Decimal(paid)),
+        extra_hours_amount=Money(Decimal("80")),
+        final_total_amount=Money(Decimal("1160.50")),
     )
     assert event.pending_balance_to_collect == Money(Decimal(expected))

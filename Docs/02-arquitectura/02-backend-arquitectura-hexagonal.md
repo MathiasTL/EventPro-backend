@@ -158,6 +158,17 @@ Coordina los flujos de interacción del negocio.
   4. Retorno de un DTO con el resultado.
 
 ### 3.3 Capa de Infraestructura (`app/infrastructure`)
+
+**US-18:** los casos de uso de extensión y liquidación reciben DTOs puros,
+el puerto de eventos, el puerto de asignaciones, almacenamiento de evidencia y
+un reloj. El dominio mantiene las transiciones y cálculos sin importar FastAPI,
+Pydantic ni SQLAlchemy. El adaptador de eventos usa una sesión y un bloqueo de
+fila para guardar conjuntamente el pago de E5, `event_extensions` y los
+acumulados; no llama al `save()` de pagos, que confirma por separado. La
+compensación del archivo se realiza por un puerto y solo después de comprobar
+que el pago no quedó persistido. El cierre comprueba los cobros vinculados y usa
+el mismo bloqueo que las extensiones para evitar actualizaciones perdidas.
+
 Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptadores Primarios (Controladores):**
   * `quotes_router.py`: Expone endpoints HTTP (`POST /api/v1/quotes`). Recibe payloads validados con Pydantic, invoca al caso de uso correspondiente e inyecta la respuesta serializada.
