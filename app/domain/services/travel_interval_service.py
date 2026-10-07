@@ -45,6 +45,16 @@ class TravelIntervalService:
             return override_minutes
         return transit_minutes + self._rest_buffer_minutes
 
+    def is_gap_feasible(
+        self,
+        gap_minutes: int,
+        transit_minutes: int,
+        override_minutes: int | None = None,
+    ) -> bool:
+        """Indica si una holgura real (en minutos) cubre el intervalo requerido."""
+
+        return gap_minutes >= self.required_interval_minutes(transit_minutes, override_minutes)
+
     def is_feasible(
         self,
         previous: TimeWindow,
@@ -54,5 +64,6 @@ class TravelIntervalService:
     ) -> bool:
         """Indica si el traslado entre dos shows del mismo elenco es viable."""
 
-        required = self.required_interval_minutes(transit_minutes, override_minutes)
-        return previous.gap_minutes_before(following) >= required
+        return self.is_gap_feasible(
+            previous.gap_minutes_before(following), transit_minutes, override_minutes
+        )
