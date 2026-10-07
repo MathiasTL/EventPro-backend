@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
 from app.application.ports.input.event_start_port import IStartEventPort
 from app.application.ports.output.audit_log_port import IAuditLogPort
+from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.cache_port import ICachePort
+from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, ICrewAdminPort
+from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
@@ -23,8 +26,13 @@ from app.application.services.audit_service import AuditService
 from app.application.use_cases.auth.login import LoginUseCase
 from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
+from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
+from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
 from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
+from app.application.use_cases.payment.approve_overbooked_payment import (
+    ApproveOverbookedPaymentUseCase,
+)
 from app.application.use_cases.payment.audit_payment import AuditPaymentUseCase
 from app.application.use_cases.payment.get_payment import GetPaymentUseCase
 from app.application.use_cases.payment.get_payment_evidence import GetPaymentEvidenceUseCase
@@ -33,7 +41,14 @@ from app.application.use_cases.payment.refund_payment import RefundPaymentUseCas
 from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
 from app.core.config import get_settings
+from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
+from app.domain.services.inventory_availability import InventoryAvailabilityService
+from app.domain.services.travel_interval_service import TravelIntervalService
+from app.infrastructure.adapters.secondary.availability.availability_adapter import (
+    AvailabilityAdapter,
+)
 from app.infrastructure.adapters.secondary.cache.redis_cache_adapter import RedisCacheAdapter
+from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
 from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
     system_clock_adapter,
@@ -41,6 +56,11 @@ from app.infrastructure.adapters.secondary.external_services import (
 from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapters import (
     FakeCrewScheduleReadAdapter,
     FakeQuoteScheduleReadAdapter,
+)
+from app.infrastructure.adapters.secondary.persistence import (
+    SqlAlchemyAvailabilityRepository,
+    SqlAlchemyCatalogReadRepository,
+    catalog_admin_repository,
 )
 from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import (
     SQLAlchemyAuditLogAdapter,
@@ -232,6 +252,57 @@ def get_get_payment_evidence_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GetPaymentEvidenceUseCase:
     return GetPaymentEvidenceUseCase(get_payment_repository(session), get_evidence_storage())
+
+
+def get_availability_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IAvailabilityPort:
+    settings = get_settings()
+    return AvailabilityAdapter(
+        repository=SqlAlchemyAvailabilityRepository(session),
+        lock=RedisLockAdapter(get_redis_client()),
+        concurrency_evaluator=ConcurrencyEvaluator(settings.simultaneous_shows_threshold),
+        inventory_availability=InventoryAvailabilityService(),
+        travel_interval_service=TravelIntervalService(settings.transit_rest_buffer_minutes),
+    )
+
+
+def get_catalog_read_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ICatalogReadPort:
+    return SqlAlchemyCatalogReadRepository(session)
+
+
+def get_catalog_admin_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ICatalogAdminPort:
+    return catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session)
+
+
+def get_crew_admin_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ICrewAdminPort:
+    return catalog_admin_repository.SqlAlchemyCrewAdminRepository(session)
+
+
+def get_manage_catalog_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ManageCatalogUseCase:
+    return ManageCatalogUseCase(catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session))
+
+
+def get_manage_crews_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ManageCrewsUseCase:
+    return ManageCrewsUseCase(
+        catalog_admin_repository.SqlAlchemyCrewAdminRepository(session), get_user_repository()
+    )
+
+
+def get_approve_overbooked_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ApproveOverbookedPaymentUseCase:
+    return ApproveOverbookedPaymentUseCase(get_payment_repository(session), get_audit_service())
 
 
 def clear_application_caches() -> None:
