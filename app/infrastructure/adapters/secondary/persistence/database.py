@@ -52,4 +52,9 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     """Dependencia de FastAPI que entrega una sesión por petición."""
 
     async with get_sessionmaker()() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise

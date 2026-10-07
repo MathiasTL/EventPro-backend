@@ -13,6 +13,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.application.dtos.catalog_dto import (
     CrewDTO,
@@ -74,6 +75,7 @@ class SqlAlchemyCatalogAdminRepository(ICatalogAdminPort):
             direct_cost=package.direct_cost.amount,
             duration_minutes=package.duration_minutes,
             is_active=package.is_active,
+            themes=[],
         )
         self._session.add(model)
         await self._session.flush()
@@ -280,7 +282,9 @@ class SqlAlchemyCatalogAdminRepository(ICatalogAdminPort):
         return tuple(catalog_mapper.inventory_item_to_dto(row) for row in rows)
 
     async def _get_package(self, package_id: UUID) -> PackageModel:
-        model = await self._session.get(PackageModel, package_id)
+        model = await self._session.get(
+            PackageModel, package_id, options=[selectinload(PackageModel.themes)]
+        )
         if model is None:
             raise ResourceNotFoundError("Paquete no encontrado")
         return model
