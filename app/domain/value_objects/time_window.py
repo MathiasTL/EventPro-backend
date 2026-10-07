@@ -9,7 +9,7 @@ la otra empieza) **no** se solapan. Es inmutable.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,36 @@ class TimeWindow:
     def __post_init__(self) -> None:
         if self.end <= self.start:
             raise ValueError("TimeWindow requiere end posterior a start")
+
+    @classmethod
+    def from_schedule(cls, event_date: date, start_time: time, duration_minutes: int) -> TimeWindow:
+        """Construye la ventana de un show a partir de la agenda del evento.
+
+        La duración define el fin (``fin = inicio + duración``), tal como exige RN-04.
+        Las marcas de agenda se normalizan a UTC para que las comparaciones de solape
+        sean exactas e independientes de la zona horaria de la sesión de base de datos.
+        """
+
+        if duration_minutes <= 0:
+            raise ValueError("duration_minutes debe ser mayor que cero")
+        start = datetime.combine(event_date, start_time, tzinfo=UTC)
+        return cls(start, start + timedelta(minutes=duration_minutes))
+
+    @classmethod
+    def from_event(cls, event_date: date, start_time: time, end_time: time) -> TimeWindow:
+        """Construye la ventana programada de un evento ya agendado.
+
+        Un evento puede cruzar la medianoche; en ese caso el fin se proyecta al día
+        siguiente.
+        """
+
+        start = datetime.combine(event_date, start_time, tzinfo=UTC)
+        end = datetime.combine(event_date, end_time, tzinfo=UTC)
+        if end == start:
+            raise ValueError("TimeWindow.from_event requiere una ventana no vacía")
+        if end < start:
+            end += timedelta(days=1)
+        return cls(start, end)
 
     @property
     def duration_minutes(self) -> int:

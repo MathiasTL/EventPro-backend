@@ -1,5 +1,14 @@
 from app.infrastructure.adapters.secondary.persistence.models.audit_log import AuditLog
 from app.infrastructure.adapters.secondary.persistence.models.base import Base
+from app.infrastructure.adapters.secondary.persistence.models.catalog_models import (
+    CrewModel,
+    ExtraModel,
+    InventoryItemModel,
+    PackageInventoryItemModel,
+    PackageModel,
+    PackageThemeModel,
+    ThemeModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.event_extension_model import (
     EventExtensionModel,
 )
@@ -18,12 +27,19 @@ from app.infrastructure.adapters.secondary.persistence.models.user import User
 __all__ = [
     "AuditLog",
     "Base",
-    "EventModel",
-    "EventExtensionModel",
     "CrewAssignmentModel",
+    "CrewModel",
+    "EventExtensionModel",
+    "EventModel",
+    "ExtraModel",
+    "InventoryItemModel",
     "InventoryReservationModel",
+    "PackageInventoryItemModel",
+    "PackageModel",
+    "PackageThemeModel",
     "PaymentModel",
     "RefreshToken",
     "Role",
+    "ThemeModel",
     "User",
 ]

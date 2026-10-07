@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime, time
 
 import pytest
 
@@ -40,3 +40,26 @@ def test_gap_minutes_before() -> None:
     previous = TimeWindow(_dt(18), _dt(19))
     assert previous.gap_minutes_before(TimeWindow(_dt(20), _dt(21))) == 60
     assert previous.gap_minutes_before(TimeWindow(_dt(18, 30), _dt(19, 30))) == -30
+
+
+def test_from_schedule_builds_window_and_normalizes_to_utc() -> None:
+    window = TimeWindow.from_schedule(date(2026, 12, 24), time(20, 0), 60)
+    assert window.start == datetime(2026, 12, 24, 20, 0, tzinfo=UTC)
+    assert window.end == datetime(2026, 12, 24, 21, 0, tzinfo=UTC)
+    assert window.duration_minutes == 60
+
+
+def test_from_schedule_rejects_non_positive_duration() -> None:
+    with pytest.raises(ValueError):
+        TimeWindow.from_schedule(date(2026, 12, 24), time(20, 0), 0)
+
+
+def test_from_event_projects_midnight_crossing() -> None:
+    window = TimeWindow.from_event(date(2026, 12, 24), time(23, 0), time(0, 30))
+    assert window.start == datetime(2026, 12, 24, 23, 0, tzinfo=UTC)
+    assert window.end == datetime(2026, 12, 25, 0, 30, tzinfo=UTC)
+
+
+def test_from_event_rejects_empty_window() -> None:
+    with pytest.raises(ValueError):
+        TimeWindow.from_event(date(2026, 12, 24), time(20, 0), time(20, 0))

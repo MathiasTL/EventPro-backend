@@ -71,3 +71,15 @@ class InventoryRequirementDTO:
     inventory_item_id: UUID
     quantity: int
     name: str | None = None
+
+
+@dataclass(frozen=True)
+class CrewDTO:
+    """Elenco freelance con el usuario operador vinculado, si existe."""
+
+    id: UUID
+    leader_name: str
+    phone: str
+    service_category: ServiceCategory
+    user_id: UUID | None = None
+    is_active: bool = True

@@ -129,6 +129,23 @@ class Payment:
         self.event_id = event_id
         self.rejection_reason = None
 
+    def approve_overbooked(
+        self, *, verified_by_user_id: UUID, event_id: UUID | None, approved_at: datetime
+    ) -> None:
+        """Aprobación manual del sobrecupo (RN-04, RF-20): REQUIRES_MANUAL_APPROVAL -> VERIFIED."""
+
+        if self.concept is not PaymentConcept.ADVANCE:
+            raise InvalidPaymentStateError("Solo ADVANCE admite aprobación de sobrecupo.")
+        if self.validation_status is not PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL:
+            raise InvalidPaymentStateError("El pago no requiere aprobación manual.")
+        if approved_at.tzinfo is None or approved_at.utcoffset() is None:
+            raise ValidationError("approved_at debe incluir zona horaria")
+        self.validation_status = PaymentValidationStatus.VERIFIED
+        self.verified_by_user_id = verified_by_user_id
+        self.verified_at = approved_at.astimezone(UTC)
+        self.event_id = event_id
+        self.rejection_reason = None
+
     def reject(self, *, reason: str, rejected_at: datetime) -> None:
         if self.concept is not PaymentConcept.ADVANCE:
             raise InvalidPaymentStateError("Solo se pueden rechazar captura de adelanto.")
