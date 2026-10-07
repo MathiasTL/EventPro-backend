@@ -18,6 +18,7 @@ from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, I
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
+from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.payment_evidence_storage_port import IPaymentEvidenceStoragePort
 from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
 from app.application.ports.output.pre_show_payment_verification_port import (
@@ -48,6 +49,9 @@ from app.application.use_cases.payment.list_payments import ListPaymentsUseCase
 from app.application.use_cases.payment.refund_payment import RefundPaymentUseCase
 from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
+from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
+from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
+from app.application.use_cases.quote.register_manual_booking import RegisterManualBookingUseCase
 from app.core.config import get_settings
 from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
 from app.domain.services.inventory_availability import InventoryAvailabilityService
@@ -74,9 +78,13 @@ from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import 
     SQLAlchemyAuditLogAdapter,
 )
 from app.infrastructure.adapters.secondary.persistence.database import (
+    get_catalog_write_session,
     get_engine,
     get_session,
     get_sessionmaker,
+)
+from app.infrastructure.adapters.secondary.persistence.manual_booking_repository import (
+    SqlAlchemyManualBookingStore,
 )
 from app.infrastructure.adapters.secondary.persistence.refresh_token_repository import (
     SQLAlchemyRefreshTokenRepository,
@@ -91,8 +99,12 @@ from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter
 from app.infrastructure.adapters.secondary.persistence.user_repository import (
     SQLAlchemyUserRepository,
 )
+from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
 from app.infrastructure.adapters.secondary.storage.local_evidence_storage import (
     LocalEvidenceStorage,
+)
+from app.infrastructure.adapters.secondary.storage.postgres_booking_documents import (
+    PostgresBookingDocuments,
 )
 
 
@@ -291,7 +303,9 @@ def get_get_payment_use_case(
 def get_get_payment_evidence_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> GetPaymentEvidenceUseCase:
-    return GetPaymentEvidenceUseCase(get_payment_repository(session), get_evidence_storage())
+    return GetPaymentEvidenceUseCase(
+        get_payment_repository(session), PostgresBookingDocuments(session, purpose="receipts")
+    )
 
 
 def get_availability_port(
@@ -314,25 +328,25 @@ def get_catalog_read_port(
 
 
 def get_catalog_admin_port(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ICatalogAdminPort:
     return catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session)
 
 
 def get_crew_admin_port(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ICrewAdminPort:
     return catalog_admin_repository.SqlAlchemyCrewAdminRepository(session)
 
 
 def get_manage_catalog_use_case(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ManageCatalogUseCase:
     return ManageCatalogUseCase(catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session))
 
 
 def get_manage_crews_use_case(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ManageCrewsUseCase:
     return ManageCrewsUseCase(
         catalog_admin_repository.SqlAlchemyCrewAdminRepository(session), get_user_repository()
@@ -378,3 +392,51 @@ async def shutdown_infrastructure() -> None:
     get_repository_health_port.cache_clear()
     get_cache_port.cache_clear()
     clear_application_caches()
+
+
+def get_manual_booking_store(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IManualBookingStore:
+    return SqlAlchemyManualBookingStore(session)
+
+
+def get_booking_documents(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IBookingDocuments:
+    return PostgresBookingDocuments(session)
+
+
+def get_booking_receipts(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IBookingDocuments:
+    return PostgresBookingDocuments(session, purpose="receipts")
+
+
+def get_budget_documents(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IBookingDocuments:
+    return PostgresBookingDocuments(session, purpose="budgets")
+
+
+def get_prepare_budget_use_case(
+    catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
+) -> PrepareBudgetUseCase:
+    return PrepareBudgetUseCase(catalog, availability, get_settings().advance_percent)
+
+
+def get_confirm_manual_booking_use_case(
+    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
+    catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
+    documents: Annotated[IBookingDocuments, Depends(get_booking_documents)],
+) -> ConfirmManualBookingUseCase:
+    return ConfirmManualBookingUseCase(store, catalog, availability, documents, contract_pdf)
+
+
+def get_register_manual_booking_use_case(
+    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
+    budget: Annotated[PrepareBudgetUseCase, Depends(get_prepare_budget_use_case)],
+    receipts: Annotated[IBookingDocuments, Depends(get_booking_receipts)],
+) -> RegisterManualBookingUseCase:
+    return RegisterManualBookingUseCase(store, budget, receipts)

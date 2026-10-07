@@ -54,7 +54,12 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     async with get_sessionmaker()() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise
+
+
+async def get_catalog_write_session() -> AsyncIterator[AsyncSession]:
+    """El catálogo confirma antes de enviar HTTP, con Depends(scope='function')."""
+    async with get_sessionmaker()() as session, session.begin():
+        yield session

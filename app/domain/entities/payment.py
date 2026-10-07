@@ -72,8 +72,6 @@ class Payment:
         if self.concept is PaymentConcept.ADVANCE:
             if self.audit_status is not None:
                 raise ValidationError("ADVANCE no usa audit_status")
-            if self.registered_by_user_id is not None:
-                raise ValidationError("ADVANCE no requiere registered_by_user_id")
             if self.event_id is not None and self.validation_status not in (
                 PaymentValidationStatus.VERIFIED,
                 PaymentValidationStatus.REFUND_PENDING,

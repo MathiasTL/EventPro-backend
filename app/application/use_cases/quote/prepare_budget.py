@@ -4,57 +4,34 @@ No crea una cotización SENT ni reserva cupo: esos estados requieren el flujo
 de envío y validación del adelanto descrito en RN-09.
 """
 
-from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import datetime
 from decimal import Decimal
-from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from app.application.dtos.availability_dto import AvailabilityRequest, AvailabilityResult
+from app.application.dtos.availability_dto import AvailabilityRequest
+from app.application.dtos.budget_dto import BudgetInput, BudgetLine, BudgetResult
 from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
 from app.domain.value_objects.money import Money
 
 
-@dataclass(frozen=True)
-class BudgetInput:
-    client_name: str
-    event_date: date
-    start_time: time
-    address: str
-    package_id: UUID
-    theme_id: UUID | None
-    extra_ids: tuple[UUID, ...]
-
-
-@dataclass(frozen=True)
-class BudgetLine:
-    name: str
-    amount: Decimal
-
-
-@dataclass(frozen=True)
-class BudgetResult:
-    request: BudgetInput
-    package_name: str
-    theme_name: str | None
-    duration_minutes: int
-    lines: tuple[BudgetLine, ...]
-    services_subtotal: Decimal
-    mobility_amount: Decimal
-    total_amount: Decimal
-    advance_amount: Decimal
-    pending_balance: Decimal
-    availability: AvailabilityResult
-
-
 class PrepareBudgetUseCase:
-    def __init__(self, catalog: ICatalogReadPort, availability: IAvailabilityPort) -> None:
+    def __init__(
+        self, catalog: ICatalogReadPort, availability: IAvailabilityPort, advance_percent: int = 10
+    ) -> None:
         self._catalog = catalog
         self._availability = availability
+        if not 0 < advance_percent <= 100:
+            raise ValueError("advance_percent debe estar entre 1 y 100")
+        self._advance_percent = Decimal(advance_percent) / Decimal(100)
 
     async def execute(self, request: BudgetInput) -> BudgetResult:
+        if request.client_provides_transport:
+            if request.manual_mobility_amount != 0:
+                raise ValidationError("El transporte del cliente exonera movilidad")
+        elif request.manual_mobility_amount <= 0 or not request.mobility_override_reason:
+            raise ValidationError("La movilidad manual requiere importe positivo y motivo")
         starts_at = datetime.combine(request.event_date, request.start_time).replace(
             tzinfo=ZoneInfo("America/Lima")
         )
@@ -80,7 +57,7 @@ class PrepareBudgetUseCase:
                 raise ResourceNotFoundError("Extra activo no encontrado")
             lines.append(BudgetLine(extra.name, extra.sale_price))
         subtotal = Money(sum((line.amount for line in lines), Decimal("0")))
-        advance = subtotal * Decimal("0.10")
+        advance = subtotal * self._advance_percent
         availability = await self._availability.check_availability(
             AvailabilityRequest(
                 request.event_date, request.start_time, package.duration_minutes, package.id
@@ -93,8 +70,8 @@ class PrepareBudgetUseCase:
             duration_minutes=package.duration_minutes,
             lines=tuple(lines),
             services_subtotal=subtotal.amount,
-            mobility_amount=Decimal("0.00"),
-            total_amount=subtotal.amount,
+            mobility_amount=Money(request.manual_mobility_amount).amount,
+            total_amount=(subtotal + Money(request.manual_mobility_amount)).amount,
             advance_amount=advance.amount,
             pending_balance=(subtotal - advance).amount,
             availability=availability,
