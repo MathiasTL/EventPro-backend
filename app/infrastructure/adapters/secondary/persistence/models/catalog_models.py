@@ -92,7 +92,7 @@ class PackageThemeModel(Base):
         Uuid(as_uuid=True), ForeignKey("packages.id"), nullable=False
     )
     theme_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("themes.id"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("themes.id"), nullable=False, index=True
     )
 
 

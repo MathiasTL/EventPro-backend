@@ -1,4 +1,4 @@
-"""Tabla payments de E5. quote_id sin FK hasta que E1 integre quotes; event_id referencia events."""
+"""Tabla payments de E5. quote_id referencia quotes en BD; el modelo de quotes llega con E1."""
 
 from datetime import datetime
 from decimal import Decimal
@@ -74,15 +74,15 @@ class PaymentModel(Base):
     )
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     verified_by_user_id: Mapped[UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     registered_by_user_id: Mapped[UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
     audit_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     audited_by_user_id: Mapped[UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
     audited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     audit_notes: Mapped[str | None] = mapped_column(Text, nullable=True)

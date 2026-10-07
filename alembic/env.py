@@ -37,6 +37,22 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(obj, name, type_, reflected, compare_to) -> bool:  # noqa: ANN001
+    """Skip database objects that have no ORM model yet.
+
+    The baseline creates every documented table, but each epic adds its model later.
+    Without this filter autogenerate would propose dropping those tables (and the
+    foreign keys that point to them from modeled tables). Modeled tables are compared
+    normally.
+    """
+
+    if type_ == "table" and reflected and compare_to is None:
+        return name in target_metadata.tables
+    if type_ == "foreign_key_constraint" and reflected and compare_to is None:
+        return obj.referred_table.name in target_metadata.tables
+    return True
+
+
 def _database_url() -> str:
     return config.get_main_option("sqlalchemy.url") or get_settings().database_url
 
@@ -50,6 +66,8 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        compare_server_default=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -60,6 +78,8 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
+        compare_server_default=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()

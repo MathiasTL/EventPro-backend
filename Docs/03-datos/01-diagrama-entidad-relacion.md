@@ -54,9 +54,9 @@ erDiagram
 
     USERS {
         uuid id PK "default gen_random_uuid()"
-        uuid role_id FK "FK (roles.id)"
+        uuid role_id FK "FK (roles.id), INDEX"
         varchar(120) full_name
-        varchar(150) email UK "UNIQUE"
+        varchar(150) email UK "UNIQUE sin distinción de mayúsculas (lower(email))"
         varchar(20) phone UK "UNIQUE"
         varchar(255) hashed_password
         boolean is_active "default TRUE"
@@ -102,7 +102,7 @@ erDiagram
     PACKAGE_THEMES {
         uuid id PK "default gen_random_uuid()"
         uuid package_id FK "FK (packages.id)"
-        uuid theme_id FK "FK (themes.id)"
+        uuid theme_id FK "FK (themes.id), INDEX"
     }
 
     PACKAGE_INVENTORY_ITEMS {
@@ -134,7 +134,7 @@ erDiagram
     INVENTORY_RESERVATIONS {
         uuid id PK "default gen_random_uuid()"
         uuid event_id FK "FK (events.id), INDEX"
-        uuid inventory_item_id FK "FK (inventory_items.id)"
+        uuid inventory_item_id FK "FK (inventory_items.id), INDEX"
         integer quantity "default 1; CHECK (quantity > 0)"
         timestamptz starts_at
         timestamptz ends_at "CHECK (ends_at > starts_at)"
@@ -152,8 +152,8 @@ erDiagram
         varchar(80) location_district "INDEX"
         numeric(10_7) latitude "NULL"
         numeric(10_7) longitude "NULL"
-        uuid package_id FK "FK (packages.id)"
-        uuid theme_id FK "NULL; FK (themes.id)"
+        uuid package_id FK "FK (packages.id), INDEX"
+        uuid theme_id FK "NULL; FK (themes.id), INDEX"
         boolean client_provides_mobility "default FALSE"
         numeric(6_2) calculated_distance_km "NULL; default 0.00"
         integer calculated_transit_minutes "NULL; default 0"
@@ -173,8 +173,8 @@ erDiagram
 
     QUOTE_EXTRAS {
         uuid id PK "default gen_random_uuid()"
-        uuid quote_id FK "FK (quotes.id ON DELETE CASCADE)"
-        uuid extra_id FK "FK (extras.id)"
+        uuid quote_id FK "FK (quotes.id ON DELETE CASCADE), INDEX"
+        uuid extra_id FK "FK (extras.id), INDEX"
         integer quantity "default 1; CHECK (quantity > 0)"
         numeric(10_2) unit_price
         numeric(10_2) subtotal
@@ -186,17 +186,17 @@ erDiagram
         uuid quote_id FK, UK "FK (quotes.id), UNIQUE"
         date event_date "INDEX"
         time start_time
-        time end_time
+        time end_time "CHECK (end_time <> start_time)"
         varchar(255) address
         varchar(80) district "INDEX"
         text client_observations "NULL"
         varchar(30) status "default 'AWAITING_SIGNATURE'; CHECK in (AWAITING_SIGNATURE, SCHEDULED, AWAITING_BALANCE, IN_PROGRESS, EXTENDED, SETTLED, CANCELLED)"
-        numeric(10_2) total_services_amount
-        numeric(10_2) total_mobility_amount
-        numeric(10_2) final_total_amount
-        numeric(10_2) advance_paid "default 0.00"
-        numeric(10_2) pre_show_balance_paid "default 0.00"
-        numeric(10_2) extra_hours_amount "default 0.00"
+        numeric(10_2) total_services_amount "CHECK (>= 0)"
+        numeric(10_2) total_mobility_amount "CHECK (>= 0)"
+        numeric(10_2) final_total_amount "CHECK (>= 0)"
+        numeric(10_2) advance_paid "default 0.00; CHECK (>= 0)"
+        numeric(10_2) pre_show_balance_paid "default 0.00; CHECK (>= 0)"
+        numeric(10_2) extra_hours_amount "default 0.00; CHECK (>= 0)"
         timestamptz created_at "default CURRENT_TIMESTAMP"
     }
 
@@ -234,11 +234,11 @@ erDiagram
         varchar(60) transaction_reference "NULL"
         varchar(30) validation_status "default 'PENDING_VERIFICATION'; CHECK in (PENDING_VERIFICATION, REQUIRES_MANUAL_APPROVAL, VERIFIED, REJECTED, REFUND_PENDING, REFUNDED)"
         text rejection_reason "NULL"
-        uuid verified_by_user_id FK "NULL; FK (users.id)"
+        uuid verified_by_user_id FK "NULL; FK (users.id), INDEX"
         timestamptz verified_at "NULL"
-        uuid registered_by_user_id FK "NULL; FK (users.id)"
+        uuid registered_by_user_id FK "NULL; FK (users.id), INDEX"
         varchar(20) audit_status "NULL; CHECK in (UNREVIEWED, REVIEWED, FLAGGED)"
-        uuid audited_by_user_id FK "NULL; FK (users.id)"
+        uuid audited_by_user_id FK "NULL; FK (users.id), INDEX"
         timestamptz audited_at "NULL"
         text audit_notes "NULL"
         timestamptz created_at "default CURRENT_TIMESTAMP"
@@ -289,7 +289,7 @@ erDiagram
         uuid id PK "default gen_random_uuid()"
         bigint chatwoot_conversation_id UK "UNIQUE"
         uuid client_id FK "FK (clients.id), INDEX"
-        uuid quote_id FK "NULL; FK (quotes.id)"
+        uuid quote_id FK "NULL; FK (quotes.id), INDEX"
         uuid assigned_user_id FK "NULL; FK (users.id); partial INDEX"
         varchar(30) handoff_reason "NULL; CHECK in (CLIENT_REQUEST, BOT_NOT_UNDERSTOOD, MANUAL_TAKEOVER, BOT_ERROR)"
         text handoff_summary "NULL"
@@ -300,7 +300,7 @@ erDiagram
 
     AUDIT_LOGS {
         uuid id PK "default gen_random_uuid()"
-        uuid user_id FK "NULL; FK (users.id)"
+        uuid user_id FK "NULL; FK (users.id), INDEX"
         varchar(50) action "CHECK in (OVERRIDE_MOBILITY, OVERRIDE_TRANSIT_INTERVAL, APPROVE_OVERBOOKED_PAYMENT, REJECT_OVERBOOKED_PAYMENT, AUDIT_PAYMENT, MANUAL_CONTRACT, CONTRACT_SIGNED)"
         varchar(50) entity_name
         uuid entity_id "INDEX (entity_name, entity_id)"
@@ -330,12 +330,17 @@ Restricciones compuestas, parciales o de varias columnas que no se pueden expres
 * **`contracts`**
   * `CREATE UNIQUE INDEX uq_contracts_event_active ON contracts (event_id) WHERE status <> 'VOIDED'`: un solo contrato vigente por evento; tras anular, se puede emitir uno nuevo.
   * `CHECK (status <> 'SIGNED' OR (signed_at IS NOT NULL AND sealed_pdf_storage_path IS NOT NULL AND sealed_pdf_sha256 IS NOT NULL))`
+* **`events`**
+  * `CHECK (<importe> >= 0)` en `total_services_amount`, `total_mobility_amount`, `final_total_amount`, `advance_paid`, `pre_show_balance_paid` y `extra_hours_amount`.
+  * `CHECK (end_time <> start_time)`: un evento que cruza la medianoche termina al día siguiente, por lo que no se exige `end_time > start_time`.
+* **`users`**
+  * `CREATE UNIQUE INDEX uq_users_email_lower ON users (lower(email))`: el correo es único sin distinguir mayúsculas.
 * **`payments`**
   * `CHECK ((concept = 'ADVANCE') = (audit_status IS NULL))`: solo los cobros in situ se auditan.
   * `CHECK (concept = 'ADVANCE' OR (validation_status = 'VERIFIED' AND registered_by_user_id IS NOT NULL AND event_id IS NOT NULL))`: `BALANCE` y `EXTENSION` se registran como verificados, por un usuario identificado y sobre un evento existente.
   * `CHECK (audit_status IS DISTINCT FROM 'FLAGGED' OR audit_notes IS NOT NULL)`
 * **`crew_assignments`**
-  * `UNIQUE(event_id, crew_id)`
+  * `UNIQUE(event_id, crew_id)`: también cubre las búsquedas por `event_id`.
 * **`outbox_messages`**
   * `INDEX(status, next_attempt_at)` para el despachador de mensajes pendientes.
 * **`conversation_links`**
