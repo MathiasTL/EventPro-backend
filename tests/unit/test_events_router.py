@@ -62,6 +62,7 @@ async def test_schedule_full_response_and_placeholders(web_app: FastAPI, role: R
             "event_date": "2026-10-15",
             "start_time": "21:30",
             "end_time": "22:30",
+            "end_date": "2026-10-15",
             "district": "Miraflores",
             "client_name": "Cliente pendiente de integración",
             "package_name": "Paquete pendiente de integración",
@@ -148,3 +149,15 @@ def test_schedule_is_registered_in_openapi(web_app: FastAPI) -> None:
         "authorization",
     }
     assert operation["responses"]["200"]["content"]["application/json"]["schema"]["type"] == "array"
+
+
+async def test_schedule_reports_operational_end_date_after_midnight(web_app: FastAPI) -> None:
+    event = make_event(status=EventStatus.EXTENDED, extra_minutes_total=150)
+    web_app.dependency_overrides[get_event_schedule_use_case] = lambda: GetEventScheduleUseCase(
+        FakeEventRepository([event]), FakeQuoteScheduleReadAdapter(), FakeCrewScheduleReadAdapter()
+    )
+    response = await request(web_app, headers=authorization())
+    assert response.status_code == 200
+    assert response.json()[0]["end_time"] == "01:00"
+    assert response.json()[0]["end_date"] == "2026-10-16"
+    assert event.end_time.strftime("%H:%M") == "22:30"

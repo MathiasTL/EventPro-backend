@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from app.domain.value_objects.event_status import EventStatus
+from app.domain.value_objects.money import Money
 from app.infrastructure.adapters.secondary.external_services.system_clock_adapter import (
     SystemClockAdapter,
 )
@@ -32,3 +34,10 @@ def test_system_clock_is_aware_utc() -> None:
     actual = SystemClockAdapter().utcnow()
     assert before <= actual <= datetime.now(UTC)
     assert actual.tzinfo is UTC
+
+
+def test_historical_credit_and_operational_minutes_survive_mapping() -> None:
+    event = make_event(legacy_extra_hours_amount=Money(Decimal("80")), extra_minutes_total=90)
+    row = event_to_model(event)
+    assert row.legacy_extra_hours_amount == Decimal("80")
+    assert event_to_domain(row) == event

@@ -163,9 +163,9 @@ async def test_register_advance_payment_rejects_invalid_file(
 ) -> None:
     class RejectingStorage(FakeEvidenceStorage):
         async def store(self, *, data: bytes, content_type: str, original_filename: str) -> str:
-            from app.domain.exceptions.resource_exceptions import ValidationError
+            from app.domain.exceptions.storage_exceptions import EvidenceValidationError
 
-            raise ValidationError("Tipo de archivo no permitido")
+            raise EvidenceValidationError("Tipo de archivo no permitido; use JPEG, PNG, WebP o PDF")
 
     web_app.dependency_overrides[containers.get_evidence_storage] = lambda: RejectingStorage()
     data, files = _multipart()
@@ -174,7 +174,8 @@ async def test_register_advance_payment_rejects_invalid_file(
     ) as client:
         response = await client.post(ADVANCE_PATH, headers=authorization(), data=data, files=files)
     assert response.status_code == 422
-    assert response.json()["type"].endswith("validation-error")
+    assert response.json()["type"].endswith("invalid-file")
+    assert "JPEG, PNG, WebP o PDF" in response.json()["detail"]
 
 
 async def test_register_duplicate_active_advance_conflicts(web_app: FastAPI) -> None:

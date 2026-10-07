@@ -42,6 +42,7 @@ class EventScheduleDTO:
     event_date: date
     start_time: time
     end_time: time
+    end_date: date
     district: str
     client_name: str
     package_name: str
