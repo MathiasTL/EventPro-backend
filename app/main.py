@@ -11,6 +11,7 @@ from app.infrastructure.adapters.primary.web import auth_router, health_router
 from app.infrastructure.adapters.primary.web.problem import install_exception_handlers
 from app.infrastructure.adapters.primary.web.rate_limit import install_rate_limit
 from app.infrastructure.adapters.primary.web.v1 import (
+    audit_logs_router,
     budgets_router,
     catalog_router,
     crew_router,
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     application.include_router(payments_router.router, prefix=settings.api_v1_prefix)
     application.include_router(budgets_router.router, prefix=settings.api_v1_prefix)
     application.include_router(manual_bookings_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(audit_logs_router.router, prefix=settings.api_v1_prefix)
     return application
 
 
