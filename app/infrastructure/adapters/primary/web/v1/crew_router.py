@@ -20,6 +20,7 @@ from app.infrastructure.adapters.primary.web.deps import AuthContext, require_ro
 from app.infrastructure.adapters.primary.web.problem import ProblemError
 from app.infrastructure.adapters.primary.web.schemas.crew_schemas import (
     CrewListResponse,
+    CrewPatchRequest,
     CrewRequest,
     CrewResponse,
 )
@@ -65,7 +66,7 @@ async def create_crew(
 @router.patch("/{crew_id}", response_model=CrewResponse)
 async def update_crew(
     crew_id: UUID,
-    payload: Annotated[CrewRequest, Body()],
+    payload: Annotated[CrewPatchRequest, Body()],
     context: Annotated[AuthContext, Depends(require_role(*_STAFF))],
     use_case: Annotated[ManageCrewsUseCase, Depends(containers.get_manage_crews_use_case)],
 ) -> CrewResponse:
@@ -76,6 +77,7 @@ async def update_crew(
             phone=payload.phone,
             service_category=payload.service_category,
             user_id=payload.user_id,
+            user_id_provided="user_id" in payload.model_fields_set,
             is_active=payload.is_active,
         )
     except ValidationError as exc:

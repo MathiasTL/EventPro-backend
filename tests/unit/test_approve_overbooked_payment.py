@@ -24,7 +24,7 @@ from app.domain.entities.payment import (
     PaymentMethod,
     PaymentValidationStatus,
 )
-from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
+from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
 from app.domain.value_objects.money import Money
 
 
@@ -41,16 +41,22 @@ def _payment(status: PaymentValidationStatus) -> Payment:
 
 def _use_case(
     payment: Payment | None,
-) -> tuple[ApproveOverbookedPaymentUseCase, AsyncMock, AsyncMock]:
+) -> tuple[ApproveOverbookedPaymentUseCase, AsyncMock, AsyncMock, AsyncMock]:
     payments = AsyncMock()
     payments.get_by_id.return_value = payment
     audit_port = AsyncMock()
-    return ApproveOverbookedPaymentUseCase(payments, AuditService(audit_port)), payments, audit_port
+    events = AsyncMock()
+    return (
+        ApproveOverbookedPaymentUseCase(payments, AuditService(audit_port), events),
+        payments,
+        audit_port,
+        events,
+    )
 
 
 def test_approve_overbooked_moves_payment_to_verified() -> None:
     payment = _payment(PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL)
-    use_case, payments, audit_port = _use_case(payment)
+    use_case, payments, audit_port, events = _use_case(payment)
     event_id = uuid4()
     user_id = uuid4()
 
@@ -66,6 +72,7 @@ def test_approve_overbooked_moves_payment_to_verified() -> None:
         )
     )
 
+    events.get_by_id_for_update.assert_awaited_once_with(event_id)
     assert payment.validation_status is PaymentValidationStatus.VERIFIED
     assert payment.verified_by_user_id == user_id
     assert result.event_created_id == event_id
@@ -78,7 +85,7 @@ def test_approve_overbooked_moves_payment_to_verified() -> None:
 
 def test_reject_overbooked_moves_payment_to_refund_pending() -> None:
     payment = _payment(PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL)
-    use_case, payments, audit_port = _use_case(payment)
+    use_case, payments, audit_port, _events = _use_case(payment)
 
     result = asyncio.run(
         use_case.execute(
@@ -99,7 +106,7 @@ def test_reject_overbooked_moves_payment_to_refund_pending() -> None:
 
 
 def test_missing_payment_raises() -> None:
-    use_case, _payments, _audit_port = _use_case(None)
+    use_case, _payments, _audit_port, _events = _use_case(None)
     with pytest.raises(ResourceNotFoundError):
         asyncio.run(
             use_case.execute(
@@ -107,14 +114,56 @@ def test_missing_payment_raises() -> None:
                     payment_id=uuid4(),
                     decision=OverbookedDecision.APPROVE,
                     decided_by_user_id=uuid4(),
+                    event_id=uuid4(),
                 )
             )
         )
 
 
+def test_unknown_event_does_not_persist_payment() -> None:
+    payment = _payment(PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL)
+    use_case, payments, audit_port, events = _use_case(payment)
+    events.get_by_id_for_update.return_value = None
+    event_id = uuid4()
+
+    with pytest.raises(ResourceNotFoundError, match="Evento no encontrado"):
+        asyncio.run(
+            use_case.execute(
+                ApproveOverbookedInput(
+                    payment_id=payment.id,
+                    decision=OverbookedDecision.APPROVE,
+                    decided_by_user_id=uuid4(),
+                    event_id=event_id,
+                )
+            )
+        )
+
+    events.get_by_id_for_update.assert_awaited_once_with(event_id)
+    payments.save.assert_not_awaited()
+    audit_port.record.assert_not_awaited()
+    assert payment.validation_status is PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL
+
+
+def test_approval_requires_event_id() -> None:
+    payment = _payment(PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL)
+    use_case, payments, _audit_port, events = _use_case(payment)
+    with pytest.raises(ValidationError, match="event_id"):
+        asyncio.run(
+            use_case.execute(
+                ApproveOverbookedInput(
+                    payment_id=payment.id,
+                    decision=OverbookedDecision.APPROVE,
+                    decided_by_user_id=uuid4(),
+                )
+            )
+        )
+    events.get_by_id_for_update.assert_not_awaited()
+    payments.save.assert_not_awaited()
+
+
 def test_payment_not_awaiting_manual_approval_raises() -> None:
     payment = _payment(PaymentValidationStatus.PENDING_VERIFICATION)
-    use_case, _payments, _audit_port = _use_case(payment)
+    use_case, _payments, _audit_port, _events = _use_case(payment)
     with pytest.raises(InvalidPaymentStateError):
         asyncio.run(
             use_case.execute(
@@ -122,6 +171,7 @@ def test_payment_not_awaiting_manual_approval_raises() -> None:
                     payment_id=payment.id,
                     decision=OverbookedDecision.APPROVE,
                     decided_by_user_id=uuid4(),
+                    event_id=uuid4(),
                 )
             )
         )

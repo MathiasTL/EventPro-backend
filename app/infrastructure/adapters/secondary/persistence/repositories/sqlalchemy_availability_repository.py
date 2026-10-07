@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.value_objects.time_window import TimeWindow
@@ -38,7 +38,7 @@ class InventoryRequirementRow:
 
 @dataclass(frozen=True)
 class EventWindowRow:
-    """Evento que cuenta para el umbral, con su ventana programada."""
+    """Evento que cuenta para el umbral, con su ventana operativa."""
 
     event_id: UUID
     status: str
@@ -111,26 +111,39 @@ class SqlAlchemyAvailabilityRepository:
         validado (RN-04), por lo que no se filtra por pagos.
         """
 
-        start_date = window.start.date() - timedelta(days=1)
-        end_date = window.end.date() + timedelta(days=1)
+        # PostgreSQL compone fecha + hora como timestamp local. El contrato de
+        # TimeWindow interpreta esas marcas como UTC; quitar tzinfo de los
+        # parámetros mantiene la misma convención en el filtro SQL.
+        scheduled_start = EventModel.event_date + EventModel.start_time
+        scheduled_end = (
+            EventModel.event_date
+            + EventModel.end_time
+            + case(
+                (EventModel.end_time < EventModel.start_time, timedelta(days=1)),
+                else_=timedelta(0),
+            )
+        )
+        operational_end = scheduled_end + func.make_interval(
+            0, 0, 0, 0, 0, EventModel.extra_minutes_total
+        )
         stmt = (
             select(EventModel)
             .where(
-                EventModel.event_date >= start_date,
-                EventModel.event_date <= end_date,
+                scheduled_start < window.end.replace(tzinfo=None),
+                operational_end > window.start.replace(tzinfo=None),
                 EventModel.status != "CANCELLED",
             )
             .order_by(EventModel.event_date, EventModel.start_time)
         )
         events = (await self._session.execute(stmt)).scalars().all()
-        return tuple(
-            EventWindowRow(
-                event_id=event.id,
-                status=event.status,
-                window=TimeWindow.from_event(event.event_date, event.start_time, event.end_time),
+        result: list[EventWindowRow] = []
+        for event in events:
+            scheduled = TimeWindow.from_event(event.event_date, event.start_time, event.end_time)
+            operational = TimeWindow(
+                scheduled.start, scheduled.end + timedelta(minutes=event.extra_minutes_total)
             )
-            for event in events
-            if TimeWindow.from_event(event.event_date, event.start_time, event.end_time).overlaps(
-                window
-            )
-        )
+            if operational.overlaps(window):
+                result.append(
+                    EventWindowRow(event_id=event.id, status=event.status, window=operational)
+                )
+        return tuple(result)

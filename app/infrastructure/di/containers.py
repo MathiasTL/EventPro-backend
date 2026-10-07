@@ -336,7 +336,11 @@ def get_manage_crews_use_case(
 def get_approve_overbooked_payment_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ApproveOverbookedPaymentUseCase:
-    return ApproveOverbookedPaymentUseCase(get_payment_repository(session), get_audit_service())
+    return ApproveOverbookedPaymentUseCase(
+        get_payment_repository(session),
+        get_audit_service(),
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+    )
 
 
 def clear_application_caches() -> None:

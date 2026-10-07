@@ -55,19 +55,28 @@ class ManageCrewsUseCase:
         self,
         crew_id: UUID,
         *,
-        leader_name: str,
-        phone: str,
-        service_category: ServiceCategory,
+        leader_name: str | None = None,
+        phone: str | None = None,
+        service_category: ServiceCategory | None = None,
         user_id: UUID | None = None,
-        is_active: bool = True,
+        user_id_provided: bool = False,
+        is_active: bool | None = None,
     ) -> CrewDTO:
-        await self._ensure_user_can_be_linked(user_id, crew_id=crew_id)
+        existing = await self._crews.get_crew(crew_id)
+        if existing is None:
+            raise ResourceNotFoundError("Elenco no encontrado")
+        change_user = user_id_provided or user_id is not None
+        resolved_user_id = user_id if change_user else existing.user_id
+        if change_user and resolved_user_id is not None:
+            await self._ensure_user_can_be_linked(resolved_user_id, crew_id=crew_id)
         crew = Crew(
-            leader_name=leader_name,
-            phone=phone,
-            service_category=service_category,
-            user_id=user_id,
-            is_active=is_active,
+            leader_name=leader_name if leader_name is not None else existing.leader_name,
+            phone=phone if phone is not None else existing.phone,
+            service_category=(
+                service_category if service_category is not None else existing.service_category
+            ),
+            user_id=resolved_user_id,
+            is_active=is_active if is_active is not None else existing.is_active,
             id=crew_id,
         )
         return await self._crews.update_crew(crew)

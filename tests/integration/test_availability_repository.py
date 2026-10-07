@@ -11,7 +11,7 @@ SQL directo.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
 from app.domain.value_objects.time_window import TimeWindow
 from app.infrastructure.adapters.secondary.persistence import (
     SqlAlchemyAvailabilityRepository,
@@ -37,6 +38,12 @@ from app.infrastructure.adapters.secondary.persistence.models.event_resource_mod
 from ._support import run_migrations
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit() -> None:
+    """Estas consultas de repositorio no usan el limiter HTTP ni Redis."""
+
 
 _DAY = date(2026, 12, 24)
 _SENT_AT = datetime(2026, 12, 24, 10, 0, tzinfo=UTC)
@@ -87,18 +94,21 @@ async def _create_event(
     *,
     quote_id: UUID,
     status: str = "SCHEDULED",
+    event_date: date = _DAY,
+    extra_minutes_total: int = 0,
 ) -> EventModel:
     event = EventModel(
         id=uuid4(),
         event_code=code,
         quote_id=quote_id,
-        event_date=_DAY,
+        event_date=event_date,
         start_time=start,
         end_time=end,
         address="Av. Primavera 123",
         district="San Borja",
         client_observations=None,
         status=status,
+        extra_minutes_total=extra_minutes_total,
         total_services_amount=Decimal("1000.00"),
         total_mobility_amount=Decimal("0.00"),
         final_total_amount=Decimal("1000.00"),
@@ -268,3 +278,103 @@ def test_availability_repository_queries(database_url: str) -> None:
     assert only_overlapping_counted
     assert excluded_from_threshold
     assert no_requirements
+
+
+def test_extended_events_count_for_availability(database_url: str) -> None:
+    """La extensión cuenta incluso tras medianoche y fuera del filtro de ±1 día."""
+    run_migrations(database_url)
+
+    async def _exercise() -> tuple[bool, bool, bool, bool]:
+        engine = build_engine(database_url)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        try:
+            async with factory() as session:
+                day = _DAY + timedelta(days=10)
+                package = PackageModel(
+                    id=uuid4(),
+                    name="Show de prueba de extensiones",
+                    service_category="SHOW",
+                    base_price=Decimal("900.00"),
+                    direct_cost=Decimal("450.00"),
+                    duration_minutes=60,
+                    is_active=True,
+                )
+                session.add(package)
+                await session.flush()
+                client_id = uuid4()
+                await session.execute(
+                    _INSERT_CLIENT,
+                    {"id": client_id, "phone": "+51988000112", "full_name": "Cliente Extensión"},
+                )
+
+                async def quote(at: time) -> UUID:
+                    return await _new_quote(
+                        session, client_id=client_id, package_id=package.id, event_time=at
+                    )
+
+                first = await _create_event(
+                    session,
+                    "EVT-2026-0011",
+                    time(19),
+                    time(20),
+                    quote_id=await quote(time(19)),
+                    event_date=day,
+                    extra_minutes_total=60,
+                )
+                second = await _create_event(
+                    session,
+                    "EVT-2026-0012",
+                    time(19, 30),
+                    time(20),
+                    quote_id=await quote(time(19, 30)),
+                    event_date=day,
+                    extra_minutes_total=60,
+                )
+                midnight = await _create_event(
+                    session,
+                    "EVT-2026-0013",
+                    time(23),
+                    time(23, 30),
+                    quote_id=await quote(time(23)),
+                    event_date=day,
+                    extra_minutes_total=90,
+                )
+                earlier = await _create_event(
+                    session,
+                    "EVT-2026-0014",
+                    time(19),
+                    time(20),
+                    quote_id=await quote(time(19)),
+                    event_date=day - timedelta(days=2),
+                    extra_minutes_total=3000,
+                )
+                await session.commit()
+
+                repository = SqlAlchemyAvailabilityRepository(session)
+                extension_window = TimeWindow.from_schedule(day, time(20, 30), 30)
+                extended = await repository.list_countable_events(extension_window)
+                extended_ids = {row.event_id for row in extended}
+                crosses_midnight = await repository.list_countable_events(
+                    TimeWindow.from_schedule(day + timedelta(days=1), time(0, 15), 30)
+                )
+                long_extension = await repository.list_countable_events(
+                    TimeWindow.from_schedule(day, time(21, 30), 30)
+                )
+                return (
+                    extended_ids == {first.id, second.id, earlier.id},
+                    ConcurrencyEvaluator(threshold=3).requires_manual_approval(
+                        [row.window for row in extended], extension_window
+                    ),
+                    {row.event_id for row in crosses_midnight} == {midnight.id},
+                    {row.event_id for row in long_extension} == {earlier.id},
+                )
+        finally:
+            await engine.dispose()
+
+    during_extension, exceeds_threshold, after_midnight, beyond_previous_date = asyncio.run(
+        _exercise()
+    )
+    assert during_extension
+    assert exceeds_threshold
+    assert after_midnight
+    assert beyond_previous_date
