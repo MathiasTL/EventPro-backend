@@ -12,7 +12,10 @@ from app.infrastructure.adapters.primary.web.problem import install_exception_ha
 from app.infrastructure.adapters.primary.web.rate_limit import install_rate_limit
 from app.infrastructure.adapters.primary.web.v1 import (
     audit_logs_router,
+    catalog_router,
+    crew_router,
     events_router,
+    overrides_router,
     payments_router,
 )
 from app.infrastructure.di.containers import shutdown_infrastructure
@@ -62,6 +65,9 @@ def create_app() -> FastAPI:
     application.include_router(health_router.router)
     application.include_router(auth_router.router, prefix=settings.api_v1_prefix)
     application.include_router(events_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(catalog_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(crew_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(overrides_router.router, prefix=settings.api_v1_prefix)
     application.include_router(payments_router.router, prefix=settings.api_v1_prefix)
     application.include_router(audit_logs_router.router, prefix=settings.api_v1_prefix)
     return application
