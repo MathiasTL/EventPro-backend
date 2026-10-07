@@ -1,7 +1,9 @@
 """Gestión de usuarios E2E contra PostgreSQL real (testcontainers)."""
 
+import asyncio
 import uuid
 from unittest.mock import patch
+from uuid import UUID
 
 import httpx
 import pytest
@@ -10,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.core.security import hash_password
+from app.infrastructure.adapters.secondary.persistence.database import get_sessionmaker
 from app.main import app
 
 PATH = "/api/v1/users"
@@ -84,6 +87,53 @@ async def _find_by_email(email: str, headers: dict[str, str]) -> dict[str, objec
     assert response.status_code == 200, response.text
     items = response.json()["items"]
     return next((item for item in items if item["email"] == email), None)
+
+
+async def _deactivate_other_superadmins(exclude: list[UUID]) -> list[UUID]:
+    """Aísla a los SUPERADMIN indicados: desactiva al resto (se restaura al final)."""
+
+    async with get_sessionmaker()() as session:
+        superseded = (
+            (
+                await session.execute(
+                    text(
+                        "UPDATE users SET is_active = false "
+                        "WHERE is_active "
+                        "AND role_id IN (SELECT id FROM roles WHERE code = 'SUPERADMIN') "
+                        "AND NOT (id = ANY(:exclude)) RETURNING id"
+                    ),
+                    {"exclude": exclude},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        await session.commit()
+    return list(superseded)
+
+
+async def _restore_superadmins(ids: list[UUID]) -> None:
+    if not ids:
+        return
+    async with get_sessionmaker()() as session:
+        await session.execute(
+            text("UPDATE users SET is_active = true WHERE id = ANY(:ids)"), {"ids": ids}
+        )
+        await session.commit()
+
+
+async def _superadmin_states(user_ids: list[UUID]) -> dict[str, tuple[str, bool]]:
+    async with get_sessionmaker()() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT u.id, r.code, u.is_active FROM users u "
+                    "JOIN roles r ON r.id = u.role_id WHERE u.id = ANY(:ids)"
+                ),
+                {"ids": user_ids},
+            )
+        ).all()
+    return {str(row[0]): (row[1], row[2]) for row in rows}
 
 
 async def test_superadmin_creates_lists_reads_and_updates_user(infra: None) -> None:
@@ -372,3 +422,88 @@ async def test_database_rejects_duplicate_email_and_phone(infra: None) -> None:
             )
             await session.commit()
         await session.rollback()
+
+
+async def test_simultaneous_demotions_cannot_both_win(infra: None) -> None:
+    """Dos SUPERADMIN que se degradan a la vez: exactamente una mutación gana."""
+
+    email_a = await _seed_user(role="SUPERADMIN")
+    email_b = await _seed_user(role="SUPERADMIN")
+    headers_a = await _headers_for(email_a)
+    headers_b = await _headers_for(email_b)
+    target_a = await _find_by_email(email_a, headers_a)
+    target_b = await _find_by_email(email_b, headers_a)
+    assert target_a is not None and target_b is not None
+    id_a = uuid.UUID(str(target_a["id"]))
+    id_b = uuid.UUID(str(target_b["id"]))
+
+    superseded = await _deactivate_other_superadmins([id_a, id_b])
+    try:
+        demote_b, demote_a = await asyncio.gather(
+            _request("PATCH", f"{PATH}/{id_b}", json={"role": "OPERADOR"}, headers=headers_a),
+            _request("PATCH", f"{PATH}/{id_a}", json={"role": "OPERADOR"}, headers=headers_b),
+        )
+
+        statuses = [demote_b.status_code, demote_a.status_code]
+        assert statuses.count(200) == 1, statuses
+        loser = demote_a if demote_b.status_code == 200 else demote_b
+        assert loser.status_code in (403, 422), loser.text
+
+        states = await _superadmin_states([id_a, id_b])
+        assert sorted(code for code, _ in states.values()) == ["OPERADOR", "SUPERADMIN"], states
+        assert all(active for _, active in states.values()), states
+    finally:
+        await _restore_superadmins(superseded)
+
+
+async def test_concurrent_demotions_serialize_on_the_user_lock(infra: None) -> None:
+    """La guarda del último SUPERADMIN sobrevive a dos mutaciones solapadas."""
+
+    from app.application.dtos.user_dto import UserPatch
+    from app.domain.exceptions.resource_exceptions import ValidationError
+    from app.domain.value_objects.role import Role
+    from app.infrastructure.adapters.secondary.persistence.user_repository import (
+        _USER_UPDATE_LOCK_KEY,
+        SQLAlchemyUserRepository,
+    )
+
+    email_a = await _seed_user(role="SUPERADMIN")
+    email_b = await _seed_user(role="SUPERADMIN")
+    factory = get_sessionmaker()
+    async with factory() as session:
+        id_a = await session.scalar(
+            text("SELECT id FROM users WHERE email = :email"), {"email": email_a}
+        )
+        id_b = await session.scalar(
+            text("SELECT id FROM users WHERE email = :email"), {"email": email_b}
+        )
+    assert id_a is not None and id_b is not None
+
+    superseded = await _deactivate_other_superadmins([id_a, id_b])
+    repository = SQLAlchemyUserRepository(factory)
+    try:
+        async with factory() as holder:
+            await holder.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": _USER_UPDATE_LOCK_KEY}
+            )
+            first = asyncio.create_task(repository.update(id_b, UserPatch(role=Role.OPERADOR)))
+            second = asyncio.create_task(repository.update(id_a, UserPatch(role=Role.OPERADOR)))
+            await asyncio.sleep(0.1)
+            assert not first.done() and not second.done(), (
+                "ambas mutaciones deberían estar bloqueadas en el advisory lock"
+            )
+            await holder.rollback()
+            results = await asyncio.wait_for(
+                asyncio.gather(first, second, return_exceptions=True), timeout=10
+            )
+
+        failures = [r for r in results if isinstance(r, BaseException)]
+        successes = [r for r in results if not isinstance(r, BaseException)]
+        assert len(successes) == 1, results
+        assert len(failures) == 1 and isinstance(failures[0], ValidationError), results
+
+        states = await _superadmin_states([id_a, id_b])
+        assert sorted(code for code, _ in states.values()) == ["OPERADOR", "SUPERADMIN"], states
+        assert all(active for _, active in states.values()), states
+    finally:
+        await _restore_superadmins(superseded)
