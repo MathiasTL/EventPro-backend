@@ -35,9 +35,9 @@ Almacena los administradores (encargados) y personal operativo del negocio.
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador único del usuario. |
-| `role_id` | `UUID` | NO | - | FK (`roles.id`) | Rol asignado al usuario. |
+| `role_id` | `UUID` | NO | - | FK (`roles.id`), INDEX | Rol asignado al usuario. |
 | `full_name` | `VARCHAR(120)` | NO | - | - | Nombres y apellidos completos. |
-| `email` | `VARCHAR(150)` | NO | - | UNIQUE | Correo electrónico de inicio de sesión. |
+| `email` | `VARCHAR(150)` | NO | - | UNIQUE sin distinción de mayúsculas (`uq_users_email_lower` sobre `lower(email)`) | Correo electrónico de inicio de sesión. `Ana@x.pe` y `ana@x.pe` son el mismo correo. |
 | `phone` | `VARCHAR(20)` | NO | - | UNIQUE | Teléfono móvil de contacto. |
 | `hashed_password` | `VARCHAR(255)` | NO | - | - | Hash de contraseña con Argon2id/Bcrypt. |
 | `is_active` | `BOOLEAN` | NO | `TRUE` | - | Indica si el usuario está habilitado en el sistema. |
@@ -110,7 +110,7 @@ Relación muchos a muchos entre paquetes y temáticas compatibles.
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador de la relación. |
 | `package_id` | `UUID` | NO | - | FK (`packages.id`) | Paquete vinculado. |
-| `theme_id` | `UUID` | NO | - | FK (`themes.id`) | Temática compatible. |
+| `theme_id` | `UUID` | NO | - | FK (`themes.id`), INDEX | Temática compatible. |
 
 *Restricciones de tabla:*
 * `UNIQUE(package_id, theme_id)`
@@ -152,7 +152,7 @@ Reservas de unidades de inventario por evento, ítem y ventana de tiempo. Al cre
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador único de la reserva. |
 | `event_id` | `UUID` | NO | - | FK (`events.id`), INDEX | Evento que consume el inventario. |
-| `inventory_item_id` | `UUID` | NO | - | FK (`inventory_items.id`) | Ítem reservado. |
+| `inventory_item_id` | `UUID` | NO | - | FK (`inventory_items.id`), INDEX (primera columna del índice compuesto) | Ítem reservado. |
 | `quantity` | `INTEGER` | NO | `1` | CHECK (`quantity > 0`) | Unidades reservadas. |
 | `starts_at` | `TIMESTAMPTZ` | NO | - | - | Inicio de la ventana de reserva (incluye armado). |
 | `ends_at` | `TIMESTAMPTZ` | NO | - | CHECK (`ends_at > starts_at`) | Fin de la ventana de reserva (incluye desarme). |
@@ -178,8 +178,8 @@ Registra las solicitudes de cotización generadas por WhatsApp o por panel admin
 | `location_district` | `VARCHAR(80)` | NO | - | INDEX | Distrito de Lima Metropolitana / Callao. |
 | `latitude` | `NUMERIC(10,7)` | SÍ | `NULL` | - | Coordenada de latitud. |
 | `longitude` | `NUMERIC(10,7)` | SÍ | `NULL` | - | Coordenada de longitud. |
-| `package_id` | `UUID` | NO | - | FK (`packages.id`) | Paquete seleccionado. |
-| `theme_id` | `UUID` | SÍ | `NULL` | FK (`themes.id`) | Temática seleccionada. |
+| `package_id` | `UUID` | NO | - | FK (`packages.id`), INDEX | Paquete seleccionado. |
+| `theme_id` | `UUID` | SÍ | `NULL` | FK (`themes.id`), INDEX | Temática seleccionada. |
 | `client_provides_mobility` | `BOOLEAN` | NO | `FALSE` | - | Si el cliente provee movilidad (costo S/. 0). |
 | `calculated_distance_km` | `NUMERIC(6,2)` | SÍ | `0.00` | - | Distancia ida y vuelta calculada por Maps. |
 | `calculated_transit_minutes` | `INTEGER` | SÍ | `0` | - | Minutos de tránsito ida y vuelta. |
@@ -207,8 +207,8 @@ Detalle de extras incluidos en una cotización.
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del ítem. |
-| `quote_id` | `UUID` | NO | - | FK (`quotes.id` ON DELETE CASCADE) | Cotización vinculada. |
-| `extra_id` | `UUID` | NO | - | FK (`extras.id`) | Extra seleccionado. |
+| `quote_id` | `UUID` | NO | - | FK (`quotes.id` ON DELETE CASCADE), INDEX | Cotización vinculada. |
+| `extra_id` | `UUID` | NO | - | FK (`extras.id`), INDEX | Extra seleccionado. |
 | `quantity` | `INTEGER` | NO | `1` | CHECK (`quantity > 0`) | Cantidad contratada. |
 | `unit_price` | `NUMERIC(10,2)` | NO | - | - | Precio unitario congelado al cotizar. |
 | `subtotal` | `NUMERIC(10,2)` | NO | - | - | Cantidad × Precio unitario. |
@@ -225,34 +225,29 @@ Entidad principal del cronograma y ejecución operativa del servicio. Se crea ú
 | `quote_id` | `UUID` | NO | - | FK (`quotes.id`), UNIQUE | Cotización originaria (también para contratos manuales, que generan una cotización `MANUAL`). |
 | `event_date` | `DATE` | NO | - | INDEX | Fecha confirmada del evento. |
 | `start_time` | `TIME` | NO | - | - | Hora de inicio programada. |
-| `end_time` | `TIME` | NO | - | - | Hora de término programada. |
+| `end_time` | `TIME` | NO | - | CHECK (`end_time <> start_time`) | Hora de término programada. Puede ser anterior a `start_time` cuando el evento cruza la medianoche (termina al día siguiente). |
 | `address` | `VARCHAR(255)` | NO | - | - | Dirección confirmada. |
 | `district` | `VARCHAR(80)` | NO | - | INDEX | Distrito. |
 | `client_observations` | `TEXT` | SÍ | `NULL` | - | Directrices especiales del cliente (visibles en cronograma). |
 | `status` | `VARCHAR(30)` | NO | `'AWAITING_SIGNATURE'` | CHECK in (`AWAITING_SIGNATURE`, `SCHEDULED`, `AWAITING_BALANCE`, `IN_PROGRESS`, `EXTENDED`, `SETTLED`, `CANCELLED`) | Estado operativo (ver RN, sección 3.3). La aprobación manual por umbral de simultaneidad es un estado del pago (`REQUIRES_MANUAL_APPROVAL`), no un campo del evento; el aprobador queda en `payments.verified_by_user_id`. |
-| `total_services_amount` | `NUMERIC(10,2)` | NO | - | - | Monto liquidado de servicios. |
-| `total_mobility_amount` | `NUMERIC(10,2)` | NO | - | - | Monto liquidado de movilidad. |
-| `final_total_amount` | `NUMERIC(10,2)` | NO | - | - | Total final facturado. |
-| `advance_paid` | `NUMERIC(10,2)` | NO | `0.00` | - | Adelanto verificado (suma de pagos `ADVANCE` en `VERIFIED`). |
-| `pre_show_balance_paid` | `NUMERIC(10,2)` | NO | `0.00` | - | Saldo + movilidad cobrado antes de iniciar el show (suma de pagos `BALANCE`). |
-| `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | - | Monto adicional por extensiones en vivo (suma de pagos `EXTENSION`). |
+| `total_services_amount` | `NUMERIC(10,2)` | NO | - | CHECK (`>= 0`) | Monto liquidado de servicios. |
+| `total_mobility_amount` | `NUMERIC(10,2)` | NO | - | CHECK (`>= 0`) | Monto liquidado de movilidad. |
+| `final_total_amount` | `NUMERIC(10,2)` | NO | - | CHECK (`>= 0`) | Total final facturado. |
+| `advance_paid` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Adelanto verificado (suma de pagos `ADVANCE` en `VERIFIED`). |
+| `pre_show_balance_paid` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Saldo + movilidad cobrado antes de iniciar el show (suma de pagos `BALANCE`). |
+| `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Monto adicional por extensiones en vivo (suma de pagos `EXTENSION`). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de registro. |
 | `actual_start_time` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Inicio real en UTC, registrado por el servidor al pasar a `IN_PROGRESS` (US-17 parcial). Eventos históricos conservan `NULL`. |
 | `extra_minutes_total` | `INTEGER` | NO | `0` | CHECK (`extra_minutes_total >= 0`) | Minutos acumulados de las extensiones cobradas; el horario contratado se conserva. |
 
-> **US-16, Slice 1:** la revisión `0004_events` crea `events` con sus columnas,
-> defaults, índices, CHECK de estados y unicidad de `event_code`/`quote_id`.
-> Por acuerdo de integración, `quote_id` es UUID obligatorio y único pero aún
-> **no tiene FOREIGN KEY**: `quotes` no existe en develop. Una revisión posterior,
-> después de integrar E1 y verificar referencias existentes, añadirá esa FK.
-> No se crean tablas de E1/E3/E5 en esta revisión; `events.id` ya puede ser
-> referenciado por `payments.event_id` y `crew_assignments.event_id`.
-
-> **US-17 parcial:** `0005_event_actual_start_time` añade únicamente la columna
-> de inicio real. `/start` sincroniza `pre_show_balance_paid` con el total
-> `BALANCE` verificado por el puerto de E5, no con una declaración del cliente.
-> Estado, total verificado e instante se persisten en una misma transacción
-> bajo bloqueo de fila. La revisión `0004_events` permanece inmutable.
+> **Claves foráneas y restricciones de `events`:** `quote_id` es UUID obligatorio y
+> único, con FOREIGN KEY a `quotes.id` (sin `ON DELETE`: una cotización con evento no
+> se elimina). Todos los importes de dinero son no negativos y `end_time <> start_time`
+> (un evento que cruza la medianoche termina al día siguiente, por lo que no se exige
+> `end_time > start_time`). `actual_start_time` es nulo hasta que el evento pasa a
+> `IN_PROGRESS`: `/start` sincroniza `pre_show_balance_paid` con el total `BALANCE`
+> verificado por el puerto de E5, no con una declaración del cliente, y persiste
+> estado, total verificado e instante en una misma transacción bajo bloqueo de fila.
 
 ---
 
@@ -303,11 +298,11 @@ Registro de pagos de una cotización: adelanto (`ADVANCE`, con ciclo de verifica
 | `transaction_reference` | `VARCHAR(60)` | SÍ | `NULL` | - | Número de operación bancaria o de Yape. |
 | `validation_status` | `VARCHAR(30)` | NO | `'PENDING_VERIFICATION'` | CHECK in (`PENDING_VERIFICATION`, `REQUIRES_MANUAL_APPROVAL`, `VERIFIED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED`) | Estado del pago (ver RN, sección 3.2). Los pagos `BALANCE` y `EXTENSION` nacen en `VERIFIED`. |
 | `rejection_reason` | `TEXT` | SÍ | `NULL` | - | Motivo de rechazo para el flujo de reintento. |
-| `verified_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Encargado que validó el adelanto o aprobó el sobrecupo. |
+| `verified_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que validó el adelanto o aprobó el sobrecupo. |
 | `verified_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha de verificación. |
-| `registered_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Operador o encargado que registró el cobro in situ; nulo en `ADVANCE` (lo envía el cliente por WhatsApp). |
+| `registered_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Operador o encargado que registró el cobro in situ; nulo en `ADVANCE` (lo envía el cliente por WhatsApp). |
 | `audit_status` | `VARCHAR(20)` | SÍ | `NULL` | CHECK in (`UNREVIEWED`, `REVIEWED`, `FLAGGED`) | Auditoría posterior del encargado (ver RN, sección 3.2); nulo en `ADVANCE`, `UNREVIEWED` al registrar un `BALANCE` o `EXTENSION`. |
-| `audited_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Encargado que revisó o marcó el cobro. |
+| `audited_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que revisó o marcó el cobro. |
 | `audited_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora de la auditoría. |
 | `audit_notes` | `TEXT` | SÍ | `NULL` | - | Observaciones de la auditoría (obligatorias al marcar `FLAGGED`). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de carga o registro del pago. |
@@ -339,7 +334,7 @@ Asignación de un elenco a un evento, con el intervalo de tránsito aplicado (RF
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador de la asignación. |
-| `event_id` | `UUID` | NO | - | FK (`events.id`), INDEX | Evento atendido. |
+| `event_id` | `UUID` | NO | - | FK (`events.id`), INDEX (cubierto por `UNIQUE(event_id, crew_id)`) | Evento atendido. |
 | `crew_id` | `UUID` | NO | - | FK (`crews.id`), INDEX | Elenco asignado. |
 | `transit_interval_minutes` | `INTEGER` | SÍ | `NULL` | CHECK (`transit_interval_minutes >= 0`) | Intervalo de tránsito aplicado respecto del evento anterior del elenco; nulo si es el primero del día. |
 | `transit_interval_overridden` | `BOOLEAN` | NO | `FALSE` | - | Si el encargado modificó el intervalo sugerido (la justificación se registra en `audit_logs`). |
@@ -401,7 +396,7 @@ Bitácora de auditoría para trazabilidad de decisiones críticas y procesos de 
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del log. |
-| `user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Usuario responsable de la acción; nulo en acciones del sistema o del cliente (por ejemplo, la firma). |
+| `user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Usuario responsable de la acción; nulo en acciones del sistema o del cliente (por ejemplo, la firma). |
 | `action` | `VARCHAR(50)` | NO | - | CHECK in (`OVERRIDE_MOBILITY`, `OVERRIDE_TRANSIT_INTERVAL`, `APPROVE_OVERBOOKED_PAYMENT`, `REJECT_OVERBOOKED_PAYMENT`, `AUDIT_PAYMENT`, `MANUAL_CONTRACT`, `CONTRACT_SIGNED`, `SEND_CONVERSATION_MESSAGE`, `OVERRIDE_CONVERSATION_ASSIGNMENT`) | Acción registrada. `SEND_CONVERSATION_MESSAGE` identifica al encargado que escribió un mensaje enviado con el agente de servicio de Chatwoot (ADR-10). `OVERRIDE_CONVERSATION_ASSIGNMENT` registra la reasignación de una conversación por un `SUPERADMIN`. `CONTRACT_SIGNED` guarda en `new_values` el SHA-256 del PDF sellado, la verificación del OTP, la IP, el agente de usuario y las marcas de tiempo. |
 | `entity_name` | `VARCHAR(50)` | NO | - | - | Entidad modificada (`quotes`, `events`, `contracts`, `payments`, `crew_assignments`). |
 | `entity_id` | `UUID` | NO | - | INDEX (`entity_name`, `entity_id`) | UUID de la entidad en cuestión. |
@@ -438,7 +433,7 @@ Vínculo entre una conversación de Chatwoot y los datos de negocio de EventPro 
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del vínculo. |
 | `chatwoot_conversation_id` | `BIGINT` | NO | - | UNIQUE | Identificador de la conversación en Chatwoot. |
 | `client_id` | `UUID` | NO | - | FK (`clients.id`), INDEX | Cliente de la conversación (el teléfono de WhatsApp es su clave natural). |
-| `quote_id` | `UUID` | SÍ | `NULL` | FK (`quotes.id`) | Cotización vigente de la conversación, si existe. |
+| `quote_id` | `UUID` | SÍ | `NULL` | FK (`quotes.id`), INDEX | Cotización vigente de la conversación, si existe. |
 | `assigned_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX parcial | Encargado que tomó la conversación; nulo mientras responde el bot o si está derivada sin asignar. |
 | `handoff_reason` | `VARCHAR(30)` | SÍ | `NULL` | CHECK in (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`) | Motivo de la última derivación a un humano; nulo si nunca fue derivada. UI: «Solicitud del cliente», «Bot no entendió», «Toma manual», «Error del bot». |
 | `handoff_summary` | `TEXT` | SÍ | `NULL` | - | Resumen generado al derivar (datos capturados y cotización vigente). |
