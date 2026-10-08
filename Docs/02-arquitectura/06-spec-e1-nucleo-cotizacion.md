@@ -205,7 +205,20 @@ Puertas de calidad: `ruff check`, `ruff format --check`, `mypy --strict` y cober
 1. **Comprobante tardío aprobado:** un comprobante recibido después del vencimiento entra en `REQUIRES_MANUAL_APPROVAL` (RF-11). La documentación no define si, al aprobarse, la cotización pasa de `EXPIRED` a `CONVERTED`. En este bloque **no se permite** esa transición; debe resolverse con E5 antes de implementar la aprobación de comprobantes tardíos.
 2. **Valores de tarifa de movilidad y montos por zona:** supuestos iniciales (sección 2.1) a validar con el negocio.
 3. **Proveedor de rutas:** Google Maps Platform u alternativa; se decide en el bloque del bot.
-4. **Migración del flujo manual (PR #22):** reemplazar su SQL crudo sobre `quotes` y `clients` por los repositorios de este bloque, y corregir su `pending_balance`, que hoy omite la movilidad (contradice RN-02 cuando la movilidad es distinta de cero).
+4. **Migración del flujo manual (PR #22):** reemplazar su SQL crudo sobre `quotes` y `clients` por los repositorios de este bloque, y corregir su `pending_balance`, que hoy omite la movilidad (contradice RN-02 cuando la movilidad es distinta de cero). Detalle en la sección 5.1.
+
+### 5.1 Acción para el flujo manual (responsable: autor del PR #22)
+
+El flujo administrativo manual ([`04-api/03-flujo-manual-entregable.md`](../04-api/03-flujo-manual-entregable.md)) se implementó antes de este núcleo. Para que E1 sea el único dueño de `quotes` y `clients`, debe migrarse en un PR propio:
+
+| Hoy en el flujo manual | Reemplazo en este núcleo |
+| :--- | :--- |
+| `INSERT`/`UPDATE` crudos sobre `quotes` con estados literales (`'PAYMENT_STARTED'`, `'CONVERTED'`, `'CANCELLED'`) | `Quote.create(..., source=QuoteSource.MANUAL)` + `start_payment()`, `convert()`, `cancel()`; persistencia con `IQuoteRepositoryPort` (`SqlAlchemyQuoteRepository`, que no hace `commit`) |
+| `INSERT ... ON CONFLICT (phone)` sobre `clients` | `IClientRepositoryPort.get_or_create(phone, full_name)` (misma regla: normaliza el teléfono y no sobrescribe el nombre) |
+| `PrepareBudgetUseCase`: subtotal, adelanto y saldo calculados a mano | `FinancialEngine.liquidate(...)` con `resolve_mobility(...)`; el monto manual de movilidad puede seguir como *override* auditado |
+| `pending_balance = servicios − adelanto` (sin movilidad) | `pending_balance = total − adelanto` (90 % servicios + 100 % movilidad, RN-02) |
+
+Mientras no se migre, las filas existentes con `source = 'MANUAL'` se cargan tal como están guardadas: el mapper de E1 **no recalcula** `pending_balance`. El esquema web del flujo manual ya reutiliza `PhoneNumber`, que además trata el prefijo `00` como prefijo internacional (`0051999999999` → `+51999999999`) y responde 422 ante `+0…`.
 
 ---
 
