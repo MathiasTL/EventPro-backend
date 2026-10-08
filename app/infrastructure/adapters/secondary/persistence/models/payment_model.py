@@ -1,4 +1,4 @@
-"""Tabla payments de E5. quote_id referencia quotes en BD; el modelo de quotes llega con E1."""
+"""Tabla payments de E5. quote_id referencia quotes.id (modelo de E1 en quote_model)."""
 
 from datetime import datetime
 from decimal import Decimal
@@ -60,7 +60,9 @@ class PaymentModel(Base):
     id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
-    quote_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    quote_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("quotes.id"), nullable=False, index=True
+    )
     event_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("events.id"), nullable=True, index=True
     )

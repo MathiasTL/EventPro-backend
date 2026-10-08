@@ -6,6 +6,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.domain.exceptions.quote_exceptions import InvalidQuoteStateError, QuoteExpiredError
+
 ERROR_TYPE_BASE = "https://errors.eventpro.pe/"
 
 _STATUS_TITLES = {
@@ -14,6 +16,7 @@ _STATUS_TITLES = {
     403: "Prohibido",
     404: "No encontrado",
     409: "Conflicto",
+    410: "Recurso expirado",
     422: "Error de validación",
     429: "Límite de peticiones excedido",
     500: "Error interno",
@@ -53,6 +56,13 @@ class ProblemError(Exception):
 
     def __str__(self) -> str:
         return self.detail
+
+
+def quote_error_to_problem(exc: InvalidQuoteStateError | QuoteExpiredError) -> ProblemError:
+    """``invalid-quote-state`` se traduce a 409 y ``quote-expired`` a 410."""
+
+    status = 410 if isinstance(exc, QuoteExpiredError) else 409
+    return ProblemError(status, exc.code, _STATUS_TITLES[status], str(exc))
 
 
 def problem_response(

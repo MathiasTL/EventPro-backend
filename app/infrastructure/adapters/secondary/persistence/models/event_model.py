@@ -1,4 +1,4 @@
-"""Tabla events de E6. La FK a quotes existe en BD; se declara aquí cuando E1 aporte su modelo."""
+"""Tabla events de E6. quote_id referencia quotes.id (modelo de E1 en quote_model)."""
 
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKey,
     Integer,
     Numeric,
     String,
@@ -52,8 +53,10 @@ class EventModel(Base):
         Uuid(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     event_code: Mapped[str] = mapped_column(String(30), nullable=False, unique=True)
-    # Obligatorio y único; la FK a quotes vive en la migración hasta que exista QuoteModel.
-    quote_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, unique=True)
+    # Obligatorio y único; la FK coincide con la declarada en 0001_initial_schema.
+    quote_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("quotes.id"), nullable=False, unique=True
+    )
     event_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     start_time: Mapped[time] = mapped_column(Time, nullable=False)
     end_time: Mapped[time] = mapped_column(Time, nullable=False)

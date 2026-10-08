@@ -40,6 +40,17 @@ Si no hay disponibilidad al recibir el comprobante o al confirmar, se conserva e
 - Repetir confirmación devuelve el mismo evento y contrato. El listado usa dos consultas para cualquier tamaño de página.
 - Documentos nuevos se almacenan en espacios separados de booking_documents dentro de PostgreSQL. Rollback revierte conjuntamente archivo y filas comerciales. No se elimina un PDF durable tras un resultado de commit incierto.
 
+## Alineación pendiente con el núcleo de cotización (E1)
+
+> [!IMPORTANT]
+> Este flujo se implementó antes del núcleo de cotización de E1 ([especificación 06](../02-arquitectura/06-spec-e1-nucleo-cotizacion.md), sección 5.1). Queda pendiente un PR del autor de este flujo que:
+>
+> - reemplace el SQL crudo sobre `quotes` y `clients` por el agregado `Quote` (`source = MANUAL`) y los repositorios `IQuoteRepositoryPort` e `IClientRepositoryPort`;
+> - calcule importes con `FinancialEngine` en lugar de `PrepareBudgetUseCase`;
+> - corrija `pending_balance`: según RN-02 debe incluir la movilidad (`total − adelanto`), no solo el saldo de servicios como se describe en "Alcance y estados".
+>
+> Ya aplicado: el teléfono del registro se normaliza con `PhoneNumber` (incluye el prefijo `00` y rechaza `+0…` con 422).
+
 ## Migración y despliegue
 
 Requiere Alembic `0003_manual_booking_documents`, posterior a 0002_event_extensions: columna de idempotencia, índice único y archivos privados de hasta 5 MiB. No elimina ni reescribe datos comerciales existentes. Los permisos de PUBLIC, anon, authenticated y service_role sobre documentos se revocan. El navegador accede solo al backend autenticado.

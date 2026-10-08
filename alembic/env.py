@@ -21,9 +21,11 @@ from app.core.config import get_settings
 from app.infrastructure.adapters.secondary.persistence.models import (  # noqa: F401
     audit_log,
     catalog_models,
+    client_model,
     event_extension_model,
     event_model,
     payment_model,
+    quote_model,
     refresh_token,
     role,
     user,

@@ -28,20 +28,25 @@ app/
 ├── domain/                               # CAPA 1: NÚCLEO DE DOMINIO (Zero dependencias externas)
 │   ├── entities/                         # Modelos puros de dominio (clases Python / dataclasses)
 │   │   ├── event.py                      # Entidad Evento con su ciclo de vida y reglas
-│   │   ├── quote.py                      # Entidad Cotización
+│   │   ├── quote.py                      # Agregado Cotización: QuoteStatus, QuoteSource, QuoteExtraLine y máquina de estados
+│   │   ├── client.py                     # Entidad Cliente (teléfono, nombre, DNI y RUC opcionales)
 │   │   ├── contract.py                   # Entidad Contrato
 │   │   ├── payment.py                    # Entidad Pago y validaciones
 │   │   └── catalog.py                    # Entidades Paquete, Temática y Extra
 │   ├── value_objects/                    # Objetos de valor inmutables
 │   │   ├── money.py                      # Value Object Money (moneda y decimales exactos)
+│   │   ├── phone_number.py               # PhoneNumber: normalización a E.164 (única fuente de la regla)
+│   │   ├── mobility.py                   # MobilityTariff, RouteEstimate, RouteLocation, MobilityZone y MobilityResult
+│   │   ├── liquidation.py                # ExtraCharge y Liquidation (resultado inmutable de la liquidación)
 │   │   ├── location.py                   # Dirección, distrito, coordenadas GPS
 │   │   └── time_window.py                # Intervalos de tiempo, inicio y fin de show
 │   ├── services/                         # Servicios de Dominio (lógica que involucra múltiples entidades)
-│   │   ├── financial_engine.py           # Cálculo determinístico: Total, Adelanto (10%), Saldo y Rentabilidad
+│   │   ├── financial_engine.py           # FinancialEngine: movilidad (tarifa, margen, contingencia por zona) y liquidación: Total, Adelanto (10%) y Saldo
 │   │   ├── travel_interval_service.py    # Cálculo de tiempos mínimos de traslado entre shows
 │   │   └── concurrency_evaluator.py      # Umbral de simultaneidad: solapamiento real [inicio, fin) de eventos con adelanto validado y no cancelados
 │   └── exceptions/                       # Excepciones de negocio de dominio
-│       ├── quote_exceptions.py
+│       ├── quote_exceptions.py           # InvalidQuoteStateError, QuoteExpiredError, RouteEstimationError
+│       ├── messaging_exceptions.py       # ServiceWindowClosedError, MessagingUnavailableError
 │       └── resource_exceptions.py
 │
 ├── application/                          # CAPA 2: CASOS DE USO Y PUERTOS (Orquestación)
@@ -54,8 +59,10 @@ app/
 │   │   │   ├── override_use_cases.py     # IAjustarMovilidadManual, IAprobarShowSimultaneo
 │   │   │   └── financial_use_cases.py    # IGenerarReporteFinanciero
 │   │   └── output/                       # Puertos Secundarios (Driven Ports - SPI)
-│   │       ├── repositories.py           # IEventRepository, IQuoteRepository, IContractRepository
-│   │       ├── maps_port.py              # IMapsServicePort (cálculo de distancias y tiempos)
+│   │       ├── repositories.py           # IEventRepository, IContractRepository
+│   │       ├── quote_repository_port.py  # IQuoteRepositoryPort (add, save, get_by_id; nunca confirma la transacción)
+│   │       ├── client_repository_port.py # IClientRepositoryPort (get_by_id, get_by_phone, get_or_create)
+│   │       ├── route_estimator_port.py   # IRouteEstimatorPort (distancia y duración de ida y vuelta; su fallo activa la contingencia por zona)
 │   │       ├── messaging_port.py         # IMessagingPort (texto, listas interactivas, plantillas, adjuntos, estado de conversación y consulta de conversaciones y mensajes)
 │   │       ├── pdf_port.py               # IPdfGeneratorPort (compilación de contratos)
 │   │       ├── storage_port.py           # IFileStoragePort (guardar imágenes y PDFs)
@@ -103,13 +110,20 @@ app/
 │   │       │   ├── seed.py               # Sembrado idempotente de catálogo y roles (python -m ...persistence.seed)
 │   │       │   ├── bootstrap_superadmin.py # Creación del primer SUPERADMIN desde variables de entorno
 │   │       │   ├── models/               # Tablas SQLAlchemy (ORM Models)
+│   │       │   │   ├── client_model.py
 │   │       │   │   ├── event_model.py
-│   │       │   │   └── quote_model.py
+│   │       │   │   └── quote_model.py        # QuoteModel y QuoteExtraModel
 │   │       │   ├── mappers/              # Transformadores ORM Model <--> Entidad de Dominio
 │   │       │   └── repositories/         # Implementaciones concretas de los repositorios
+│   │       │       ├── sqlalchemy_client_repository.py
 │   │       │       ├── sqlalchemy_event_repository.py
 │   │       │       └── sqlalchemy_quote_repository.py
+│   │       ├── mobility/                 # Tabla de zonas por distrito y construcción de la tarifa desde la configuración
+│   │       │   ├── district_zones.py
+│   │       │   └── tariff.py
 │   │       ├── external_services/        # Clientes HTTP hacia APIs de terceros
+│   │       │   ├── fake_route_estimator_adapter.py # Estimador de rutas falso (hasta decidir el proveedor)
+│   │       │   ├── fake_messaging_adapter.py       # Gateway de mensajería falso para E2/E5 y desarrollo
 │   │       │   ├── google_maps/          # Adaptador Google Maps Platform (Directions/Distance Matrix)
 │   │       │   │   └── google_maps_adapter.py
 │   │       │   └── chatwoot/             # Adaptador del gateway de mensajería (Application API de Chatwoot)
@@ -146,6 +160,7 @@ Es el corazón del software. Modela el negocio sin atarse a ninguna tecnología.
     $$\text{Adelanto} = 0.10 \times \text{Subtotal}$$
     $$\text{Total} = \text{Subtotal} + \text{Movilidad}$$
     $$\text{Saldo} = \text{Total} - \text{Adelanto}$$
+    La movilidad se resuelve antes de liquidar: exención del cliente, estimador de rutas (escenario A) o monto fijo por zona (escenario C), según [RN-03](../01-requisitos/04-reglas-de-negocio-y-control.md) y la [especificación del núcleo de cotización](06-spec-e1-nucleo-cotizacion.md).
 
 ### 3.2 Capa de Aplicación (`app/application`)
 Coordina los flujos de interacción del negocio.

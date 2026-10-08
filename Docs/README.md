@@ -24,7 +24,8 @@ Docs/
 │   ├── 02-backend-arquitectura-hexagonal.md       # Arquitectura Hexagonal en FastAPI (Domain, Ports, Adapters)
 │   ├── 03-frontend-arquitectura-fsd.md            # Feature-Sliced Design (FSD v2.1) en Frontend Web
 │   ├── 04-adr-decisiones-arquitectura.md          # Registros de Decisiones de Arquitectura (ADR-01 a ADR-10)
-│   └── 05-spec-chatwoot-gateway.md                # Especificación del gateway de mensajería Chatwoot (ADR-10)
+│   ├── 05-spec-chatwoot-gateway.md                # Especificación del gateway de mensajería Chatwoot (ADR-10)
+│   └── 06-spec-e1-nucleo-cotizacion.md            # Especificación del núcleo de cotización de E1 (Bloque 1)
 │
 ├── 03-datos/                                      # FASE 3: Persistencia y Diseño de Base de Datos
 │   ├── 01-diagrama-entidad-relacion.md            # Diagrama Entidad-Relación (DER en Mermaid)

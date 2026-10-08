@@ -9,6 +9,7 @@ from app.infrastructure.adapters.secondary.persistence.models.catalog_models imp
     PackageThemeModel,
     ThemeModel,
 )
+from app.infrastructure.adapters.secondary.persistence.models.client_model import ClientModel
 from app.infrastructure.adapters.secondary.persistence.models.event_extension_model import (
     EventExtensionModel,
 )
@@ -18,6 +19,10 @@ from app.infrastructure.adapters.secondary.persistence.models.event_resource_mod
     InventoryReservationModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.payment_model import PaymentModel
+from app.infrastructure.adapters.secondary.persistence.models.quote_model import (
+    QuoteExtraModel,
+    QuoteModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.refresh_token import (
     RefreshToken,
 )
@@ -27,6 +32,7 @@ from app.infrastructure.adapters.secondary.persistence.models.user import User
 __all__ = [
     "AuditLog",
     "Base",
+    "ClientModel",
     "CrewAssignmentModel",
     "CrewModel",
     "EventExtensionModel",
@@ -38,6 +44,8 @@ __all__ = [
     "PackageModel",
     "PackageThemeModel",
     "PaymentModel",
+    "QuoteExtraModel",
+    "QuoteModel",
     "RefreshToken",
     "Role",
     "ThemeModel",
