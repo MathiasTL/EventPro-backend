@@ -6,6 +6,7 @@ ejecución de las pruebas unitarias de dominio), salvo ``secret_key``, que exige
 cadena de al menos 32 caracteres.
 """
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated
 
@@ -54,6 +55,16 @@ class Settings(BaseSettings):
     simultaneous_shows_threshold: int = 3
     advance_percent: int = 10
     transit_rest_buffer_minutes: int = 30
+
+    # --- Cotización y movilidad (E1, supuestos pendientes de validar con el negocio) ---
+    advance_deadline_hours: int = Field(default=24, gt=0)
+    mobility_rate_per_km: Decimal = Field(default=Decimal("1.00"), ge=0, decimal_places=2)
+    mobility_rate_per_minute: Decimal = Field(default=Decimal("0.30"), ge=0, decimal_places=2)
+    mobility_minimum_amount: Decimal = Field(default=Decimal("20.00"), ge=0, decimal_places=2)
+    mobility_margin_percent: Decimal = Field(default=Decimal("15"), ge=0)
+    mobility_zone_1_amount: Decimal = Field(default=Decimal("25.00"), ge=0, decimal_places=2)
+    mobility_zone_2_amount: Decimal = Field(default=Decimal("45.00"), ge=0, decimal_places=2)
+    mobility_zone_3_amount: Decimal = Field(default=Decimal("70.00"), ge=0, decimal_places=2)
 
     # --- Almacenamiento de comprobantes/evidencias (E5) ---
     storage_backend: str = "local"
