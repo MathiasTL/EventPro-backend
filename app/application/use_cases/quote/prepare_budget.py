@@ -29,7 +29,7 @@ class PrepareBudgetUseCase:
     async def execute(self, request: BudgetInput) -> BudgetResult:
         if request.start_time.tzinfo is not None:
             raise ValidationError("Indica la hora local de Lima sin offset de zona horaria")
-        
+
         # --- VALIDACIÓN NUEVA ---
         if request.event_date < date.today():
             raise ValidationError("La fecha del evento no puede estar en el pasado.")

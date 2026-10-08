@@ -84,7 +84,7 @@ class ConfirmManualBookingUseCase:
             raise ValidationError("El pago no está pendiente de verificación")
         if booking.paid_amount != booking.advance_amount:
             raise ValidationError("El importe del pago no coincide con el adelanto cotizado")
-        
+
         # --- VALIDACIÓN NUEVA ---
         if booking.event_date < date.today():
             raise ValidationError("No se puede confirmar un evento con fecha en el pasado.")
