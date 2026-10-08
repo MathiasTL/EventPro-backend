@@ -226,7 +226,10 @@ async def test_self_verification_requires_supervised_reason():
     with pytest.raises(ValidationError):
         await use_case.execute(row.quote_id, actor)
     await use_case.execute(
-        row.quote_id, actor, self_verification_reason="Verificación supervisada para entrega"
+        row.quote_id,
+        actor,
+        self_verification_reason="Verificación supervisada para entrega",
+        may_verify_own_receipt=True,
     )
     assert store.finalize.await_args.args[-1] == "Verificación supervisada para entrega"
 

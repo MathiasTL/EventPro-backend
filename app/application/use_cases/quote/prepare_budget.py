@@ -27,6 +27,8 @@ class PrepareBudgetUseCase:
         self._advance_percent = Decimal(advance_percent) / Decimal(100)
 
     async def execute(self, request: BudgetInput) -> BudgetResult:
+        if request.start_time.tzinfo is not None:
+            raise ValidationError("Indica la hora local de Lima sin offset de zona horaria")
         if request.client_provides_transport:
             if request.manual_mobility_amount != 0:
                 raise ValidationError("El transporte del cliente exonera movilidad")

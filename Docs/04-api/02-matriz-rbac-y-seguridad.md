@@ -227,3 +227,18 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 7. **Headers de Seguridad HTTP:** Inclusión obligatoria de `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
 8. **Auditoría:** las acciones críticas (overrides, aprobación de sobrecupo, auditoría de cobros, contratos manuales y firmas) se registran en `audit_logs`, que es de solo lectura vía API (`GET /audit-logs`).
 9. **Autenticación del stream SSE:** `GET /conversations/stream` usa el mismo access token JWT (rol `ENCARGADO` o `SUPERADMIN`) enviado en el parámetro de consulta `access_token`, porque `EventSource` no permite cabeceras personalizadas y la API no usa cookies. Es el único endpoint que acepta el token fuera de `Authorization`. Como la cadena de consulta puede quedar en registros, el proxy y la aplicación no deben registrar la consulta de esta ruta; el servidor cierra el stream al vencer el token y el cliente renueva con `POST /auth/refresh` y se reconecta. El stream es de solo lectura y no sustituye la validación de rol de los demás endpoints del módulo.
+
+
+## Flujo administrativo manual (PC-05, PR #22)
+
+| Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE | Control adicional |
+| --- | --- | --- | --- | --- | --- |
+| `POST /budgets/prepare` | Sí | Sí | - | - | Precios del servidor |
+| `GET /budgets/{budget_id}/document` | Sí | Sí | - | - | Documento privado |
+| `POST /manual-bookings` | Sí | Sí | - | - | Actor, importe exacto, idempotencia |
+| `GET /manual-bookings` | Sí | Sí | - | - | Paginación, máximo 100 |
+| `POST /manual-bookings/{quote_id}/confirm` | Sí | Sí | - | - | Registrador distinto del verificador |
+| `POST /manual-bookings/{quote_id}/refund` | Sí | Sí | - | - | Adelanto sin reserva, motivo/referencia |
+| `GET /manual-bookings/{quote_id}/contract` | Sí | Sí | - | - | Contrato emitido; sin enlace público |
+
+Autoverificación excepcional requiere SUPERADMIN y override_reason (10..500 caracteres), auditado. Sobrecupo exige motivo y no autoriza inventario inexistente. Se consulta rol/estado vigentes en BD de US-23. Tests HTTP unitarios instalan tests.auth_support.install; integración crea cuentas reales en BD efímera.

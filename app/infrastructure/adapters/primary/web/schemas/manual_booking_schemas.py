@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, time
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -82,6 +83,12 @@ class ConfirmRequest(BaseModel):
     override_reason: str | None = Field(default=None, min_length=10, max_length=500)
 
 
+class RefundRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    action: Literal["REQUEST", "CONFIRM"]
+    reason: str = Field(min_length=10, max_length=500)
+
+
 class BookingResponse(BaseModel):
     quote_id: UUID
     client_name: str
@@ -100,3 +107,4 @@ class BookingResponse(BaseModel):
     event_id: UUID | None
     contract_id: UUID | None
     contract_number: str | None
+    registered_by_user_id: UUID | None

@@ -1470,3 +1470,22 @@ Todos los errores usan `Content-Type: application/problem+json` con los campos `
 | `conversation-not-taken` | `409` | La conversación no está tomada por un humano (`status` distinto de `open`) o está abierta sin asignar; hay que ejecutar `takeover` antes de enviar mensajes. |
 | `conversation-taken-by-other` | `409` | La conversación está asignada a otro encargado. Incluye `assigned_user_id`. |
 | `messaging-gateway-unavailable` | `503` | Chatwoot no responde y la operación requiere una consulta o un cambio de estado síncrono (bandeja, mensajes, `takeover`, `release`). |
+
+
+## Flujo administrativo manual implementado (PR #22)
+
+Fachada transaccional de PC-05. Las rutas `/quotes`, `/quotes/{id}/pay-advance` y `/contracts/*` del flujo conversacional siguen siendo contratos del módulo correspondiente; no son aliases de este proceso ni se afirma que estén implementadas por él.
+
+| Método/ruta | Entrada | Respuesta |
+| --- | --- | --- |
+| `POST /budgets/prepare` | JSON de solicitud y movilidad | 200: referencia persistida, importes, disponibilidad, PDF base64 |
+| `GET /budgets/{budget_id}/document` | UUID | 200: filename y pdf_base64; 404 inexistente |
+| `POST /manual-bookings` | Multipart payload_json + receipt_file | 201 creado; 200 replay; 409 discrepancia/duplicado |
+| `GET /manual-bookings` | page >= 1, page_size 1..100 | 200: array de solicitudes de la página |
+| `POST /manual-bookings/{quote_id}/confirm` | receipt_verified, approve_overbooking y override_reason opcionales | 200: reserva/contrato o REQUIRES_MANUAL_APPROVAL sin reserva |
+| `POST /manual-bookings/{quote_id}/refund` | action REQUEST/CONFIRM, reason >= 10 caracteres | 200: REFUND_PENDING/REFUNDED; 409 transición inválida |
+| `GET /manual-bookings/{quote_id}/contract` | UUID | 200: filename y pdf_base64; 404 sin contrato |
+
+Todas requieren JWT de cuenta activa ENCARGADO/SUPERADMIN. Errores: 401 sin sesión, 403 rol insuficiente, 422 validación. Autoverificación requiere SUPERADMIN y motivo; sin excepción retorna 422. ADVANCE_PERCENT aplica solo a servicios. Comprobante máximo 5 MiB y validación por contenido.
+
+Campos y estados completos: [Flujo administrativo](03-flujo-manual-entregable.md). Contrato ISSUED queda pendiente de firma; no representa una transferencia ni envío automático al cliente.

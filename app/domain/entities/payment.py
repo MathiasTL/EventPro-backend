@@ -127,6 +127,16 @@ class Payment:
         self.event_id = event_id
         self.rejection_reason = None
 
+    def require_manual_approval(self) -> None:
+        if self.concept is not PaymentConcept.ADVANCE or self.validation_status not in (
+            PaymentValidationStatus.PENDING_VERIFICATION,
+            PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL,
+        ):
+            raise InvalidPaymentStateError(
+                "Solo un adelanto pendiente admite revisión de sobrecupo"
+            )
+        self.validation_status = PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL
+
     def approve_overbooked(
         self, *, verified_by_user_id: UUID, event_id: UUID | None, approved_at: datetime
     ) -> None:

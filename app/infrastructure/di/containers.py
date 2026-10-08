@@ -51,6 +51,7 @@ from app.application.use_cases.payment.register_advance_payment import RegisterA
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
 from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
+from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
 from app.application.use_cases.quote.register_manual_booking import RegisterManualBookingUseCase
 from app.application.use_cases.users.create_user import CreateUserUseCase
 from app.application.use_cases.users.get_user import GetUserUseCase
@@ -82,7 +83,6 @@ from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import 
     SQLAlchemyAuditLogAdapter,
 )
 from app.infrastructure.adapters.secondary.persistence.database import (
-    get_catalog_write_session,
     get_engine,
     get_session,
     get_sessionmaker,
@@ -352,25 +352,25 @@ def get_catalog_read_port(
 
 
 def get_catalog_admin_port(
-    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ICatalogAdminPort:
     return catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session)
 
 
 def get_crew_admin_port(
-    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ICrewAdminPort:
     return catalog_admin_repository.SqlAlchemyCrewAdminRepository(session)
 
 
 def get_manage_catalog_use_case(
-    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ManageCatalogUseCase:
     return ManageCatalogUseCase(catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session))
 
 
 def get_manage_crews_use_case(
-    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ManageCrewsUseCase:
     return ManageCrewsUseCase(
         catalog_admin_repository.SqlAlchemyCrewAdminRepository(session), get_user_repository()
@@ -468,3 +468,9 @@ def get_register_manual_booking_use_case(
     receipts: Annotated[IBookingDocuments, Depends(get_booking_receipts)],
 ) -> RegisterManualBookingUseCase:
     return RegisterManualBookingUseCase(store, budget, receipts)
+
+
+def get_refund_manual_booking_use_case(
+    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
+) -> RefundManualBookingUseCase:
+    return RefundManualBookingUseCase(store)

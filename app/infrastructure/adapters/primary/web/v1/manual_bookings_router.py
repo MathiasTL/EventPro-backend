@@ -18,10 +18,12 @@ from app.application.ports.output.manual_booking_port import (
     ManualBooking,
 )
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
+from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
 from app.application.use_cases.quote.register_manual_booking import (
     RegisterManualBookingInput,
     RegisterManualBookingUseCase,
 )
+from app.domain.exceptions.payment_exceptions import InvalidPaymentStateError
 from app.domain.exceptions.resource_exceptions import (
     ResourceInUseError,
     ResourceNotFoundError,
@@ -34,6 +36,7 @@ from app.infrastructure.adapters.primary.web.schemas.manual_booking_schemas impo
     BookingResponse,
     ConfirmRequest,
     ManualRequest,
+    RefundRequest,
 )
 from app.infrastructure.adapters.secondary.persistence.database import get_session
 from app.infrastructure.di.containers import (
@@ -43,6 +46,7 @@ from app.infrastructure.di.containers import (
     get_catalog_read_port,
     get_confirm_manual_booking_use_case,
     get_manual_booking_store,
+    get_refund_manual_booking_use_case,
     get_register_manual_booking_use_case,
 )
 
@@ -75,6 +79,7 @@ def response(booking: ManualBooking) -> BookingResponse:
         event_id=booking.event_id,
         contract_id=booking.contract_id,
         contract_number=booking.contract_number,
+        registered_by_user_id=booking.registered_by_user_id,
     )
 
 
@@ -114,6 +119,7 @@ async def register_manual_booking(
         canonical = payload.model_dump(mode="json", exclude={"quote_id"})
         canonical["extra_ids"] = sorted(canonical["extra_ids"])
         canonical["paid_amount"] = f"{payload.paid_amount:.2f}"
+        canonical["manual_mobility_amount"] = f"{payload.manual_mobility_amount:.2f}"
         canonical["receipt_sha256"] = hashlib.sha256(data).hexdigest()
         request_hash = hashlib.sha256(
             json.dumps(
@@ -176,10 +182,6 @@ async def confirm_booking(
             "Revisión requerida",
             "El encargado debe verificar el comprobante antes de confirmar.",
         )
-    if payload.override_reason and context.role is not Role.SUPERADMIN:
-        raise ProblemError(
-            403, "forbidden", "Prohibido", "La excepción de verificación propia requiere SUPERADMIN"
-        )
     if payload.approve_overbooking and not payload.override_reason:
         raise ProblemError(
             422,
@@ -193,8 +195,11 @@ async def confirm_booking(
             context.user_id,
             approve_overbooking=payload.approve_overbooking,
             self_verification_reason=payload.override_reason,
+            may_verify_own_receipt=context.role is Role.SUPERADMIN,
         )
         return response(booking)
+    except InvalidPaymentStateError as exc:
+        raise ProblemError(409, exc.code, "Estado inválido", str(exc)) from exc
     except (ValidationError, ResourceNotFoundError, ResourceInUseError) as exc:
         raise map_error(exc) from exc
 
@@ -211,3 +216,25 @@ async def download_contract(
         "filename": (booking.contract_number or "contrato") + ".pdf",
         "pdf_base64": base64.b64encode(data).decode("ascii"),
     }
+
+
+@router.post("/{quote_id}/refund", response_model=BookingResponse)
+async def refund_booking(
+    quote_id: UUID,
+    payload: RefundRequest,
+    context: Staff,
+    use_case: Annotated[RefundManualBookingUseCase, Depends(get_refund_manual_booking_use_case)],
+) -> BookingResponse:
+    try:
+        return response(
+            await use_case.execute(
+                quote_id,
+                context.user_id,
+                confirm=payload.action == "CONFIRM",
+                reason=payload.reason,
+            )
+        )
+    except InvalidPaymentStateError as exc:
+        raise ProblemError(409, exc.code, "Estado inválido", str(exc)) from exc
+    except (ValidationError, ResourceNotFoundError) as exc:
+        raise map_error(exc) from exc

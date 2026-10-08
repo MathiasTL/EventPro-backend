@@ -79,6 +79,10 @@ class IManualBookingStore(Protocol):
 
     async def require_approval(self, booking: ManualBooking, user_id: UUID) -> ManualBooking: ...
 
+    async def refund(
+        self, quote_id: UUID, user_id: UUID, *, confirm: bool, reason: str
+    ) -> ManualBooking: ...
+
 
 class IBookingDocuments(Protocol):
     def max_bytes(self) -> int: ...

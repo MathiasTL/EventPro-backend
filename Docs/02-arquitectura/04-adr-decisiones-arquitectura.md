@@ -178,3 +178,17 @@
 * **Consecuencias:**
   * *Positivas:* Traspaso bot-humano y bandeja sin construir un sistema de mensajería; costo de infraestructura US$0 (Oracle Cloud Always Free); volver a Meta directo solo requeriría otro adaptador de `IMessagingPort`, sin cambios en el dominio; Chatwoot es la única fuente de verdad del canal.
   * *Negativas:* Un servicio adicional de cuatro contenedores (~4 GB de memoria) que operar, respaldar y monitorear; dependencia de comportamientos de Chatwoot aún por verificar en la implementación (Agent Bot sin `outgoing_url`, reapertura de conversaciones resueltas); la entrada de eventos exige idempotencia y reconciliación porque no se confirma que Chatwoot reintente sus webhooks.
+
+
+---
+
+## ADR-11: Orquestación manual atómica y documentos compartidos
+
+* **Estado:** Propuesto para revisión del PR #22.
+* **Contexto:** El prototipo necesita solicitud, adelanto, reserva y contrato sin WhatsApp. VerifyPaymentUseCase y ApproveOverbookedPaymentUseCase confirman sus repositorios por separado; el segundo exige evento existente. Invocarlos dentro de la creación conjunta permitiría confirmar un pago dejando inventario/contrato incompletos.
+* **Decisión:** La fachada manual usa Payment y sus transiciones, con los mismos estados. Su store es una unidad transaccional: cotización/comprobante en registro; evento, inventario, verificación, conversión y documento en confirmación; bitácora en la misma transacción. Un commit antes de responder. No modifica get_session global.
+* **Concurrencia:** Candado existente 180018 y misma sesión por petición: DI cacheada de FastAPI entrega la misma sesión a disponibilidad y persistencia. PDF fuera del candado. Pruebas de 15 confirmaciones y de stock protegen esta decisión.
+* **Archivos:** Puerto con adaptador PostgreSQL privado conserva bytes y referencias atómicamente, separando receipts, budgets y contracts. Funciona con conexión directa Supabase sin claves públicas, límite 5 MiB. Archivos heredados requieren migración operativa antes de múltiples instancias.
+* **PDF:** ReportLab sustituye la dependencia de runtime WeasyPrint que aún no tenía adaptador implementado. Plantillas manual-v1 en threadpool. Actualiza la selección inicial para el prototipo; no implementa firma. Texto requiere aprobación del negocio.
+* **Identidad:** Teléfono normalizado y reconocimiento del formato legado. Se conserva el nombre maestro existente: registrar una solicitud no autoriza reescribir la identidad de un cliente compartido.
+* **Consecuencias:** Binarios incrementan tamaño/respaldo de PostgreSQL; almacenamiento de objetos podrá sustituir el adaptador. Array paginado se conserva por compatibilidad con frontend. Corrección de transacciones del catálogo se entrega separada.

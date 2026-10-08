@@ -43,7 +43,12 @@ class ConfirmManualBookingUseCase:
         *,
         approve_overbooking: bool = False,
         self_verification_reason: str | None = None,
+        may_verify_own_receipt: bool = False,
     ) -> ManualBooking:
+        if approve_overbooking and (
+            not self_verification_reason or len(self_verification_reason.strip()) < 10
+        ):
+            raise ValidationError("La aprobación de sobrecupo requiere un motivo documentado")
         # El render no usa la conexión ni mantiene el candado de disponibilidad.
         preview = await self._store.get(quote_id)
         if preview is None:
@@ -59,11 +64,19 @@ class ConfirmManualBookingUseCase:
             if booking.contract_id is not None and booking.payment_status == "VERIFIED":
                 return booking
             raise ValidationError("La reserva existente requiere revisión del encargado")
+        if preview != booking:
+            raise ResourceInUseError(
+                "La solicitud cambió durante la revisión; vuelve a consultarla"
+            )
         if booking.quote_status != "PAYMENT_STARTED":
             raise ValidationError("La cotización no está en estado PAYMENT_STARTED")
         if booking.expires_at is not None and booking.expires_at <= datetime.now(UTC):
             raise ValidationError("La cotización venció; requiere revisión antes de reservar")
-        if booking.registered_by_user_id == user_id and not self_verification_reason:
+        if booking.registered_by_user_id == user_id and (
+            not may_verify_own_receipt
+            or not self_verification_reason
+            or len(self_verification_reason.strip()) < 10
+        ):
             raise ValidationError(
                 "Verificar un comprobante propio requiere una excepción supervisada"
             )
@@ -84,7 +97,11 @@ class ConfirmManualBookingUseCase:
                 booking.event_date, booking.start_time, package.duration_minutes, package.id
             )
         )
-        if not availability.is_available and (not approve_overbooking or availability.shortages):
+        if not availability.is_available and (
+            not approve_overbooking
+            or not availability.requires_manual_approval
+            or availability.shortages
+        ):
             return await self._store.require_approval(booking, user_id)
         if booking.payment_status == "REQUIRES_MANUAL_APPROVAL" and not approve_overbooking:
             raise ResourceInUseError(

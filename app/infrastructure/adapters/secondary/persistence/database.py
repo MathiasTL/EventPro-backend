@@ -52,14 +52,4 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     """Dependencia de FastAPI que entrega una sesión por petición."""
 
     async with get_sessionmaker()() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-
-
-async def get_catalog_write_session() -> AsyncIterator[AsyncSession]:
-    """El catálogo confirma antes de enviar HTTP, con Depends(scope='function')."""
-    async with get_sessionmaker()() as session, session.begin():
         yield session

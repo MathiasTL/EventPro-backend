@@ -22,7 +22,11 @@ from app.domain.entities.payment import (
     PaymentMethod,
     PaymentValidationStatus,
 )
-from app.domain.exceptions.resource_exceptions import ResourceInUseError, ValidationError
+from app.domain.exceptions.resource_exceptions import (
+    ResourceInUseError,
+    ResourceNotFoundError,
+    ValidationError,
+)
 from app.domain.value_objects.money import Money
 from app.domain.value_objects.time_window import TimeWindow
 from app.infrastructure.adapters.secondary.persistence.mappers.payment_mapper import (
@@ -355,7 +359,9 @@ class SqlAlchemyManualBookingStore:
         self._session.add(
             AuditLog(
                 user_id=user_id,
-                action="AUDIT_PAYMENT",
+                action="APPROVE_OVERBOOKED_PAYMENT"
+                if booking.payment_status == "REQUIRES_MANUAL_APPROVAL"
+                else "AUDIT_PAYMENT",
                 entity_name="payments",
                 entity_id=payment.id,
                 old_values={"validation_status": booking.payment_status},
@@ -408,10 +414,14 @@ class SqlAlchemyManualBookingStore:
         return result
 
     async def require_approval(self, booking: ManualBooking, user_id: UUID) -> ManualBooking:
-        await self._session.execute(
-            text("UPDATE payments SET validation_status='REQUIRES_MANUAL_APPROVAL' WHERE id=:id"),
-            {"id": booking.payment_id},
+        model = await self._session.scalar(
+            select(PaymentModel).where(PaymentModel.id == booking.payment_id).with_for_update()
         )
+        if model is None:
+            raise ResourceNotFoundError("Pago no encontrado")
+        payment = payment_to_domain(model)
+        payment.require_manual_approval()
+        model.validation_status = payment.validation_status.value
         self._session.add(
             AuditLog(
                 user_id=user_id,
@@ -424,6 +434,51 @@ class SqlAlchemyManualBookingStore:
         )
         await self._session.flush()
         result = await self.get(booking.quote_id)
+        if result is None:
+            raise ValidationError("Solicitud no encontrada")
+        await self._session.commit()
+        return result
+
+    async def refund(
+        self, quote_id: UUID, user_id: UUID, *, confirm: bool, reason: str
+    ) -> ManualBooking:
+        booking = await self.get(quote_id, lock=True)
+        if booking is None:
+            raise ResourceNotFoundError("Solicitud no encontrada")
+        if booking.event_id is not None:
+            raise ValidationError("Una reserva existente requiere el proceso de cancelación")
+        if booking.payment_status == ("REFUNDED" if confirm else "REFUND_PENDING"):
+            return booking
+        model = await self._session.scalar(
+            select(PaymentModel).where(PaymentModel.id == booking.payment_id).with_for_update()
+        )
+        if model is None:
+            raise ResourceNotFoundError("Pago no encontrado")
+        payment = payment_to_domain(model)
+        if confirm:
+            payment.confirm_refund()
+            action = "AUDIT_PAYMENT"
+        else:
+            payment.mark_refund_pending()
+            action = "REJECT_OVERBOOKED_PAYMENT"
+        model.validation_status = payment.validation_status.value
+        model.verified_by_user_id = user_id
+        model.verified_at = datetime.now(UTC)
+        self._session.add(
+            AuditLog(
+                user_id=user_id,
+                action=action,
+                entity_name="payments",
+                entity_id=payment.id,
+                old_values={"validation_status": booking.payment_status},
+                new_values={"validation_status": payment.validation_status.value, "reason": reason},
+            )
+        )
+        await self._session.execute(
+            text("UPDATE quotes SET status='CANCELLED' WHERE id=:id"), {"id": quote_id}
+        )
+        await self._session.flush()
+        result = await self.get(quote_id)
         if result is None:
             raise ValidationError("Solicitud no encontrada")
         await self._session.commit()

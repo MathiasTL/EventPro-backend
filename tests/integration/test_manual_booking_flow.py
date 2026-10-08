@@ -5,6 +5,8 @@ import base64
 import json
 from datetime import date, timedelta
 from itertools import count
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -12,12 +14,14 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.dtos.availability_dto import AvailabilityResult, AvailabilityStatus
 from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.infrastructure.adapters.secondary.persistence.database import get_sessionmaker
 from app.infrastructure.adapters.secondary.persistence.manual_booking_repository import (
     SqlAlchemyManualBookingStore,
 )
+from app.infrastructure.di import containers
 from app.main import create_app
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -56,16 +60,16 @@ async def scenario(infra):
         await session.execute(
             text(
                 "INSERT INTO packages(id,name,service_category,base_price,direct_cost,"
-                "duration_minutes) VALUES (:id,'Show prueba','SHOW',100,50,90)"
+                "duration_minutes) VALUES (:id,:name,'SHOW',100,50,90)"
             ),
-            {"id": package},
+            {"id": package, "name": f"Show-{package}"},
         )
         await session.execute(
             text(
                 "INSERT INTO inventory_items(id,name,service_category,total_stock) "
-                "VALUES (:id,'Recurso prueba','DECORATION',1)"
+                "VALUES (:id,:name,'DECORATION',1)"
             ),
-            {"id": inventory},
+            {"id": inventory, "name": f"Recurso-{inventory}"},
         )
         await session.execute(
             text(
@@ -324,4 +328,132 @@ async def test_invalid_receipt_never_creates_quote(scenario, receipt):
                 text("SELECT count(*) FROM quotes WHERE id=:id"), {"id": payload["quote_id"]}
             )
             == 0
+        )
+
+
+async def test_duplicate_payload_with_different_reference_is_rejected(scenario):
+    client, _, payload, headers, _ = scenario
+    assert (await register(client, payload, headers["SUPERADMIN"])).status_code == 201
+    duplicate = {**payload, "quote_id": str(uuid4())}
+    result = await register(client, duplicate, headers["SUPERADMIN"])
+    assert result.status_code == 409, result.text
+
+
+async def test_budget_reference_can_retrieve_the_persisted_document(scenario):
+    client, factory, payload, headers, _ = scenario
+    request = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"quote_id", "phone", "district", "payment_method", "paid_amount"}
+    }
+    prepared = await client.post(
+        "/api/v1/budgets/prepare", json=request, headers=headers["SUPERADMIN"]
+    )
+    assert prepared.status_code == 200, prepared.text
+    result = await client.get(
+        f"/api/v1/budgets/{prepared.json()['budget_id']}/document", headers=headers["ENCARGADO"]
+    )
+    assert (
+        result.status_code == 200 and result.json()["pdf_base64"] == prepared.json()["pdf_base64"]
+    )
+    async with factory() as session:
+        assert (
+            await session.scalar(
+                text("SELECT count(*) FROM quotes WHERE id=:id"), {"id": payload["quote_id"]}
+            )
+            == 0
+        )
+
+
+async def test_overbooked_advance_can_be_rejected_and_refunded(scenario):
+    client, _, payload, headers, _ = scenario
+    fake = SimpleNamespace(
+        check_availability=AsyncMock(
+            return_value=AvailabilityResult(AvailabilityStatus.REQUIRES_MANUAL_APPROVAL)
+        )
+    )
+    client._transport.app.dependency_overrides[containers.get_availability_port] = lambda: fake
+    result = await register(client, payload, headers["SUPERADMIN"])
+    assert (
+        result.status_code == 201 and result.json()["payment_status"] == "REQUIRES_MANUAL_APPROVAL"
+    ), result.text
+    path = f"{PREFIX}/{payload['quote_id']}/refund"
+    rejected = await client.post(
+        path,
+        json={"action": "REQUEST", "reason": "Cliente rechaza cambio de fecha"},
+        headers=headers["ENCARGADO"],
+    )
+    assert rejected.status_code == 200 and rejected.json()["payment_status"] == "REFUND_PENDING", (
+        rejected.text
+    )
+    refunded = await client.post(
+        path,
+        json={"action": "CONFIRM", "reason": "Transferencia devuelta referencia DEV-001"},
+        headers=headers["ENCARGADO"],
+    )
+    assert refunded.status_code == 200 and refunded.json()["payment_status"] == "REFUNDED", (
+        refunded.text
+    )
+    assert refunded.json()["event_id"] is None
+    payment = await client.get(
+        f"/api/v1/payments/{result.json()['payment_id']}", headers=headers["ENCARGADO"]
+    )
+    assert payment.status_code == 200 and payment.json()["validation_status"] == "REFUNDED", (
+        payment.text
+    )
+
+
+async def test_overbooked_advance_requires_explicit_approval_and_reason(scenario):
+    client, _, payload, headers, _ = scenario
+    fake = SimpleNamespace(
+        check_availability=AsyncMock(
+            return_value=AvailabilityResult(AvailabilityStatus.REQUIRES_MANUAL_APPROVAL)
+        )
+    )
+    client._transport.app.dependency_overrides[containers.get_availability_port] = lambda: fake
+    assert (await register(client, payload, headers["SUPERADMIN"])).status_code == 201
+    no_reason = await confirm(client, payload, headers["SUPERADMIN"], approve_overbooking=True)
+    assert no_reason.status_code == 422
+    approved = await confirm(
+        client,
+        payload,
+        headers["ENCARGADO"],
+        approve_overbooking=True,
+        override_reason="Se coordinó un elenco adicional para el evento",
+    )
+    assert approved.status_code == 200 and approved.json()["payment_status"] == "VERIFIED", (
+        approved.text
+    )
+
+
+async def test_manual_mobility_is_persisted_and_audited(scenario):
+    client, factory, payload, headers, _ = scenario
+    incoming = {
+        **payload,
+        "client_provides_transport": False,
+        "manual_mobility_amount": "50.00",
+        "mobility_override_reason": "Tarifa acordada por el encargado",
+    }
+    result = await register(client, incoming, headers["SUPERADMIN"])
+    assert result.status_code == 201, result.text
+    assert result.json()["total_amount"] == "150.00" and result.json()["advance_amount"] == "10.00"
+    reserved = await confirm(client, incoming, headers["ENCARGADO"])
+    assert reserved.status_code == 200, reserved.text
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text("SELECT total_services_amount,total_mobility_amount FROM events WHERE id=:id"),
+                {"id": reserved.json()["event_id"]},
+            )
+        ).one()
+        assert row.total_services_amount == 100 and row.total_mobility_amount == 50
+        assert (
+            await session.scalar(
+                text(
+                    "SELECT count(*) FROM audit_logs WHERE entity_id=:id "
+                    "AND action='OVERRIDE_MOBILITY'"
+                ),
+                {"id": incoming["quote_id"]},
+            )
+            == 1
         )
