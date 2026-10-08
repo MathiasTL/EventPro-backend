@@ -6,12 +6,14 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.application.dtos.availability_dto import AvailabilityResult, AvailabilityStatus
 from app.application.dtos.budget_dto import BudgetInput, BudgetLine
 from app.application.ports.output.manual_booking_port import ManualBooking
+from app.application.use_cases.quote import confirm_manual_booking, prepare_budget
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
 from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
 from app.application.use_cases.quote.register_manual_booking import (
@@ -156,6 +158,53 @@ def confirmation_setup(row):
         documents,
         renderer,
     )
+
+
+@pytest.mark.parametrize("flow", ["budget", "confirmation"])
+@pytest.mark.parametrize("start_time", [time(23, 30), time(22, 30)])
+async def test_event_validation_uses_lima_clock_on_utc_server(monkeypatch, flow, start_time):
+    # UTC ya es 8 de octubre; en Lima todavía son las 23:00 del día 7.
+    frozen_now = datetime(2026, 10, 8, 4, tzinfo=UTC)
+    event_date = frozen_now.astimezone(ZoneInfo("America/Lima")).date()
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen_now.astimezone(tz) if tz else frozen_now.replace(tzinfo=None)
+
+    class UTCServerDate(date):
+        @classmethod
+        def today(cls):
+            return frozen_now.date()
+
+    module = prepare_budget if flow == "budget" else confirm_manual_booking
+    monkeypatch.setattr(module, "datetime", FixedDateTime)
+    monkeypatch.setattr(module, "date", UTCServerDate, raising=False)
+    assert UTCServerDate.today() > event_date
+
+    if flow == "budget":
+        catalog, availability, request = budget_setup()
+        use_case = PrepareBudgetUseCase(catalog, availability)
+        operation = use_case.execute(replace(request, event_date=event_date, start_time=start_time))
+    else:
+        row = booking(
+            event_date=event_date,
+            start_time=start_time,
+            expires_at=frozen_now + timedelta(hours=24),
+        )
+        use_case, store, _, _, _ = confirmation_setup(row)
+        operation = use_case.execute(row.quote_id, uuid4())
+
+    if start_time == time(23, 30):
+        result = await operation
+        if flow == "budget":
+            assert result.request.event_date == event_date
+        else:
+            assert result == row
+            store.finalize.assert_awaited_once()
+    else:
+        with pytest.raises(ValidationError, match="hora futura|evento en el pasado"):
+            await operation
 
 
 async def test_confirmation_validates_window_and_renders_before_lock():
