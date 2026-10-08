@@ -144,7 +144,7 @@ flowchart LR
         SqlAlchemyRepo["PostgreSQL Adapter<br/><i>[SQLAlchemy Models & Repos]</i>"]
         GoogleMapsAdapter["Google Maps Adapter<br/><i>[HTTPX / REST Client]</i>"]
         ChatwootAdapter["ChatwootMessagingAdapter<br/><i>[HTTPX]</i>"]
-        WeasyPrintAdapter["PDF Generation Adapter<br/><i>[WeasyPrint / Jinja2]</i>"]
+        BookingPdfAdapter["PDF Generation Adapter<br/><i>[ReportLab]</i>"]
         FileSystemAdapter["File Storage Adapter<br/><i>[Local / S3 Compatible]</i>"]
         RedisAdapter["Redis Cache & Lock Adapter<br/><i>[Redis-py]</i>"]
         PadesAdapter["PAdES Signature Adapter<br/><i>[pyHanko / PKCS#12]</i>"]
@@ -167,7 +167,7 @@ flowchart LR
     PortRepo --> SqlAlchemyRepo
     PortMaps --> GoogleMapsAdapter
     PortMessaging --> ChatwootAdapter
-    PortPdf --> WeasyPrintAdapter
+    PortPdf --> BookingPdfAdapter
     PortStorage --> FileSystemAdapter
     PortCache --> RedisAdapter
     PortSignature --> PadesAdapter
@@ -177,4 +177,4 @@ flowchart LR
 >
 > **Chatwoot como gateway oculto:** el endpoint `/api/v1/webhooks/chatwoot` solo es accesible por la red interna de Docker (el proxy lo bloquea) y el módulo `/conversations/*` sirve la bandeja de los encargados, incluido el flujo SSE. Detalle en la [especificación del gateway](05-spec-chatwoot-gateway.md) y en [ADR-10](04-adr-decisiones-arquitectura.md#adr-10-chatwoot-como-gateway-de-mensajería-oculto).
 >
-> **Renderizado de PDFs:** WeasyPrint es síncrono y consume CPU (ver RNF-01.3); el adaptador de PDF se ejecuta en el *worker* de arq o en un *threadpool*, nunca en el *event loop* de la API.
+> **Renderizado de PDFs:** ReportLab es síncrono y consume CPU (ver RNF-01.3); el adaptador de PDF se ejecuta en el *worker* de arq o en un *threadpool*, nunca en el *event loop* de la API.

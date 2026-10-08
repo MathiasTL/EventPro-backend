@@ -115,7 +115,7 @@ app/
 │   │       │   └── chatwoot/             # Adaptador del gateway de mensajería (Application API de Chatwoot)
 │   │       │       └── chatwoot_messaging_adapter.py
 │   │       ├── documents/                # Generador de contratos
-│   │       │   └── weasyprint_adapter.py # Compilador HTML/Jinja2 a PDF
+│   │       │   └── booking_pdf.py # Plantillas manual-v1 con ReportLab
 │   │       ├── signature/                # Sello de firma electrónica
 │   │       │   └── pades_signature_adapter.py # Adaptador propio PAdES (pyHanko + PKCS#12)
 │   │       ├── storage/                  # Adaptador de almacenamiento
@@ -201,7 +201,7 @@ Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptadores Secundarios (Infraestructura de soporte):**
   * `SqlAlchemyQuoteRepository`: Implementa la interfaz `IQuoteRepository` usando transacciones de PostgreSQL.
   * `GoogleMapsAdapter`: Implementa `IMapsServicePort` llamando a la API REST de Google Maps con cliente asíncrono `httpx`.
-  * `WeasyPrintAdapter`: Implementa `IPdfGeneratorPort` tomando plantillas Jinja2 y convirtiéndolas a PDF descargable. WeasyPrint es síncrono y consume CPU, por lo que el adaptador ejecuta el renderizado en el *worker* de arq o en un *threadpool*, nunca en el *event loop* (RNF-01.3).
+  * `BookingPdfAdapter`: Implementa `IPdfGeneratorPort` renderizando plantillas versionadas a PDF descargable. ReportLab es síncrono y consume CPU, por lo que el adaptador ejecuta el renderizado en el *worker* de arq o en un *threadpool*, nunca en el *event loop* (RNF-01.3).
   * `ChatwootMessagingAdapter`: Implementa `IMessagingPort` sobre la Application API de Chatwoot con cliente asíncrono `httpx` (ver [ADR-10](04-adr-decisiones-arquitectura.md#adr-10-chatwoot-como-gateway-de-mensajería-oculto) y la [especificación del gateway](05-spec-chatwoot-gateway.md)).
   * `PadesSignatureAdapter`: Implementa `SignaturePort` (ver sección 3.4).
 
