@@ -1,7 +1,7 @@
 """Validación del adelanto → reserva de recursos → contrato emitido (PC-05)."""
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
@@ -84,6 +84,12 @@ class ConfirmManualBookingUseCase:
             raise ValidationError("El pago no está pendiente de verificación")
         if booking.paid_amount != booking.advance_amount:
             raise ValidationError("El importe del pago no coincide con el adelanto cotizado")
+        
+        # --- VALIDACIÓN NUEVA ---
+        if booking.event_date < date.today():
+            raise ValidationError("No se puede confirmar un evento con fecha en el pasado.")
+        # ------------------------
+
         starts_at = datetime.combine(booking.event_date, booking.start_time).replace(
             tzinfo=ZoneInfo("America/Lima")
         )

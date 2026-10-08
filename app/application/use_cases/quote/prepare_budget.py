@@ -4,7 +4,7 @@ No crea una cotización SENT ni reserva cupo: esos estados requieren el flujo
 de envío y validación del adelanto descrito en RN-09.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -29,6 +29,12 @@ class PrepareBudgetUseCase:
     async def execute(self, request: BudgetInput) -> BudgetResult:
         if request.start_time.tzinfo is not None:
             raise ValidationError("Indica la hora local de Lima sin offset de zona horaria")
+        
+        # --- VALIDACIÓN NUEVA ---
+        if request.event_date < date.today():
+            raise ValidationError("La fecha del evento no puede estar en el pasado.")
+        # ------------------------
+
         if request.client_provides_transport:
             if request.manual_mobility_amount != 0:
                 raise ValidationError("El transporte del cliente exonera movilidad")
