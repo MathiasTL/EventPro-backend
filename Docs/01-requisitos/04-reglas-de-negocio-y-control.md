@@ -22,11 +22,25 @@ $$\text{Saldo Pendiente} = \text{Total Cotizado} - \text{Monto Adelanto}$$
 
 ### RN-03: Cálculo de Movilidad con Margen Comercial
 1. La movilidad cubre el desplazamiento de **ida y vuelta** del personal y equipos desde la base de operaciones hasta el lugar del evento.
-2. La distancia ($D$) en kilómetros y la duración ($T$) en minutos son calculadas mediante la API de Google Maps.
-3. Se aplica un recargo comercial de seguridad del **15%**:
-$$\text{Movilidad Base} = f(D_{\text{ida+vuelta}}, T_{\text{ida+vuelta}})$$
+2. La distancia ($D$) en kilómetros y la duración ($T$) en minutos de **ida y vuelta** las calcula un estimador de rutas detrás del puerto `IRouteEstimatorPort` (Google Maps Platform u otro proveedor; el proveedor se decide en el bloque del bot).
+3. Se aplica un recargo comercial de seguridad del **15%** sobre una movilidad base que depende de la distancia y el tiempo:
+$$\text{Movilidad Base} = \max\left(D_{\text{ida+vuelta}} \times \text{tarifa}_{km} + T_{\text{ida+vuelta}} \times \text{tarifa}_{min},\ \text{monto mínimo}\right)$$
 $$\text{Costo Movilidad} = \text{Movilidad Base} \times 1.15$$
-4. **Excepción de Transporte del Cliente:** Si el cliente opta por brindar movilidad propia de ida y vuelta para el elenco, el costo de movilidad se fija en **S/. 0.00**.
+4. **Excepción de Transporte del Cliente:** Si el cliente opta por brindar movilidad propia de ida y vuelta para el elenco, el costo de movilidad se fija en **S/. 0.00**. Esta excepción prevalece sobre el estimador y sobre la contingencia por zona.
+5. **Contingencia por zona:** si el estimador de rutas falla, se aplica un monto fijo según la zona del distrito del evento (Lima Metropolitana y Callao). El monto de la zona ya es final: no se le aplica el margen del 15%. Un distrito desconocido se asigna a la **zona 3** para no cobrar de menos; el encargado puede corregirlo con el *override* de movilidad.
+6. **Valores iniciales (supuestos pendientes de validación con el negocio):** la documentación original no define la función de la movilidad base; estos valores y la asignación de distritos a zonas son configurables o editables y deben confirmarse antes de producción.
+
+| Parámetro | Variable de entorno | Valor inicial |
+| :--- | :--- | :--- |
+| Tarifa por kilómetro | `MOBILITY_RATE_PER_KM` | S/. 1.00 |
+| Tarifa por minuto | `MOBILITY_RATE_PER_MINUTE` | S/. 0.30 |
+| Monto mínimo | `MOBILITY_MINIMUM_AMOUNT` | S/. 20.00 |
+| Margen comercial | `MOBILITY_MARGIN_PERCENT` | 15 % |
+| Monto fijo de la zona 1 | `MOBILITY_ZONE_1_AMOUNT` | S/. 25.00 |
+| Monto fijo de la zona 2 | `MOBILITY_ZONE_2_AMOUNT` | S/. 45.00 |
+| Monto fijo de la zona 3 | `MOBILITY_ZONE_3_AMOUNT` | S/. 70.00 |
+
+Especificación de diseño: [06. Núcleo de Cotización de E1](../02-arquitectura/06-spec-e1-nucleo-cotizacion.md).
 
 ---
 
