@@ -83,6 +83,7 @@ from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import 
     SQLAlchemyAuditLogAdapter,
 )
 from app.infrastructure.adapters.secondary.persistence.database import (
+    get_catalog_write_session,
     get_engine,
     get_session,
     get_sessionmaker,
@@ -352,25 +353,25 @@ def get_catalog_read_port(
 
 
 def get_catalog_admin_port(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ICatalogAdminPort:
     return catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session)
 
 
 def get_crew_admin_port(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ICrewAdminPort:
     return catalog_admin_repository.SqlAlchemyCrewAdminRepository(session)
 
 
 def get_manage_catalog_use_case(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ManageCatalogUseCase:
     return ManageCatalogUseCase(catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session))
 
 
 def get_manage_crews_use_case(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ManageCrewsUseCase:
     return ManageCrewsUseCase(
         catalog_admin_repository.SqlAlchemyCrewAdminRepository(session), get_user_repository()
