@@ -93,7 +93,7 @@ async def test_manual_mobility_does_not_increase_advance():
 async def test_budget_rejects_invalid_requests(failure):
     catalog, availability, request = budget_setup()
     if failure == "past":
-        request = replace(request, event_date=date.today() - timedelta(days=1))
+        request = replace(request, event_date=date.today() - timedelta(days=2))
     elif failure == "duplicate":
         request = replace(request, extra_ids=request.extra_ids * 2)
     elif failure == "package":
@@ -226,7 +226,7 @@ async def test_confirmation_validates_window_and_renders_before_lock():
         {"expires_at": datetime.now(UTC) - timedelta(seconds=1)},
         {"payment_status": "REFUND_PENDING"},
         {"paid_amount": Decimal("9")},
-        {"event_date": date.today() - timedelta(days=1)},
+        {"event_date": date.today() - timedelta(days=2)},
     ],
 )
 async def test_confirmation_rejects_invalid_states(changes):
