@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.application.dtos.availability_dto import AvailabilityStatus
 from app.domain.entities.payment import PaymentMethod
+from app.domain.exceptions.resource_exceptions import ValidationError as DomainValidationError
+from app.domain.value_objects.phone_number import PhoneNumber
 
 
 class BudgetRequest(BaseModel):
@@ -66,10 +68,10 @@ class ManualRequest(BudgetRequest):
     @field_validator("phone")
     @classmethod
     def normalize_phone(cls, value: str) -> str:
-        digits = value.lstrip("+")
-        if len(digits) == 9:
-            digits = "51" + digits
-        return "+" + digits
+        try:
+            return PhoneNumber.parse(value).value
+        except DomainValidationError as exc:
+            raise ValueError(str(exc)) from exc
 
     district: str = Field(min_length=2, max_length=80)
     payment_method: PaymentMethod

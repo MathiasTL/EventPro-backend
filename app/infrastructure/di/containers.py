@@ -16,17 +16,21 @@ from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.cache_port import ICachePort
 from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, ICrewAdminPort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
+from app.application.ports.output.client_repository_port import IClientRepositoryPort
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
+from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.ports.output.payment_evidence_storage_port import IPaymentEvidenceStoragePort
 from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
 from app.application.ports.output.pre_show_payment_verification_port import (
     IPreShowPaymentVerificationPort,
 )
+from app.application.ports.output.quote_repository_port import IQuoteRepositoryPort
 from app.application.ports.output.quote_schedule_read_port import IQuoteScheduleReadPort
 from app.application.ports.output.refresh_token_repository_port import IRefreshTokenRepositoryPort
 from app.application.ports.output.repository_health_port import IRepositoryHealthPort
+from app.application.ports.output.route_estimator_port import IRouteEstimatorPort
 from app.application.ports.output.user_repository_port import IUserRepositoryPort
 from app.application.services.audit_service import AuditService
 from app.application.use_cases.audit.list_audit_logs import ListAuditLogsUseCase
@@ -59,8 +63,10 @@ from app.application.use_cases.users.list_users import ListUsersUseCase
 from app.application.use_cases.users.update_user import UpdateUserUseCase
 from app.core.config import get_settings
 from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
+from app.domain.services.financial_engine import FinancialEngine
 from app.domain.services.inventory_availability import InventoryAvailabilityService
 from app.domain.services.travel_interval_service import TravelIntervalService
+from app.domain.value_objects.mobility import MobilityTariff
 from app.infrastructure.adapters.secondary.availability.availability_adapter import (
     AvailabilityAdapter,
 )
@@ -70,10 +76,17 @@ from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
     system_clock_adapter,
 )
+from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
+    FakeMessagingAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.fake_route_estimator_adapter import (
+    FakeRouteEstimatorAdapter,
+)
 from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapters import (
     FakeCrewScheduleReadAdapter,
     FakeQuoteScheduleReadAdapter,
 )
+from app.infrastructure.adapters.secondary.mobility.tariff import build_mobility_tariff
 from app.infrastructure.adapters.secondary.persistence import (
     SqlAlchemyAvailabilityRepository,
     SqlAlchemyCatalogReadRepository,
@@ -95,8 +108,10 @@ from app.infrastructure.adapters.secondary.persistence.refresh_token_repository 
     SQLAlchemyRefreshTokenRepository,
 )
 from app.infrastructure.adapters.secondary.persistence.repositories import (
+    sqlalchemy_client_repository,
     sqlalchemy_event_repository,
     sqlalchemy_payment_repository,
+    sqlalchemy_quote_repository,
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
     SQLAlchemyHealthAdapter,
@@ -226,6 +241,45 @@ def get_pre_show_payment_verification_port() -> IPreShowPaymentVerificationPort:
 @lru_cache
 def get_clock_port() -> IClockPort:
     return system_clock_adapter.SystemClockAdapter()
+
+
+@lru_cache
+def get_mobility_tariff() -> MobilityTariff:
+    return build_mobility_tariff(get_settings())
+
+
+@lru_cache
+def get_financial_engine() -> FinancialEngine:
+    return FinancialEngine(
+        tariff=get_mobility_tariff(), advance_percent=get_settings().advance_percent
+    )
+
+
+@lru_cache
+def get_route_estimator() -> IRouteEstimatorPort:
+    # Adaptador real (Google u otro) se decide en el bloque del bot; el dominio no cambia.
+    return FakeRouteEstimatorAdapter()
+
+
+@lru_cache
+def get_messaging_port() -> IMessagingPort:
+    # Mientras no exista ChatwootMessagingAdapter, todos los entornos usan el adaptador falso.
+    # Es un singleton del proceso cuyo historial en memoria crece sin límite; es temporal.
+    return FakeMessagingAdapter(
+        clock=get_clock_port(), log_messages=get_settings().app_env == "development"
+    )
+
+
+def get_quote_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IQuoteRepositoryPort:
+    return sqlalchemy_quote_repository.SqlAlchemyQuoteRepository(session)
+
+
+def get_client_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IClientRepositoryPort:
+    return sqlalchemy_client_repository.SqlAlchemyClientRepository(session)
 
 
 def get_start_event_use_case(
@@ -408,6 +462,10 @@ def clear_application_caches() -> None:
     get_crew_schedule_read_port.cache_clear()
     get_pre_show_payment_verification_port.cache_clear()
     get_clock_port.cache_clear()
+    get_mobility_tariff.cache_clear()
+    get_financial_engine.cache_clear()
+    get_route_estimator.cache_clear()
+    get_messaging_port.cache_clear()
 
 
 async def shutdown_infrastructure() -> None:
