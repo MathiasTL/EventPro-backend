@@ -70,7 +70,7 @@ EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como 
 * `MOBILITY_RATE_PER_MINUTE`: Tarifa en soles por minuto de traslado de ida y vuelta (por defecto `0.30`).
 * `MOBILITY_MINIMUM_AMOUNT`: Monto mínimo de la movilidad base, antes del margen (por defecto `20.00`).
 * `MOBILITY_ZONE_1_AMOUNT`, `MOBILITY_ZONE_2_AMOUNT`, `MOBILITY_ZONE_3_AMOUNT`: Montos fijos finales (sin margen) de la contingencia por zona cuando el estimador de rutas falla (por defecto `25.00`, `45.00` y `70.00`). Un distrito desconocido se asigna a la zona 3. La tabla de distritos por zona vive en `app/infrastructure/adapters/secondary/mobility/district_zones.py`.
-* Los valores de movilidad y la asignación de distritos a zonas son **supuestos pendientes de validación con el negocio** (RN-03).
+* Los valores de movilidad y la asignación de distritos a zonas fueron **aprobados por el negocio el 2026-10-08** (RN-03).
 * Nota de despliegue: en producción debe fijarse `APP_ENV` con un valor distinto de `development`. El adaptador de mensajería falso registra el contenido de los mensajes (incluidos los códigos OTP) cuando `APP_ENV=development`, que es el valor por defecto.
 * `ADVANCE_PERCENT`: Porcentaje del adelanto sobre servicios base (por defecto `10`).
 * `TRANSIT_REST_BUFFER_MINUTES`: Minutos mínimos de margen para descanso y desarme entre shows sucesivos (por defecto `30`).

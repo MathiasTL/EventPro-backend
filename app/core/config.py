@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     advance_percent: int = 10
     transit_rest_buffer_minutes: int = 30
 
-    # --- Cotización y movilidad (E1, supuestos pendientes de validar con el negocio) ---
+    # --- Cotización y movilidad (E1, valores aprobados por el negocio, RN-03) ---
     advance_deadline_hours: int = Field(default=24, gt=0)
     mobility_rate_per_km: Decimal = Field(default=Decimal("1.00"), ge=0, decimal_places=2)
     mobility_rate_per_minute: Decimal = Field(default=Decimal("0.30"), ge=0, decimal_places=2)

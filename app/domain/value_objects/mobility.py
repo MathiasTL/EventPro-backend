@@ -74,7 +74,7 @@ class RouteEstimate:
 
 @dataclass(frozen=True)
 class MobilityTariff:
-    """Tarifa de movilidad configurable (supuestos pendientes de validar con el negocio)."""
+    """Tarifa de movilidad configurable (valores aprobados por el negocio, RN-03)."""
 
     rate_per_km: Money
     rate_per_minute: Money
