@@ -151,13 +151,16 @@ Este comando también se ejecuta tras cada cambio de versión de la imagen, para
 
 ### 5.2 Cuenta y administrador
 
-Con `ENABLE_ACCOUNT_SIGNUP=false` no existe registro público. En una instalación nueva, abrir `http://localhost:3001` (o el túnel SSH en el servidor) muestra el asistente de instalación para crear el primer administrador y la cuenta de EventPro. Anotar el identificador de la cuenta (`CHATWOOT_ACCOUNT_ID`, visible en la URL `/app/accounts/<id>/...`).
+Con `ENABLE_ACCOUNT_SIGNUP=false` no existe registro público. En una instalación nueva, abrir `http://localhost:3001` en desarrollo (en el servidor, el acceso descrito en la sección 7, paso 8) muestra el asistente de instalación para crear el primer administrador y la cuenta de EventPro. Anotar el identificador de la cuenta (`CHATWOOT_ACCOUNT_ID`, visible en la URL `/app/accounts/<id>/...`).
 
 ### 5.3 Bandeja de WhatsApp Cloud
 
 1. *Settings → Inboxes → Add Inbox → WhatsApp → WhatsApp Cloud*.
 2. Completar con los datos del número de prueba de Meta: número de teléfono, *Phone number ID*, *WhatsApp Business Account ID* y el **token permanente de un *system user*** de Meta. No usar el token temporal del número de prueba (expira en aproximadamente 24 h).
 3. Chatwoot muestra la **URL de devolución de llamada** (con la forma `https://<host-publico>/webhooks/whatsapp/<numero>`) y el **token de verificación**. Registrarlos en Meta for Developers (*WhatsApp → Configuration → Webhook*) y suscribir el campo `messages`.
+   * En Chatwoot v4.18.0, el asistente de conexión manual intenta registrar el webhook en Meta por su cuenta. Si la aplicación de Meta aún no tiene un webhook configurado, ese intento falla con el error `(#100) Before override the current callback uri, your app must be subscribed to receive messages for WhatsApp Business Account`. El error no impide crear la bandeja: basta con terminar el asistente y registrar el webhook manualmente en Meta como se indica en este paso.
+   * Si el asistente no muestra el token de verificación, se consulta en la configuración de la bandeja (*Settings → Inboxes → bandeja de WhatsApp → Configuration*).
+   * Comprobación: enviar un mensaje de WhatsApp al número de prueba desde un destinatario registrado; debe aparecer como conversación en Chatwoot, y la respuesta enviada desde Chatwoot debe llegar al teléfono.
 4. Anotar el identificador de la bandeja (`CHATWOOT_INBOX_ID`).
 
 `FRONTEND_URL` en `chatwoot.env` debe ser la URL pública (túnel o `chat.<EVENTPRO_DOMAIN>`), porque Meta descarga los medios salientes desde esa dirección. El número de prueba solo admite 5 destinatarios registrados.
@@ -219,9 +222,35 @@ El proyecto es académico: el servidor debe costar US$0. Pasos:
    docker manifest inspect pgvector/pgvector:pg16 | grep '"architecture": "arm64"'
    docker manifest inspect caddy:2 | grep '"architecture": "arm64"'
    ```
-6. **Dominio DuckDNS:** crear el dominio y apuntar `app.`, `api.` y `chat.` a la IP pública de la VM. Si DuckDNS no resuelve subdominios de segundo nivel (pendiente 6 de la especificación), pasar a enrutamiento por ruta en un solo dominio.
-7. **Configuración y arranque:** definir `.env`, `chatwoot.env` (con `FRONTEND_URL=https://chat.<EVENTPRO_DOMAIN>` y `FORCE_SSL=true`) y `EVENTPRO_DOMAIN`; ejecutar la preparación de la sección 5.1 y levantar con la combinación de servidor (sección 4). Caddy obtiene los certificados al primer arranque.
-8. **Administración de Chatwoot:** `chat.<EVENTPRO_DOMAIN>` solo publica el webhook de WhatsApp y los medios salientes. Para administrar Chatwoot en el servidor, usar un túnel SSH hacia el puerto local: `ssh -L 3001:127.0.0.1:3001 <usuario>@<ip-del-servidor>` y abrir `http://localhost:3001`.
+6. **Dominio DuckDNS:** crear el dominio y apuntarlo a la IP pública de la VM. DuckDNS resuelve los subdominios de segundo nivel (`app.`, `api.` y `chat.`) hacia la misma IP del dominio (comprobado en el despliegue del 2026-10-10), por lo que no hace falta un registro por subdominio. Comprobación: `dig +short chat.<EVENTPRO_DOMAIN>` debe devolver la IP de la VM.
+7. **Configuración y arranque:**
+   1. Clonar el repositorio en `/opt/eventpro` (rama `develop`; los archivos de despliegue no existen en `main`).
+   2. Crear `chatwoot.env` a partir de `chatwoot.env.example`, con los tres secretos generados, `FRONTEND_URL=https://chat.<EVENTPRO_DOMAIN>` y `FORCE_SSL=true`.
+   3. Crear `.env` con `EVENTPRO_DOMAIN=<dominio>` y el resto de la configuración de EventPro. El archivo debe existir aunque solo se levante Chatwoot, porque Compose lo exige para cargar `docker-compose.yml`.
+   4. Ejecutar la preparación de la sección 5.1.
+   5. Levantar con la combinación de servidor (sección 4). Caddy obtiene los certificados al primer arranque.
+
+   **Arranque parcial (solo Chatwoot y el proxy).** Es posible desplegar Chatwoot antes que el backend. Tras la sección 5.1, levantar únicamente Caddy:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.chatwoot.yml -f docker-compose.proxy.yml up -d caddy
+   curl -s -o /dev/null -w '%{http_code}\n' https://chat.<EVENTPRO_DOMAIN>/   # esperado: 404
+   ```
+   * `docker-compose.proxy.yml` no funciona sin `docker-compose.yml`: redefine el servicio `api`, por lo que el archivo base debe incluirse aunque `api` no se inicie.
+   * El 404 en la raíz de `chat.` es correcto: Caddy solo publica el webhook de WhatsApp y los medios. Lo relevante es que responda por HTTPS con un certificado válido.
+   * `app.` y `api.` responden 502 hasta que el frontend y el backend estén desplegados. Los errores que aparecen en el registro de Caddy por esas rutas son esperables.
+   * No ejecutar `docker compose config` sin `--services` en una terminal compartida o grabada: imprime los valores de `chatwoot.env`, incluidos los secretos.
+8. **Administración de Chatwoot:** `chat.<EVENTPRO_DOMAIN>` solo publica el webhook de WhatsApp y los medios salientes, y el panel se alcanza por un túnel SSH. Con `FORCE_SSL=true`, Chatwoot redirige a HTTPS cualquier petición HTTP (`http://127.0.0.1:3001` responde 301), de modo que un túnel directo al puerto 3001 no sirve. Se usa un Caddy auxiliar que solo escucha en el *loopback* de la VM y entrega HTTPS a Chatwoot:
+   ```bash
+   # En la VM (una sola vez; el contenedor queda en ejecución)
+   docker run -d --name cw_admin --restart unless-stopped \
+     --network eventpro_eventpro_network \
+     -p 127.0.0.1:3443:3443 \
+     caddy:2 caddy reverse-proxy --from localhost:3443 --to chatwoot-rails:3000
+
+   # En el equipo del administrador
+   ssh -L 3443:127.0.0.1:3443 <usuario>@<ip-del-servidor>
+   ```
+   Con el túnel abierto, abrir `https://localhost:3443`. El navegador advierte que el certificado no es de confianza porque lo emite la autoridad interna de ese Caddy auxiliar; se acepta la advertencia. El puerto 3443 no se publica hacia internet.
 9. **Respaldos diarios de ambas bases (se conservan los últimos 7):** programar con `cron` un script que ejecute `pg_dump` de EventPro (`db`) y de Chatwoot (`chatwoot-db`):
    ```bash
    #!/usr/bin/env bash
