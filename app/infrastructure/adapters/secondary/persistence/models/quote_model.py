@@ -70,10 +70,14 @@ class QuoteModel(Base):
     client_provides_mobility: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("FALSE")
     )
-    # La tabla define DEFAULT 0.00 / 0, pero el ORM omitiría un None y aplicaría ese default.
-    # Se declaran sin server_default para persistir NULL, la marca de contingencia por zona.
-    calculated_distance_km: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
-    calculated_transit_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Conserva los defaults del baseline; evaluates_none persiste NULL explícito
+    # como marca de contingencia, sin confundirlo con una ruta de distancia cero.
+    calculated_distance_km: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2).evaluates_none(), nullable=True, server_default=text("0.00")
+    )
+    calculated_transit_minutes: Mapped[int | None] = mapped_column(
+        Integer().evaluates_none(), nullable=True, server_default=text("0")
+    )
     base_mobility_amount: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, server_default=text("0.00")
     )

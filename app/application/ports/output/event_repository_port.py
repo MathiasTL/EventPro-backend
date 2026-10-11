@@ -5,12 +5,14 @@ from uuid import UUID
 from app.application.dtos.event_extension_dto import VerifiedExtensionTotals
 from app.application.dtos.event_schedule_dto import EventScheduleFilters
 from app.application.ports.output.event_occupancy_port import IEventOccupancyPort
+from app.application.ports.output.financial_read_port import IEventFinancialReadPort
 from app.domain.entities.event import Event
 from app.domain.entities.event_extension import EventExtension
 from app.domain.entities.payment import Payment
+from app.domain.value_objects.financial_reporting import EventFinancialSnapshot
 
 
-class IEventRepositoryPort(IEventOccupancyPort, Protocol):
+class IEventRepositoryPort(IEventOccupancyPort, IEventFinancialReadPort, Protocol):
     async def rollback_operation(self) -> None:
         """Libera la transacción y sus bloqueos tras una operación rechazada."""
 
@@ -25,8 +27,8 @@ class IEventRepositoryPort(IEventOccupancyPort, Protocol):
     async def get_verified_extension_totals(self, event_id: UUID) -> VerifiedExtensionTotals:
         """Comprueba vínculos, importes y cobros EXTENSION y devuelve sus totales."""
 
-    async def save_settlement(self, event: Event) -> None:
-        """Confirma la liquidación o revierte la transacción."""
+    async def save_settlement(self, event: Event, snapshot: EventFinancialSnapshot) -> None:
+        """Confirma liquidación e instantánea juntas o revierte la transacción."""
 
     async def get_by_id_for_update(self, event_id: UUID) -> Event | None:
         """Carga y bloquea el evento hasta confirmar o revertir la sesión."""

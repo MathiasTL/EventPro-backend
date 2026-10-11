@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.dtos.event_extension_dto import VerifiedExtensionTotals
 from app.application.dtos.event_occupancy_dto import EventOccupancy
 from app.application.dtos.event_schedule_dto import EventScheduleFilters
+from app.core.logging import get_logger
 from app.domain.entities.event import Event
 from app.domain.entities.event_extension import EventExtension
 from app.domain.entities.payment import Payment, PaymentConcept, PaymentValidationStatus
@@ -17,10 +18,15 @@ from app.domain.exceptions.event_exceptions import (
     ExtensionPaymentMismatchError,
     InvalidEventStateError,
 )
+from app.domain.exceptions.financial_exceptions import FinancialDataInconsistentError
 from app.domain.value_objects.event_status import EventStatus
+from app.domain.value_objects.financial_reporting import EventDirectCosts, EventFinancialSnapshot
 from app.domain.value_objects.money import Money
 from app.infrastructure.adapters.secondary.persistence.mappers.event_extension_mapper import (
     extension_to_model,
+)
+from app.infrastructure.adapters.secondary.persistence.mappers.event_financial_snapshot_mapper import (  # noqa: E501
+    snapshot_to_model,
 )
 from app.infrastructure.adapters.secondary.persistence.mappers.event_mapper import event_to_domain
 from app.infrastructure.adapters.secondary.persistence.mappers.payment_mapper import (
@@ -36,6 +42,9 @@ from app.infrastructure.adapters.secondary.persistence.models.event_resource_mod
 from app.infrastructure.adapters.secondary.persistence.models.payment_model import PaymentModel
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_occupancy,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
+    SqlAlchemyFinancialRepository,
 )
 
 
@@ -166,10 +175,17 @@ class SqlAlchemyEventRepository:
             )
         return VerifiedExtensionTotals(Money(row.amount), row.minutes)
 
-    async def save_settlement(self, event: Event) -> None:
+    async def get_settlement_costs(self, event_id: UUID) -> EventDirectCosts:
+        return await SqlAlchemyFinancialRepository(self._session).get_settlement_costs(event_id)
+
+    async def save_settlement(self, event: Event, snapshot: EventFinancialSnapshot) -> None:
         try:
             if event.status is not EventStatus.SETTLED:
                 raise InvalidEventStateError("El evento debe haber completado la liquidación.")
+            if snapshot.event_id != event.id:
+                raise FinancialDataInconsistentError("La instantánea no pertenece al evento.")
+            self._session.add(snapshot_to_model(snapshot))
+            await self._session.flush()
             stmt = (
                 update(EventModel)
                 .where(
@@ -190,6 +206,9 @@ class SqlAlchemyEventRepository:
             if (await self._session.execute(stmt)).scalar_one_or_none() is None:
                 raise InvalidEventStateError("El evento ya no admite esta liquidación.")
             await self._session.commit()
+            get_logger(__name__).info(
+                "event_financial_snapshot_created", event_id=str(event.id), origin="SETTLEMENT"
+            )
         except BaseException:
             await self._session.rollback()
             raise
