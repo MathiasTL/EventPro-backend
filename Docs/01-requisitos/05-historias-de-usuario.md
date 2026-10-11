@@ -392,6 +392,17 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Cuando** se ejecuta la consolidación contable,
   * **Entonces** el sistema totaliza los cobros recibidos, descuenta los costos fijos tabulados de cada paquete y extra, y reporta la utilidad neta exacta.
 
+> **US-21 implementada:** `GET /reports/financial/pnl` consolida al consultar el mes
+> o semana ISO solicitado, filtrando eventos `SETTLED` por `event_date`, fecha local
+> del servicio. El cierre guarda ingreso y costos en una instantánea transaccional.
+> Cambios posteriores de catálogo no recalculan eventos cerrados. Los históricos
+> se reconstruyen una vez con el catálogo vigente y origen `LEGACY_BACKFILL`.
+> Sin eventos se devuelve `200` con ceros; un evento liquidado sin instantánea
+> produce `409 financial-data-inconsistent`, sin reporte parcial. Acceso únicamente
+> para `ENCARGADO` y `SUPERADMIN`. Los cobros base son los acumulados operativos de
+> US-18; movilidad usa el costo base cotizado; extensiones no tienen costo adicional
+> registrado. El reporte no representa conciliación bancaria ni gastos reales.
+
 ---
 
 ### US-22: Dashboard Ejecutivo de Indicadores de Negocio

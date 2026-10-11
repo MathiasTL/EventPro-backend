@@ -23,6 +23,7 @@ from app.domain.exceptions.event_exceptions import (
     ExtensionPaymentMismatchError,
     InvalidEventStateError,
 )
+from app.domain.exceptions.financial_exceptions import FinancialDataInconsistentError
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
 from app.domain.exceptions.storage_exceptions import EvidenceValidationError
 from app.domain.value_objects.event_status import EventStatus
@@ -220,7 +221,11 @@ async def settle_event(
         raise ProblemError(403, "forbidden", "Prohibido", str(exc)) from exc
     except ResourceNotFoundError as exc:
         raise ProblemError(404, "not-found", "No encontrado", str(exc)) from exc
-    except (InvalidEventStateError, ExtensionPaymentMismatchError) as exc:
+    except (
+        InvalidEventStateError,
+        ExtensionPaymentMismatchError,
+        FinancialDataInconsistentError,
+    ) as exc:
         raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
     except BalancePendingError as exc:
         raise ProblemError(400, exc.code, "Saldo pendiente", str(exc)) from exc

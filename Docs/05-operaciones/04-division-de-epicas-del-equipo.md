@@ -198,7 +198,7 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 | :--- | :--- |
 | Dominio | `Event`, asignación de elencos, protocolo pre-show, extensiones, liquidación final, consolidación financiera |
 | Casos de uso | Consultar cronograma, asignar elencos, registrar llegada, cobrar saldo con evidencia, registrar extensión, liquidar, cancelar, generar reportes |
-| Adaptadores | Repositorios de eventos, tareas de reportes en arq, consultas de lectura para analítica |
+| Adaptadores | Repositorios de eventos, instantáneas financieras al liquidar y consultas de lectura para analítica; US-21 consolida al consultar, sin tarea de reportes en arq |
 | Endpoints | `GET /events/schedule`, `GET /events/{id}`, `POST /events/{id}/crew-assignments`, `DELETE /events/{id}/crew-assignments/{assignment_id}`, `POST /events/{id}/arrive`, `POST /events/{id}/check-in-and-collect`, `POST /events/{id}/extensions`, `POST /events/{id}/settle`, `POST /events/{id}/cancel`, `GET /reports/dashboard`, `GET /reports/financial/pnl` |
 | Frontend | Cronograma con filtros (`widgets/event-card-with-observations`), **vista móvil del operador, *mobile-first* desde 360 px** (agenda del día, llegada, cobro con foto de evidencia desde la cámara, extensiones), dashboard ejecutivo con indicadores y P&L |
 

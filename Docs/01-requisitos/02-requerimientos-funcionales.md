@@ -331,13 +331,13 @@
 ## 9. Módulo M09: Analítica Financiera y Dashboards
 
 ### RF-24: Consolidación Automática de Ingresos y Costos Fijos
-* **Descripción:** El sistema debe procesar periódicamente (semanal y mensualmente) las métricas financieras del negocio contrastando ingresos totales contra costos fijos directos tabulados.
-* **Entradas:** Base de datos de eventos en estado `SETTLED` y tabla maestra de costos fijos de paquetes y extras.
+* **Descripción:** El sistema consolida automáticamente las métricas financieras del período semanal o mensual solicitado mediante `GET /reports/financial/pnl`. US-21 calcula al consultar, sin tarea programada ni tabla de cierres por período.
+* **Entradas:** Eventos `SETTLED` y sus instantáneas financieras; la tabla maestra de costos fijos de paquetes y extras se consulta al liquidar o reconstruir históricos.
 * **Procesamiento:**
   1. $\text{Ingresos Brutos} = \sum \text{Total Cobrado por Eventos Liquidados}$
   2. $\text{Costos Directos} = \sum (\text{Costo Fijo Paquete} + \sum \text{Costo Fijo Extras} + \text{Costo Real Movilidad})$
   3. $\text{Utilidad Neta} = \text{Ingresos Brutos} - \text{Costos Directos}$
-* **Salidas:** Tablas de consolidación contable por período (semana / mes).
+* **Salidas:** Reporte P&L por período (semana ISO / mes), con ingreso, costos, utilidad y margen; las instantáneas por evento preservan los costos utilizados.
 * **Reglas Asociadas:** RN-08, PC-09.
 * **Prioridad:** Alta.
 

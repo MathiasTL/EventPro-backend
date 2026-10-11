@@ -81,7 +81,7 @@ app/
 │   │   │   ├── check_in_and_collect.py
 │   │   │   └── settle_extra_time.py
 │   │   └── financial/
-│   │       └── compute_monthly_pnl.py
+│   │       └── get_financial_pnl.py   # US-21: consolidación al consultar
 │   └── dtos/                             # Data Transfer Objects agnósticos de la capa de aplicación
 │       ├── quote_dto.py
 │       └── event_dto.py
@@ -102,7 +102,7 @@ app/
 │   │   │   ├── webhooks/                 # Controladores de Webhooks
 │   │   │   │   └── chatwoot_webhook.py   # Receptor del webhook de cuenta de Chatwoot (solo red interna)
 │   │   │   └── jobs/                     # Tareas programadas y reintentos (arq, respaldado en Redis)
-│   │   │       └── worker.py             # WorkerSettings: vencimiento de cotizaciones, cola outbox_messages, reconciliación con Chatwoot, reportes
+│   │   │       └── worker.py             # WorkerSettings: vencimiento de cotizaciones, cola outbox_messages, reconciliación con Chatwoot
 │   │   │
 │   │   └── secondary/                    # Adaptadores de Salida (Driven Adapters)
 │   │       ├── persistence/              # Base de Datos Relacional (PostgreSQL)
@@ -212,7 +212,7 @@ Contiene las implementaciones técnicas concretas de los puertos.
   * `quotes_router.py`: Expone endpoints HTTP (`POST /api/v1/quotes`). Recibe payloads validados con Pydantic, invoca al caso de uso correspondiente e inyecta la respuesta serializada.
   * `chatwoot_webhook.py`: Endpoint `POST /api/v1/webhooks/chatwoot`, accesible solo por la red interna. Valida `X-Chatwoot-Signature` (HMAC-SHA256 sobre `"{timestamp}.{raw_body}"`, ventana de 5 minutos), descarta duplicados (idempotencia), responde `200` y encola el evento en arq. El worker enruta los mensajes entrantes de conversaciones en `pending` hacia los casos de uso del chatbot y publica el resto por SSE.
   * `conversations_router.py`: Expone `/conversations/*` (bandeja, mensajes, `takeover`, `release`) y el stream SSE (`GET /conversations/stream`) para los roles `ENCARGADO` y `SUPERADMIN`; delega en casos de uso que consultan Chatwoot mediante `IMessagingPort`.
-  * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), los casos de uso periódicos y diferidos: vencimiento de cotizaciones, despacho y reintentos de `outbox_messages` (hacia Chatwoot), el job de reconciliación de mensajes entrantes (cada 5 minutos) y reportes semanales y mensuales. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
+  * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), los casos de uso periódicos y diferidos: vencimiento de cotizaciones, despacho y reintentos de `outbox_messages` (hacia Chatwoot), el job de reconciliación de mensajes entrantes (cada 5 minutos); US-21 consolida al consultar y no requiere job de reportes. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
 * **Adaptadores Secundarios (Infraestructura de soporte):**
   * `SqlAlchemyQuoteRepository`: Implementa la interfaz `IQuoteRepository` usando transacciones de PostgreSQL.
   * `GoogleMapsAdapter`: Implementa `IMapsServicePort` llamando a la API REST de Google Maps con cliente asíncrono `httpx`.
@@ -259,3 +259,29 @@ async def create_quote(
     result_dto = await use_case.execute(payload.to_dto())
     return QuoteResponse.from_dto(result_dto)
 ```
+
+
+## US-21: cierre contable y consulta P&L
+
+`FinancialReportingService` calcula utilidad y margen con `Money`/`Decimal` en
+el dominio. Los DTOs y puertos `IGetFinancialPnlPort`, `IFinancialReportReadPort`
+e `IEventFinancialReadPort` pertenecen a aplicación, sin Pydantic ni SQLAlchemy.
+El puerto de eventos incorpora la lectura de costos y
+`save_settlement(event, snapshot)`, con la misma sesión y bloqueo `FOR UPDATE`.
+
+`SettleEventUseCase` valida la operación y las extensiones, lee paquete/extras/
+movilidad en una sola sentencia, captura la hora del puerto `IClockPort` y confirma
+estado e instantánea juntos. Un rechazo o fallo revierte y libera bloqueos.
+La instantánea conserva el desglose con origen `SETTLEMENT`; no se actualiza por
+cambios de catálogo y no se agregan gastos de elenco duplicados.
+
+`SqlAlchemyFinancialRepository` consulta conteo e importes en una sentencia por
+período `[inicio, fin)`, con left join para detectar instantáneas faltantes. No usa
+joins de pagos y extras al calcular el reporte; evita multiplicar importes.
+`GET /reports/financial/pnl` aplica RBAC fresco y RFC 7807, con
+`409 financial-data-inconsistent` ante datos incompletos. La DI usa sesión por
+petición. No hay caché, tabla de cierres por período ni notificaciones nuevas.
+
+El ORM de cotizaciones conserva los defaults del baseline y utiliza
+`evaluates_none()` para persistir `NULL` en distancia/minutos de contingencia.
+Esto mantiene `alembic check` alineado sin alterar el esquema de E1.

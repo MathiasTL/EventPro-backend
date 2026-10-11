@@ -11,6 +11,7 @@ from app.application.ports.input.event_extension_port import (
 )
 from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
 from app.application.ports.input.event_start_port import IStartEventPort
+from app.application.ports.input.financial_report_port import IGetFinancialPnlPort
 from app.application.ports.output.audit_log_port import IAuditLogPort
 from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.cache_port import ICachePort
@@ -43,6 +44,7 @@ from app.application.use_cases.event.get_event_schedule import GetEventScheduleU
 from app.application.use_cases.event.register_event_extension import RegisterEventExtensionUseCase
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
+from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
 )
@@ -112,6 +114,9 @@ from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_repository,
     sqlalchemy_payment_repository,
     sqlalchemy_quote_repository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
+    SqlAlchemyFinancialRepository,
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
     SQLAlchemyHealthAdapter,
@@ -328,8 +333,17 @@ def get_register_event_extension_use_case(
 def get_settle_event_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
     crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+    clock: Annotated[IClockPort, Depends(get_clock_port)],
 ) -> ISettleEventPort:
-    return SettleEventUseCase(sqlalchemy_event_repository.SqlAlchemyEventRepository(session), crews)
+    return SettleEventUseCase(
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session), crews, clock
+    )
+
+
+def get_financial_pnl_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IGetFinancialPnlPort:
+    return GetFinancialPnlUseCase(SqlAlchemyFinancialRepository(session))
 
 
 @lru_cache

@@ -34,8 +34,9 @@ El 2026-10-07 se reemplazó la cadena incremental `0001`–`0006` por `0001_init
 
 ### 1.4 US-18: `0002_event_extensions`
 
-La cadena vigente es `base → 0001_initial_schema → 0002_event_extensions`, con un
-único head. `0002` crea el detalle de extensiones y añade los acumuladores
+La cadena vigente es `base → 0001_initial_schema → 0002_event_extensions →
+0003_manual_booking_documents → 0004_event_financial_snapshots`, con un único
+head `0004_event_financial_snapshots`. `0002` crea el detalle de extensiones y añade los acumuladores
 `extra_minutes_total` y `legacy_extra_hours_amount`. El baseline permanece intacto.
 
 El upgrade copia el importe adicional anterior como crédito histórico únicamente
@@ -56,7 +57,7 @@ Las fixtures crean `clients`, `packages` y `quotes` antes de sus eventos y pagos
    y evidencias que deban conservarse antes de cualquier recreación.
 2. Para datos descartables, crear una base nueva y configurar la conexión hacia ella.
    Ejecutar `alembic upgrade head` y después el seed. Verificar un único head
-   `0002_event_extensions` antes de sustituir la conexión anterior.
+   `0004_event_financial_snapshots` antes de sustituir la conexión anterior.
 3. Para datos que deban conservarse, restaurar una copia aislada y preparar una
    reconciliación explícita del esquema y datos con el baseline, incluidas las FK
    de cotizaciones y detalles de pagos. Validar allí primero. No usar `stamp` para
@@ -65,6 +66,31 @@ Las fixtures crean `clients`, `packages` y `quotes` antes de sus eventos y pagos
 Este cambio se valida únicamente en bases efímeras; no recrea ni actualiza la base
 local del desarrollador automáticamente. Los nuevos escritores de disponibilidad
 deben respetar el [protocolo de bloqueo de US-18](../02-arquitectura/02-backend-arquitectura-hexagonal.md).
+
+---
+
+### 1.5 Migraciones posteriores al baseline: US-21
+
+`0003_manual_booking_documents` incorpora documentos privados e idempotencia del
+flujo manual. `0004_event_financial_snapshots` agrega exclusivamente la tabla
+contable por evento y reconstruye los eventos ya `SETTLED`, sin modificar el
+baseline, el catálogo, los pagos ni los defaults de cotizaciones.
+
+La reconstrucción verifica cobertura y correspondencia de extensiones, pagos,
+minutos y acumulados. Usa los costos vigentes y marca `LEGACY_BACKFILL`, conservando
+identificadores, cantidades y componentes monetarios en JSONB. Durante diagnóstico
+y captura, bloqueos `SHARE` evitan escrituras concurrentes en las fuentes; aplicar
+durante una ventana de despliegue. Una inconsistencia aborta toda la migración con
+el identificador del evento. Conciliar datos antes de reintentar.
+
+El downgrade a `0003` elimina las instantáneas y pierde sus costos históricos;
+respaldarlas antes de revertir. Conserva eventos y pagos. Un nuevo upgrade usa los
+costos vigentes en ese nuevo instante, no recupera la instantánea eliminada.
+
+Validación: Testcontainers PostgreSQL 16, upgrade con históricos válidos e
+inconsistentes, rollback, downgrade/upgrade, PK/FK/CHECK y `alembic check`.
+La BD compartida solo se migra desde `develop` mediante el flujo manual existente.
+Si aún está en `0002`, `upgrade head` aplica `0003` y después `0004`.
 
 ---
 
