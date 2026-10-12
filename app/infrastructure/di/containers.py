@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Annotated
 
+import httpx
 from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from app.application.ports.output.client_repository_port import IClientRepositor
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
+from app.application.ports.output.gateway_event_port import IGatewayEventPort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
@@ -47,6 +49,7 @@ from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
 )
@@ -79,6 +82,13 @@ from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import Redis
 from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
     system_clock_adapter,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_client import (
+    ChatwootClient,
+    build_chatwoot_http_client,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_event_gateway import (  # noqa: E501
+    ChatwootEventGateway,
 )
 from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
     FakeMessagingAdapter,
@@ -275,6 +285,48 @@ def get_messaging_port() -> IMessagingPort:
     # Es un singleton del proceso cuyo historial en memoria crece sin límite; es temporal.
     return FakeMessagingAdapter(
         clock=get_clock_port(), log_messages=get_settings().app_env == "development"
+    )
+
+
+@lru_cache
+def get_chatwoot_http_client() -> httpx.AsyncClient:
+    """Cliente HTTP compartido de la cuenta de Chatwoot; lo cierra ``shutdown_infrastructure``."""
+
+    settings = get_settings()
+    if not settings.chatwoot_enabled or settings.chatwoot_account_id is None:
+        raise RuntimeError("Chatwoot no está configurado: falta CHATWOOT_BASE_URL")
+    return build_chatwoot_http_client(
+        base_url=settings.chatwoot_base_url,
+        account_id=settings.chatwoot_account_id,
+        timeout_seconds=settings.chatwoot_timeout_seconds,
+        connect_timeout_seconds=settings.chatwoot_connect_timeout_seconds,
+    )
+
+
+@lru_cache
+def _chatwoot_client() -> ChatwootClient | None:
+    """Cliente de la API de Chatwoot, o ``None`` si el entorno no lo configura."""
+
+    settings = get_settings()
+    if not settings.chatwoot_enabled:
+        return None
+    return ChatwootClient(
+        get_chatwoot_http_client(),
+        bot_token=settings.chatwoot_bot_token.get_secret_value(),
+        agent_token=settings.chatwoot_agent_token.get_secret_value(),
+    )
+
+
+@lru_cache
+def get_gateway_event_port() -> IGatewayEventPort:
+    return ChatwootEventGateway(_chatwoot_client())
+
+
+@lru_cache
+def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
+    return ProcessGatewayEvent(
+        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
+        gateway=get_gateway_event_port(),
     )
 
 
@@ -512,6 +564,10 @@ def clear_application_caches() -> None:
     get_messaging_port.cache_clear()
     get_document_source_port.cache_clear()
     get_dispatch_due_messages_use_case.cache_clear()
+    get_chatwoot_http_client.cache_clear()
+    _chatwoot_client.cache_clear()
+    get_gateway_event_port.cache_clear()
+    get_process_gateway_event_use_case.cache_clear()
 
 
 async def shutdown_infrastructure() -> None:
@@ -524,6 +580,8 @@ async def shutdown_infrastructure() -> None:
     get_redis_client.cache_clear()
     get_repository_health_port.cache_clear()
     get_cache_port.cache_clear()
+    if get_chatwoot_http_client.cache_info().currsize:
+        await get_chatwoot_http_client().aclose()
     clear_application_caches()
 
 
