@@ -1,0 +1,91 @@
+{
+  "provisional": true,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "data": {
+      "meta": {
+        "mine_count": 0,
+        "unassigned_count": 3,
+        "all_count": 4
+      },
+      "payload": [
+        {
+          "id": 57,
+          "inbox_id": 2,
+          "status": "pending",
+          "can_reply": true,
+          "last_activity_at": 1791813700,
+          "messages": [
+            {
+              "id": 4831,
+              "content": "Gracias",
+              "message_type": 0,
+              "created_at": 1791813700
+            }
+          ],
+          "meta": {
+            "sender": {
+              "id": 11,
+              "name": "Cliente Demo",
+              "phone_number": "+51999111222"
+            }
+          }
+        },
+        {
+          "id": 58,
+          "inbox_id": 2,
+          "status": "open",
+          "can_reply": false,
+          "last_activity_at": 1791813650,
+          "messages": [
+            {
+              "id": 4825,
+              "content": "Buen dia",
+              "message_type": 1,
+              "created_at": 1791813650
+            }
+          ],
+          "meta": {
+            "sender": {
+              "id": 12,
+              "name": "Otra Persona Demo",
+              "phone_number": "+51999333444"
+            }
+          }
+        },
+        {
+          "id": 59,
+          "inbox_id": 2,
+          "status": "resolved",
+          "can_reply": false,
+          "last_activity_at": 1791813610,
+          "messages": [],
+          "meta": {
+            "sender": {
+              "id": 12,
+              "name": "Otra Persona Demo",
+              "phone_number": "+51999333444"
+            }
+          }
+        },
+        {
+          "id": 60,
+          "inbox_id": 2,
+          "status": "pending",
+          "can_reply": true,
+          "last_activity_at": 1791813605,
+          "messages": [],
+          "meta": {
+            "sender": {
+              "id": 14,
+              "name": "Sin Telefono Demo",
+              "phone_number": null
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "provisional": true,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "meta": {
+      "has_messages": true
+    },
+    "payload": [
+      {
+        "id": 4821,
+        "conversation_id": 57,
+        "message_type": 1,
+        "private": false,
+        "content": "Hola",
+        "created_at": 1791813600,
+        "attachments": []
+      },
+      {
+        "id": 4822,
+        "conversation_id": 57,
+        "message_type": 0,
+        "private": false,
+        "content": "Gracias",
+        "created_at": 1791813610,
+        "attachments": []
+      },
+      {
+        "id": 4823,
+        "conversation_id": 57,
+        "message_type": 2,
+        "private": false,
+        "content": "La conversacion paso a pendiente",
+        "created_at": 1791813620,
+        "attachments": []
+      },
+      {
+        "id": 4824,
+        "conversation_id": 57,
+        "message_type": 1,
+        "private": true,
+        "content": "Nota interna del equipo",
+        "created_at": 1791813630,
+        "attachments": []
+      },
+      {
+        "id": 4825,
+        "conversation_id": 57,
+        "message_type": 1,
+        "private": false,
+        "content": "Tu cotizacion",
+        "created_at": 1791813640,
+        "attachments": [
+          {
+            "id": 9,
+            "file_type": "file",
+            "file_size": 1024,
+            "data_url": "https://files.example.org/storage/cotizacion%20final.pdf"
+          }
+        ]
+      }
+    ]
+  }
+}

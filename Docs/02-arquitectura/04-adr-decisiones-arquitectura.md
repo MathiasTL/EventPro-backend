@@ -165,7 +165,7 @@
 * **Decisión:**
   Adoptar **Chatwoot autoalojado** como gateway de mensajería entre Meta Cloud API y EventPro, **invisible para los usuarios**: ningún encargado ni cliente usa su interfaz y EventPro consume su API.
   1. **Puerto y adaptador:** `IMessagingPort` reemplaza a `IWhatsAppServicePort` (texto, listas interactivas, plantillas, adjuntos, cambio de estado y consulta de conversaciones y mensajes). `ChatwootMessagingAdapter` (`httpx`) lo implementa sobre la Application API de Chatwoot.
-  2. **Entrada de eventos:** `POST /api/v1/webhooks/chatwoot` recibe el webhook de cuenta firmado (HMAC-SHA256, ventana de 5 minutos, deduplicación por identificador). Es **solo interno**: el proxy lo bloquea y únicamente es accesible por la red interna de Docker.
+  2. **Entrada de eventos:** `POST /api/v1/webhooks/chatwoot` recibe el webhook de cuenta firmado (HMAC-SHA256, ventana de 5 minutos, deduplicación por `X-Chatwoot-Delivery`, cabecera que no forma parte de la firma). Es **solo interno**: el proxy lo bloquea y únicamente es accesible por la red interna de Docker.
   3. **Bandeja en EventPro:** los encargados leen y responden desde la web mediante `/conversations/*` y un flujo SSE; los mensajes se consultan a Chatwoot y no se duplican en la base de datos.
   4. **Vínculo de negocio:** la tabla `conversation_links` relaciona la conversación de Chatwoot con el cliente, la cotización vigente y el encargado asignado, junto con el motivo y el resumen del traspaso.
   5. **Traspaso:** `pending` (responde el bot) y `open` (responde un humano) mediante el cambio de estado de la conversación.
@@ -177,7 +177,7 @@
   * *Chatwoot Captain (agente de IA integrado):* consume presupuesto de OpenAI y cede el control del flujo del bot. Descartada.
 * **Consecuencias:**
   * *Positivas:* Traspaso bot-humano y bandeja sin construir un sistema de mensajería; costo de infraestructura US$0 (Oracle Cloud Always Free); volver a Meta directo solo requeriría otro adaptador de `IMessagingPort`, sin cambios en el dominio; Chatwoot es la única fuente de verdad del canal.
-  * *Negativas:* Un servicio adicional de cuatro contenedores (~4 GB de memoria) que operar, respaldar y monitorear; dependencia de comportamientos de Chatwoot aún por verificar en la implementación (Agent Bot sin `outgoing_url`, reapertura de conversaciones resueltas); la entrada de eventos exige idempotencia y reconciliación porque no se confirma que Chatwoot reintente sus webhooks.
+  * *Negativas:* Un servicio adicional de cuatro contenedores (~4 GB de memoria) que operar, respaldar y monitorear; dependencia de comportamientos de Chatwoot aún por verificar en la implementación (Agent Bot sin `outgoing_url`, reapertura de conversaciones resueltas); la entrada de eventos exige idempotencia y reconciliación porque Chatwoot **no reintenta** los webhooks de cuenta (confirmado al implementar el gateway): un aviso de entrega perdido deja `delivery_status` nulo hasta que exista el job de reconciliación, que pertenece al bloque del bot.
 
 
 ---

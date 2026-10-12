@@ -1,0 +1,25 @@
+{
+  "provisional": true,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "id": 4821,
+    "account_id": 1,
+    "inbox_id": 2,
+    "conversation_id": 57,
+    "content": "Hola, tu cotizacion esta lista",
+    "content_type": "text",
+    "content_attributes": {},
+    "message_type": 1,
+    "private": false,
+    "status": "sent",
+    "source_id": null,
+    "created_at": 1791813600,
+    "sender": {
+      "id": 3,
+      "name": "Bot EventPro",
+      "type": "agent_bot"
+    }
+  }
+}

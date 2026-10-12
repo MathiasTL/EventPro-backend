@@ -1,0 +1,24 @@
+{
+  "provisional": true,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "meta": {
+      "count": 2,
+      "current_page": "1"
+    },
+    "payload": [
+      {
+        "id": 12,
+        "name": "Otra Persona Demo",
+        "phone_number": "+51999333444"
+      },
+      {
+        "id": 11,
+        "name": "Cliente Demo",
+        "phone_number": "+51999111222"
+      }
+    ]
+  }
+}

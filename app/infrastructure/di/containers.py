@@ -1,6 +1,8 @@
 from functools import lru_cache
 from typing import Annotated
 
+import httpx
+from arq.connections import ArqRedis
 from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +22,9 @@ from app.application.ports.output.client_repository_port import IClientRepositor
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
+from app.application.ports.output.event_dedup_port import IEventDedupPort
+from app.application.ports.output.gateway_event_port import IGatewayEventPort
+from app.application.ports.output.gateway_event_queue_port import IGatewayEventQueuePort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
@@ -47,6 +52,8 @@ from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
+from app.application.use_cases.messaging.receive_gateway_event import ReceiveGatewayEvent
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
 )
@@ -75,10 +82,23 @@ from app.infrastructure.adapters.secondary.availability.availability_adapter imp
     AvailabilityAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_cache_adapter import RedisCacheAdapter
+from app.infrastructure.adapters.secondary.cache.redis_event_dedup_adapter import (
+    RedisEventDedupAdapter,
+)
 from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
 from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
     system_clock_adapter,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_client import (
+    ChatwootClient,
+    build_chatwoot_http_client,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_event_gateway import (  # noqa: E501
+    ChatwootEventGateway,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_messaging_adapter import (  # noqa: E501
+    ChatwootMessagingAdapter,
 )
 from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
     FakeMessagingAdapter,
@@ -123,6 +143,9 @@ from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter
 )
 from app.infrastructure.adapters.secondary.persistence.user_repository import (
     SQLAlchemyUserRepository,
+)
+from app.infrastructure.adapters.secondary.queue.arq_gateway_event_queue import (
+    ArqGatewayEventQueue,
 )
 from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
 from app.infrastructure.adapters.secondary.storage.document_source_adapter import (
@@ -271,11 +294,100 @@ def get_route_estimator() -> IRouteEstimatorPort:
 
 @lru_cache
 def get_messaging_port() -> IMessagingPort:
-    # Mientras no exista ChatwootMessagingAdapter, todos los entornos usan el adaptador falso.
-    # Es un singleton del proceso cuyo historial en memoria crece sin límite; es temporal.
+    """Chatwoot cuando ``CHATWOOT_BASE_URL`` está definida; si no, el adaptador simulado.
+
+    El simulado es un singleton del proceso cuyo historial en memoria crece sin límite; solo se
+    usa en desarrollo y pruebas, porque staging y producción exigen Chatwoot (ver ``Settings``).
+    """
+
+    settings = get_settings()
+    if settings.chatwoot_enabled and settings.chatwoot_inbox_id is not None:
+        client = _chatwoot_client()
+        if client is not None:
+            return ChatwootMessagingAdapter(
+                client,
+                inbox_id=settings.chatwoot_inbox_id,
+                template_language=settings.chatwoot_template_language,
+                template_category=settings.chatwoot_template_category,
+            )
     return FakeMessagingAdapter(
-        clock=get_clock_port(), log_messages=get_settings().app_env == "development"
+        clock=get_clock_port(), log_messages=settings.app_env == "development"
     )
+
+
+@lru_cache
+def get_chatwoot_http_client() -> httpx.AsyncClient:
+    """Cliente HTTP compartido de la cuenta de Chatwoot; lo cierra ``shutdown_infrastructure``."""
+
+    settings = get_settings()
+    if not settings.chatwoot_enabled or settings.chatwoot_account_id is None:
+        raise RuntimeError("Chatwoot no está configurado: falta CHATWOOT_BASE_URL")
+    return build_chatwoot_http_client(
+        base_url=settings.chatwoot_base_url,
+        account_id=settings.chatwoot_account_id,
+        timeout_seconds=settings.chatwoot_timeout_seconds,
+        connect_timeout_seconds=settings.chatwoot_connect_timeout_seconds,
+    )
+
+
+@lru_cache
+def _chatwoot_client() -> ChatwootClient | None:
+    """Cliente de la API de Chatwoot, o ``None`` si el entorno no lo configura."""
+
+    settings = get_settings()
+    if not settings.chatwoot_enabled:
+        return None
+    return ChatwootClient(
+        get_chatwoot_http_client(),
+        bot_token=settings.chatwoot_bot_token.get_secret_value(),
+        agent_token=settings.chatwoot_agent_token.get_secret_value(),
+    )
+
+
+@lru_cache
+def get_gateway_event_port() -> IGatewayEventPort:
+    return ChatwootEventGateway(_chatwoot_client())
+
+
+@lru_cache
+def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
+    return ProcessGatewayEvent(
+        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
+        gateway=get_gateway_event_port(),
+    )
+
+
+@lru_cache
+def get_arq_pool() -> ArqRedis:
+    """Pool de arq de la API para encolar trabajos; lo cierra ``shutdown_infrastructure``.
+
+    Se construye con ``ArqRedis`` y no con ``create_pool``: este no abre ninguna conexión, así que
+    la API arranca con Redis caído (``/health`` lo reporta) y las pruebas con ``ASGITransport``,
+    que no ejecutan el lifespan, también lo tienen.
+    """
+
+    settings = get_settings()
+    return ArqRedis(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+    )
+
+
+@lru_cache
+def get_event_dedup_port() -> IEventDedupPort:
+    return RedisEventDedupAdapter(get_redis_client())
+
+
+@lru_cache
+def get_gateway_event_queue_port() -> IGatewayEventQueuePort:
+    return ArqGatewayEventQueue(get_arq_pool())
+
+
+@lru_cache
+def get_receive_gateway_event_use_case() -> ReceiveGatewayEvent:
+    return ReceiveGatewayEvent(get_event_dedup_port(), get_gateway_event_queue_port())
 
 
 @lru_cache
@@ -512,6 +624,14 @@ def clear_application_caches() -> None:
     get_messaging_port.cache_clear()
     get_document_source_port.cache_clear()
     get_dispatch_due_messages_use_case.cache_clear()
+    get_chatwoot_http_client.cache_clear()
+    _chatwoot_client.cache_clear()
+    get_gateway_event_port.cache_clear()
+    get_process_gateway_event_use_case.cache_clear()
+    get_arq_pool.cache_clear()
+    get_event_dedup_port.cache_clear()
+    get_gateway_event_queue_port.cache_clear()
+    get_receive_gateway_event_use_case.cache_clear()
 
 
 async def shutdown_infrastructure() -> None:
@@ -524,6 +644,10 @@ async def shutdown_infrastructure() -> None:
     get_redis_client.cache_clear()
     get_repository_health_port.cache_clear()
     get_cache_port.cache_clear()
+    if get_chatwoot_http_client.cache_info().currsize:
+        await get_chatwoot_http_client().aclose()
+    if get_arq_pool.cache_info().currsize:
+        await get_arq_pool().aclose()
     clear_application_caches()
 
 

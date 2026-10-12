@@ -25,7 +25,7 @@ Este bloque implementa el patrón *outbox*: el caso de uso **encola** el mensaje
 
 ### 1.2 Fuera de alcance
 
-* Webhook de Chatwoot (`/webhooks/chatwoot`) y `ChatwootMessagingAdapter`. Este bloque usa el adaptador falso; el caso de uso `RecordDeliveryStatus` queda listo para que el webhook lo invoque.
+* Webhook de Chatwoot (`/webhooks/chatwoot`) y `ChatwootMessagingAdapter`. Este bloque usa el adaptador falso; el caso de uso `RecordDeliveryStatus` queda listo para que el webhook lo invoque. Ambos los entrega después el bloque del gateway ([05. Gateway Chatwoot](05-spec-chatwoot-gateway.md)); el adaptador real se elige por configuración (§3.4).
 * Endpoints de la bandeja (`/conversations`) y el endpoint de «Reintentar». El caso de uso `RetryMessage` queda listo.
 * Flujo conversacional del bot y job de reconciliación de mensajes entrantes.
 * Reenvío automático con plantilla cuando la ventana de 24 h está cerrada (requiere plantillas aprobadas por Meta).
@@ -71,6 +71,7 @@ RNF-03.2 define cinco reintentos (30 s, 2 min, 10 min, 30 min y 2 h). Con el pri
 | `ServiceWindowClosedError` | Permanente: `FAILED` inmediato con el motivo; reintentar no cambia el resultado. |
 | Cualquier otro error | Transitorio: reintento. Se registra en el log **sin el contenido** del mensaje. |
 
+**Errores de Chatwoot.** `ChatwootMessagingAdapter` traduce a `MessagingUnavailableError` los tiempos de espera, los errores de conexión, los 5xx, el 429 y **todo 4xx, incluido el 422** (decisión de diseño: no se agrega un error de dominio nuevo). Un 401 o 403 también es transitorio y se corrige arreglando el token. Costo aceptado: una plantilla mal formada que Chatwoot rechaza con 422 se reintenta seis veces (unas 3 h) antes de quedar `FAILED`. Solo `can_reply = false` produce un error permanente (`ServiceWindowClosedError`).
 ### 2.5 Contenido sensible y documentos
 
 * Los mensajes con OTP se encolan con `redact_after_send = true`; al marcarse `SENT`, su `payload` se anula, como exige el diccionario de datos.
@@ -127,7 +128,7 @@ Una transición inválida lanza un error de dominio tipado.
 
 ### 3.4 Worker
 
-`jobs/worker.py` define `WorkerSettings` con un `cron` cada 5 segundos (`unique=True`, para que dos ciclos del mismo worker no se superpongan) que invoca `DispatchDueMessages`. El adaptador de mensajería se elige por configuración; en este bloque es el adaptador falso. Un error de base de datos aborta el ciclo y el siguiente lo reintenta.
+`jobs/worker.py` define `WorkerSettings` con un `cron` cada 5 segundos (`unique=True`, para que dos ciclos del mismo worker no se superpongan) que invoca `DispatchDueMessages`. El adaptador de mensajería se elige por configuración: con `CHATWOOT_BASE_URL` definida es `ChatwootMessagingAdapter`; sin ella, el adaptador falso (solo desarrollo y pruebas; `staging` y `production` exigen Chatwoot). El worker registra la advertencia `worker_using_fake_messaging` únicamente cuando usa el falso. Además del cron, el worker ejecuta el trabajo `process_gateway_event`, que convierte los avisos de entrega del webhook en llamadas a `RecordDeliveryStatus`. Un error de base de datos aborta el ciclo y el siguiente lo reintenta.
 
 ### 3.5 Persistencia: migración `0004_outbox_delivery_tracking`
 
@@ -169,7 +170,13 @@ El `downgrade` elimina las columnas nuevas y restaura el default de `max_attempt
 
 ## 5. Pendientes abiertos
 
-1. **Webhook de entrega:** el mapeo de `message_updated` de Chatwoot a `RecordDeliveryStatus` se define en el bloque del webhook.
+1. **Webhook de entrega (cerrado):** el mapeo se define en el bloque del gateway:
+   * Solo un `message_updated` de un mensaje saliente es un aviso de entrega; su `id` es el `external_message_id`.
+   * `delivered` → `DELIVERED`; `read` → `READ`; `failed` → `FAILED` con el motivo de `content_attributes.external_error` (o `None`). `sent` y cualquier otro valor se ignoran y solo se registran.
+   * Si el payload no trae `status` (lo esperado en Chatwoot v4.18.0), el worker lo consulta a la API de Chatwoot antes de llamar al caso de uso. Si el aviso llega antes de que el despachador confirme `SENT` (el identificador aún no existe), el trabajo se reintenta cinco veces con espera de 5, 10, 20 y 40 s; después se registra `delivery_notice_unmatched` y termina (puede ser un mensaje escrito a mano en Chatwoot).
+   * `at` es la hora de actualización del payload si la trae; si no, el instante de la cabecera firmada `X-Chatwoot-Timestamp`. Nunca la hora del reintento ni la de recepción local.
+   * Si el webhook se pierde, `delivery_status` queda nulo: Chatwoot no reintenta los webhooks de cuenta (ver el documento 05, §4).
+   * Los nombres exactos de los campos del payload son provisionales hasta conciliarlos con capturas reales de Chatwoot v4.18.0.
 2. **Avisos al encargado:** la bandeja mostrará los mensajes con `status = FAILED` o `delivery_status = FAILED`; el contrato del endpoint se define en el bloque de la bandeja.
 3. **Retención:** no se define una purga de mensajes `SENT` antiguos; se revisará si el volumen lo requiere.
 

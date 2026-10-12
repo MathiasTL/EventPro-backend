@@ -152,7 +152,7 @@ Agrupado desde [`.env.example`](.env.example) — detalle en [guía de entorno](
 | App | `APP_ENV`, `APP_NAME`, `API_V1_PREFIX=/api/v1`, `PORT`, `DEBUG`, `LOG_LEVEL`, `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `CORS_ORIGINS` |
 | Postgres | `POSTGRES_*`, `DATABASE_URL` (asyncpg) |
 | Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB` |
-| Chatwoot (gateway) | `CHATWOOT_BASE_URL`, `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_INBOX_ID`, `CHATWOOT_BOT_TOKEN`, `CHATWOOT_AGENT_TOKEN`, `CHATWOOT_WEBHOOK_SECRET` (las credenciales de Meta se configuran dentro de Chatwoot, en `chatwoot.env.example` van los secretos propios de Chatwoot) |
+| Chatwoot (gateway) | `CHATWOOT_BASE_URL`, `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_INBOX_ID`, `CHATWOOT_BOT_TOKEN`, `CHATWOOT_AGENT_TOKEN`, `CHATWOOT_WEBHOOK_SECRET`, `CHATWOOT_TIMEOUT_SECONDS`, `CHATWOOT_CONNECT_TIMEOUT_SECONDS`, `CHATWOOT_TEMPLATE_LANGUAGE`, `CHATWOOT_TEMPLATE_CATEGORY`. Con `CHATWOOT_BASE_URL` definida se usa el adaptador real; sin ella, el simulado (solo `development` y `test`). En `staging` y `production` las seis primeras son obligatorias. Las credenciales de Meta se configuran dentro de Chatwoot; en `chatwoot.env.example` van los secretos propios de Chatwoot |
 | Maps | `GOOGLE_MAPS_API_KEY`, `PROMOTORA_BASE_LATITUDE/LONGITUDE` |
 | Negocio | `SIMULTANEOUS_SHOWS_THRESHOLD=3`, `ADVANCE_DEADLINE_HOURS=24`, `AVAILABILITY_RECHECK_MINUTES=60`, `MOBILITY_MARGIN_PERCENT=15`, `ADVANCE_PERCENT=10`, `TRANSIT_REST_BUFFER_MINUTES=30` |
 | Almacenamiento | `STORAGE_BACKEND`, `LOCAL_STORAGE_PATH` |

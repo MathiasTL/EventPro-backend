@@ -1,0 +1,26 @@
+{
+  "provisional": true,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "id": 57,
+    "account_id": 1,
+    "inbox_id": 2,
+    "status": "pending",
+    "can_reply": true,
+    "contact_inbox": {
+      "source_id": "51999111222"
+    },
+    "messages": [],
+    "meta": {
+      "sender": {
+        "id": 11,
+        "name": "Cliente Demo",
+        "phone_number": "+51999111222"
+      }
+    },
+    "created_at": 1791813600,
+    "last_activity_at": 1791813600
+  }
+}

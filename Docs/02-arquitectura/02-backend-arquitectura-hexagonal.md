@@ -68,6 +68,9 @@ app/
 │   │       ├── route_estimator_port.py   # IRouteEstimatorPort (distancia y duración de ida y vuelta; su fallo activa la contingencia por zona)
 │   │       ├── messaging_port.py         # IMessagingPort (texto, listas interactivas, plantillas, adjuntos, estado de conversación y consulta de conversaciones y mensajes)
 │   │       ├── outbox_repository_port.py   # IOutboxRepositoryPort (add, save, get_by_id, get_by_external_id, claim_due; nunca confirma la transacción)
+│   │       ├── gateway_event_port.py        # IGatewayEventPort (interpreta un evento del gateway y consulta el estado de entrega de un mensaje)
+│   │       ├── event_dedup_port.py          # IEventDedupPort (claim con TTL y release)
+│   │       ├── gateway_event_queue_port.py  # IGatewayEventQueuePort (encola el evento para el worker)
 │   │       ├── document_source_port.py      # IDocumentSourcePort (lee los bytes de los mensajes DOCUMENT)
 │   │       ├── pdf_port.py               # IPdfGeneratorPort (compilación de contratos)
 │   │       ├── storage_port.py           # IFileStoragePort (guardar imágenes y PDFs)
@@ -81,6 +84,9 @@ app/
 │   │   │   ├── enqueue_message.py
 │   │   │   ├── dispatch_due_messages.py
 │   │   │   ├── record_delivery_status.py
+│   │   │   ├── receive_gateway_event.py   # Deduplica y encola un evento firmado del webhook
+│   │   │   ├── process_gateway_event.py   # Interpreta el evento y registra el aviso de entrega
+│   │   │   ├── errors.py                  # GatewayEventNotQueuedError
 │   │   │   └── retry_message.py
 │   │   ├── payment/
 │   │   │   └── process_advance_payment.py
@@ -94,7 +100,8 @@ app/
 │   │       └── compute_monthly_pnl.py
 │   └── dtos/                             # Data Transfer Objects agnósticos de la capa de aplicación
 │       ├── quote_dto.py
-│       └── event_dto.py
+│       ├── event_dto.py
+│       └── gateway_event_dto.py              # DeliveryNotice, UnhandledGatewayEvent, DeliveryReport, GatewayEventOutcome
 │
 ├── infrastructure/                       # CAPA 3: ADAPTADORES E IMPLEMENTACIONES TÉCNICAS
 │   ├── adapters/
@@ -110,9 +117,10 @@ app/
 │   │   │   │   ├── health_router.py      # GET /health (fuera de /api/v1): estado de PostgreSQL y Redis
 │   │   │   │   └── schemas/              # Pydantic Schemas (Request/Response HTTP)
 │   │   │   ├── webhooks/                 # Controladores de Webhooks
+│   │   │   │   ├── chatwoot_signature.py # Verificación pura de la firma HMAC y la ventana de tiempo
 │   │   │   │   └── chatwoot_webhook.py   # Receptor del webhook de cuenta de Chatwoot (solo red interna)
 │   │   │   └── jobs/                     # Tareas programadas y reintentos (arq, respaldado en Redis)
-│   │   │       └── worker.py             # WorkerSettings: despacho de outbox_messages cada 5 s; pendientes: vencimiento de cotizaciones, reconciliación con Chatwoot, reportes
+│   │   │       └── worker.py             # WorkerSettings: despacho de outbox_messages cada 5 s y trabajo process_gateway_event (avisos de entrega); pendientes: vencimiento de cotizaciones, reconciliación con Chatwoot, reportes
 │   │   │
 │   │   └── secondary/                    # Adaptadores de Salida (Driven Adapters)
 │   │       ├── persistence/              # Base de Datos Relacional (PostgreSQL)
@@ -139,7 +147,10 @@ app/
 │   │       │   ├── google_maps/          # Adaptador Google Maps Platform (Directions/Distance Matrix)
 │   │       │   │   └── google_maps_adapter.py
 │   │       │   └── chatwoot/             # Adaptador del gateway de mensajería (Application API de Chatwoot)
-│   │       │       └── chatwoot_messaging_adapter.py
+│   │       │       ├── chatwoot_client.py            # Cliente HTTP: token por operación y clasificación de errores
+│   │       │       ├── chatwoot_payloads.py          # Nombres de campos y constructores/lectores de payloads
+│   │       │       ├── chatwoot_messaging_adapter.py # IMessagingPort
+│   │       │       └── chatwoot_event_gateway.py     # IGatewayEventPort
 │   │       ├── documents/                # Generador de contratos
 │   │       │   └── booking_pdf.py # Plantillas manual-v1 con ReportLab
 │   │       ├── signature/                # Sello de firma electrónica
@@ -147,8 +158,11 @@ app/
 │   │       ├── storage/                  # Adaptador de almacenamiento
 │   │       │   ├── document_source_adapter.py # StorageDocumentSource: IDocumentSourcePort sobre el almacenamiento de documentos
 │   │       │   └── local_storage_adapter.py (o S3StorageAdapter)
+│   │       ├── queue/                    # Cola de eventos del gateway
+│   │       │   └── arq_gateway_event_queue.py # IGatewayEventQueuePort sobre arq
 │   │       └── cache/                    # Adaptador de Redis
-│   │           └── redis_cache_adapter.py
+│   │           ├── redis_cache_adapter.py
+│   │           └── redis_event_dedup_adapter.py # IEventDedupPort: SET NX EX / DEL
 │   │
 │   └── di/                               # Contenedor de Inyección de Dependencias
 │       └── containers.py                 # Ensamblador de dependencias y proveedores FastAPI
@@ -223,7 +237,7 @@ campos adicionales; los errores HTTP sanitizados no contienen valores ni URLs in
 Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptadores Primarios (Controladores):**
   * `quotes_router.py`: Expone endpoints HTTP (`POST /api/v1/quotes`). Recibe payloads validados con Pydantic, invoca al caso de uso correspondiente e inyecta la respuesta serializada.
-  * `chatwoot_webhook.py`: Endpoint `POST /api/v1/webhooks/chatwoot`, accesible solo por la red interna. Valida `X-Chatwoot-Signature` (HMAC-SHA256 sobre `"{timestamp}.{raw_body}"`, ventana de 5 minutos), descarta duplicados (idempotencia), responde `200` y encola el evento en arq. El worker enruta los mensajes entrantes de conversaciones en `pending` hacia los casos de uso del chatbot y publica el resto por SSE.
+  * `chatwoot_webhook.py`: Endpoint `POST /api/v1/webhooks/chatwoot`, accesible solo por la red interna. Valida `X-Chatwoot-Signature` (HMAC-SHA256 sobre `"{timestamp}.{raw_body}"`, ventana de 5 minutos; falla cerrada con `401` si no hay secreto), descarta duplicados por `X-Chatwoot-Delivery` (con el resumen de la firma como respaldo), responde `200` y encola el evento en arq (`503` si no se pudo encolar). No interpreta el evento. El trabajo `process_gateway_event` del worker procesa hoy solo los avisos de entrega (`message_updated` salientes, vía `RecordDeliveryStatus`) y registra el resto; el enrutamiento de mensajes entrantes de conversaciones en `pending` hacia el chatbot y la publicación por SSE llegan con sus bloques.
   * `conversations_router.py`: Expone `/conversations/*` (bandeja, mensajes, `takeover`, `release`) y el stream SSE (`GET /conversations/stream`) para los roles `ENCARGADO` y `SUPERADMIN`; delega en casos de uso que consultan Chatwoot mediante `IMessagingPort`.
   * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), los casos de uso periódicos y diferidos: vencimiento de cotizaciones, despacho y reintentos de `outbox_messages` (hacia Chatwoot, ver 3.5), el job de reconciliación de mensajes entrantes (cada 5 minutos) y reportes semanales y mensuales. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
 * **Adaptadores Secundarios (Infraestructura de soporte):**
@@ -246,10 +260,10 @@ Los casos de uso no llaman al gateway de mensajería: **encolan** el mensaje en 
 
 * **Puertos:** `IOutboxRepositoryPort` (`add`, `save`, `get_by_id`, `get_by_external_id`, `claim_due`; nunca confirma la transacción) e `IDocumentSourcePort` (lee los bytes de los mensajes `DOCUMENT`; el adaptador reutiliza el almacenamiento de documentos existente).
 * **Agregado `OutboxMessage`:** `status` (`PENDING`, `SENT`, `FAILED`) indica si Chatwoot aceptó el mensaje; `delivery_status` (nulo, `DELIVERED`, `READ`, `FAILED`) indica si WhatsApp lo entregó al cliente y nunca retrocede. La espera entre intentos es de 30 s, 2 min, 10 min, 30 min y 2 h, y el sexto fallo deja el mensaje en `FAILED`.
-* **Casos de uso** (`application/use_cases/messaging/`): `EnqueueMessage`, `DispatchDueMessages`, `RecordDeliveryStatus` (lo invocará el webhook del bloque siguiente) y `RetryMessage` (lo invocará el endpoint de «Reintentar»).
+* **Casos de uso** (`application/use_cases/messaging/`): `EnqueueMessage`, `DispatchDueMessages`, `RecordDeliveryStatus` (lo invoca `ProcessGatewayEvent` desde el trabajo del webhook), `ReceiveGatewayEvent`, `ProcessGatewayEvent` y `RetryMessage` (lo invocará el endpoint de «Reintentar»).
 * **Despacho:** un cron de arq cada 5 s invoca `DispatchDueMessages`. El caso de uso reserva el lote con `SELECT … FOR UPDATE SKIP LOCKED` en una transacción corta que adelanta `next_attempt_at` en `OUTBOX_LEASE_SECONDS`, envía fuera de esa transacción y guarda el resultado de cada mensaje en otra transacción corta. La garantía es de entrega al menos una vez.
-* **Errores:** `ServiceWindowClosedError` es permanente (`FAILED` inmediato); `MessagingUnavailableError` y cualquier otro error son transitorios. Los registros nunca incluyen el contenido del mensaje.
-* **Pendiente:** hasta que exista `ChatwootMessagingAdapter`, el worker usa el adaptador falso y los mensajes pasan a `SENT` sin llegar a WhatsApp.
+* **Errores:** `ServiceWindowClosedError` es permanente (`FAILED` inmediato); `MessagingUnavailableError` (incluidos los 4xx de Chatwoot, también el 422) y cualquier otro error son transitorios. Los registros nunca incluyen el contenido del mensaje.
+* **Adaptador:** `get_messaging_port()` devuelve `ChatwootMessagingAdapter` cuando `CHATWOOT_BASE_URL` está definida y el adaptador falso en caso contrario (solo desarrollo y pruebas: `staging` y `production` exigen Chatwoot al validar la configuración). El worker advierte `worker_using_fake_messaging` solo cuando usa el falso.
 
 ---
 

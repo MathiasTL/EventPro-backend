@@ -43,9 +43,23 @@ EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como 
 * `CHATWOOT_BASE_URL`: URL interna de Chatwoot dentro de la red de Docker (`http://chatwoot-rails:3000`). Nunca se expone en internet.
 * `CHATWOOT_ACCOUNT_ID`: Identificador de la cuenta de Chatwoot.
 * `CHATWOOT_INBOX_ID`: Identificador de la bandeja de WhatsApp.
-* `CHATWOOT_BOT_TOKEN`: Token del Agent Bot, con el que se envían los mensajes del bot.
-* `CHATWOOT_AGENT_TOKEN`: Token del agente de servicio, con el que se envían los mensajes de los encargados.
-* `CHATWOOT_WEBHOOK_SECRET`: Secreto con el que se valida la firma (`X-Chatwoot-Signature`) del webhook de cuenta en `POST /webhooks/chatwoot`. Obligatorio en `staging` y `production`.
+* `CHATWOOT_BOT_TOKEN`: Token del Agent Bot; el adaptador lo usa para crear mensajes (`send_text`, `send_interactive_list`, `send_template`, `send_attachment`).
+* `CHATWOOT_AGENT_TOKEN`: Token del agente de servicio; el adaptador lo usa para buscar o crear contactos, resolver conversaciones, leer `can_reply`, listar y cambiar el estado de una conversación (`toggle_status`) y consultar el estado de un mensaje.
+* `CHATWOOT_WEBHOOK_SECRET`: Secreto con el que se valida la firma (`X-Chatwoot-Signature`) del webhook de cuenta en `POST /webhooks/chatwoot`. Obligatorio en `staging` y `production`. Sin él, el webhook responde siempre `401`.
+* `CHATWOOT_TIMEOUT_SECONDS` (por defecto `10`) y `CHATWOOT_CONNECT_TIMEOUT_SECONDS` (por defecto `3`): esperas del cliente HTTP. Un envío encadena hasta cuatro llamadas, por lo que `4 x CHATWOOT_TIMEOUT_SECONDS` debe ser menor que el tiempo máximo de un ciclo del worker (55 s).
+* `CHATWOOT_TEMPLATE_LANGUAGE` (por defecto `es`) y `CHATWOOT_TEMPLATE_CATEGORY` (por defecto `UTILITY`): idioma y categoría con que se envían las plantillas aprobadas.
+
+**Autenticación:** el adaptador envía el token en la cabecera `api_access_token`. Chatwoot v4.18.0 no acepta `Authorization: Bearer`.
+
+**Selección del adaptador y validación al arrancar** (el error nombra solo las variables faltantes, nunca sus valores; los tokens y el secreto se enmascaran en los logs):
+
+| Entorno | `CHATWOOT_BASE_URL` | Efecto |
+| :--- | :--- | :--- |
+| `development` y `test` | Sin definir | Adaptador de mensajería falso; el resto de `CHATWOOT_*` es opcional. |
+| Cualquiera | Definida | Adaptador real; exige `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_INBOX_ID`, `CHATWOOT_BOT_TOKEN` y `CHATWOOT_AGENT_TOKEN`. |
+| `staging` y `production` | Obligatoria | El proceso no arranca si falta alguna de las seis variables (`CHATWOOT_BASE_URL`, cuenta, bandeja, ambos tokens y `CHATWOOT_WEBHOOK_SECRET`). |
+
+Las variables en blanco (`CHATWOOT_ACCOUNT_ID=`) se leen como no definidas. La URL base no lleva `/` final y debe comenzar con `http://` o `https://`. El worker registra la advertencia `worker_using_fake_messaging` solo cuando usa el adaptador falso.
 
 > [!IMPORTANT]
 > Las credenciales de Meta (identificador del número, ID de la cuenta de WhatsApp Business y token) **ya no forman parte de `.env`**: se configuran dentro de Chatwoot al crear la bandeja de WhatsApp Cloud. Debe usarse el token permanente de un *system user* de Meta; el token temporal del número de prueba expira (aproximadamente 24 h) y no debe usarse. Los tokens de Chatwoot no expiran.
@@ -71,13 +85,13 @@ EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como 
 * `MOBILITY_MINIMUM_AMOUNT`: Monto mínimo de la movilidad base, antes del margen (por defecto `20.00`).
 * `MOBILITY_ZONE_1_AMOUNT`, `MOBILITY_ZONE_2_AMOUNT`, `MOBILITY_ZONE_3_AMOUNT`: Montos fijos finales (sin margen) de la contingencia por zona cuando el estimador de rutas falla (por defecto `25.00`, `45.00` y `70.00`). Un distrito desconocido se asigna a la zona 3. La tabla de distritos por zona vive en `app/infrastructure/adapters/secondary/mobility/district_zones.py`.
 * Los valores de movilidad y la asignación de distritos a zonas fueron **aprobados por el negocio el 2026-10-08** (RN-03).
-* Nota de despliegue: en producción debe fijarse `APP_ENV` con un valor distinto de `development`. El adaptador de mensajería falso registra el contenido de los mensajes (incluidos los códigos OTP) cuando `APP_ENV=development`, que es el valor por defecto.
+* Nota de despliegue: en producción debe fijarse `APP_ENV` con un valor distinto de `development`. El adaptador de mensajería falso (solo desarrollo y pruebas) registra el contenido de los mensajes (incluidos los códigos OTP) cuando `APP_ENV=development`, que es el valor por defecto.
 * `ADVANCE_PERCENT`: Porcentaje del adelanto sobre servicios base (por defecto `10`).
 * `TRANSIT_REST_BUFFER_MINUTES`: Minutos mínimos de margen para descanso y desarme entre shows sucesivos (por defecto `30`).
 * `OUTBOX_BATCH_SIZE`: Mensajes que el worker reserva en cada ciclo de despacho de la cola de mensajes salientes (por defecto `20`).
 * `OUTBOX_LEASE_SECONDS`: Vencimiento de la reserva de un mensaje; debe superar el tiempo máximo de un ciclo de despacho (por defecto `60`). Si el worker termina antes de guardar el resultado, el mensaje se envía de nuevo al vencer la reserva (entrega al menos una vez).
 * `OUTBOX_MAX_ATTEMPTS`: Intentos por mensaje: el primer envío más cinco reintentos, con espera de 30 s, 2 min, 10 min, 30 min y 2 h (por defecto `6`).
-* Nota de despliegue: hasta que exista `ChatwootMessagingAdapter`, el servicio `worker` despacha la cola cada 5 segundos con el adaptador de mensajería falso y los mensajes pasan a `SENT` sin llegar a WhatsApp. No debe usarse con tráfico real antes de ese bloque.
+* Nota de despliegue: el servicio `worker` despacha la cola cada 5 segundos con `ChatwootMessagingAdapter` cuando `CHATWOOT_BASE_URL` está definida (obligatorio en `staging` y `production`, sección 2.4). Sin ella, en desarrollo, usa el adaptador falso y los mensajes pasan a `SENT` sin llegar a WhatsApp.
 
 ### 2.7 Repositorio de Archivos y Documentos
 * `STORAGE_BACKEND`: Tipo de almacenamiento (`local` o `s3`).

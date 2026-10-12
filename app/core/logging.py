@@ -10,6 +10,8 @@ def configure_logging(log_level: str = "INFO") -> None:
         format="%(message)s",
         stream=None,
     )
+    # httpx registra cada petición en INFO y la URL de búsqueda de contactos incluye el teléfono.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

@@ -176,3 +176,24 @@ async def test_startup_wires_the_use_case_and_warns_about_the_fake_gateway(
         assert [entry["event"] for entry in logs] == ["worker_using_fake_messaging"]
     finally:
         await worker.shutdown(ctx)
+
+
+async def test_startup_does_not_warn_about_the_fake_gateway_when_chatwoot_is_configured(
+    worker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker, "configure_logging", lambda level: None)
+    monkeypatch.setenv("CHATWOOT_BASE_URL", "https://chatwoot.example.org")
+    monkeypatch.setenv("CHATWOOT_ACCOUNT_ID", "1")
+    monkeypatch.setenv("CHATWOOT_INBOX_ID", "2")
+    monkeypatch.setenv("CHATWOOT_BOT_TOKEN", "bot-token-value-1234")
+    monkeypatch.setenv("CHATWOOT_AGENT_TOKEN", "agent-token-value-5678")
+    get_settings.cache_clear()
+    ctx: dict[str, Any] = {}
+
+    with capture_logs() as logs:
+        await worker.startup(ctx)
+    try:
+        assert isinstance(ctx["dispatch_due_messages"], DispatchDueMessages)
+        assert logs == []
+    finally:
+        await worker.shutdown(ctx)

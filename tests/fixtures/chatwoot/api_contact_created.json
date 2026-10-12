@@ -1,0 +1,21 @@
+{
+  "provisional": true,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "payload": {
+      "contact": {
+        "id": 11,
+        "name": "+51999111222",
+        "phone_number": "+51999111222"
+      },
+      "contact_inbox": {
+        "inbox": {
+          "id": 2
+        },
+        "source_id": "51999111222"
+      }
+    }
+  }
+}
