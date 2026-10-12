@@ -162,14 +162,16 @@ Con `ENABLE_ACCOUNT_SIGNUP=false` no existe registro público. En una instalaci�
    * Si el asistente no muestra el token de verificación, se consulta en la configuración de la bandeja (*Settings → Inboxes → bandeja de WhatsApp → Configuration*).
    * Comprobación: enviar un mensaje de WhatsApp al número de prueba desde un destinatario registrado; debe aparecer como conversación en Chatwoot, y la respuesta enviada desde Chatwoot debe llegar al teléfono.
 4. Anotar el identificador de la bandeja (`CHATWOOT_INBOX_ID`).
+5. **Activar `lock_to_single_conversation`** en la configuración de la bandeja (*Settings → Inboxes → bandeja de WhatsApp → Settings*). Es un paso de operación obligatorio: `ChatwootMessagingAdapter` no reutiliza conversaciones por su cuenta y depende de esta opción para que los envíos al mismo teléfono usen una sola conversación. Sin ella, cada envío podría abrir una conversación nueva.
 
 `FRONTEND_URL` en `chatwoot.env` debe ser la URL pública (túnel o `chat.<EVENTPRO_DOMAIN>`), porque Meta descarga los medios salientes desde esa dirección. El número de prueba solo admite 5 destinatarios registrados.
 
 ### 5.4 Agent Bot y webhook de cuenta
 
 1. **Agent Bot:** crearlo (*Settings → Integrations → Bots*, o desde la consola de superadministrador según la versión), asignarlo a la bandeja de WhatsApp y guardar su token en `CHATWOOT_BOT_TOKEN`. Verificar si funciona sin `outgoing_url` (pendiente 1 de la especificación).
-2. **Webhook de cuenta:** *Settings → Integrations → Webhooks → Add*, con URL `http://api:8000/api/v1/webhooks/chatwoot` (red interna de Docker) y los eventos de mensajes y de conversación. Guardar el secreto del webhook en `CHATWOOT_WEBHOOK_SECRET`.
-3. **Agente de servicio:** crear un agente dedicado (por ejemplo `eventpro-service`), y guardar su token de acceso (*Profile Settings → Access Token*) en `CHATWOOT_AGENT_TOKEN`.
+2. **Webhook de cuenta:** *Settings → Integrations → Webhooks → Add*, con URL `http://api:8000/api/v1/webhooks/chatwoot` (red interna de Docker). Suscribir como mínimo `message_created` y `message_updated`; `message_updated` es el evento que entrega los avisos de entrega (`delivered`, `read`, `failed`) y el único que EventPro procesa hoy. **Crear el webhook con un secreto:** Chatwoot solo firma las entregas cuando existe, y sin firma válida EventPro responde `401`. Guardar ese secreto en `CHATWOOT_WEBHOOK_SECRET` (obligatorio en `staging` y `production`).
+   * Chatwoot **no reintenta** los webhooks de cuenta y espera la respuesta como máximo 5 s: un aviso emitido mientras la API está caída se pierde y el `delivery_status` de ese mensaje queda nulo (limitación documentada; el job de reconciliación pertenece al bloque del bot).
+3. **Agente de servicio:** crear un agente dedicado (por ejemplo `eventpro-service`), y guardar su token de acceso (*Profile Settings → Access Token*) en `CHATWOOT_AGENT_TOKEN`. EventPro envía cada token en la cabecera `api_access_token` (no `Authorization: Bearer`).
 
 Con esto se completa el bloque `CHATWOOT_*` del `.env` de EventPro (ver [guía de entorno, sección 2.4](01-guia-entorno-y-configuracion.md)).
 
