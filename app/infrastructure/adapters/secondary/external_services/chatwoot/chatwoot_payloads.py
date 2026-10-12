@@ -23,6 +23,7 @@ from app.application.dtos.messaging_dto import (
 )
 from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
 from app.domain.exceptions.resource_exceptions import ValidationError
+from app.domain.value_objects.outbox import DeliveryStatus
 from app.domain.value_objects.phone_number import PhoneNumber
 
 # --- Claves de las respuestas -------------------------------------------------------------
@@ -46,6 +47,11 @@ MESSAGES_KEY = "messages"
 META_KEY = "meta"
 SENDER_KEY = "sender"
 LAST_ACTIVITY_AT_KEY = "last_activity_at"
+# Webhooks: nombre del evento, hora de actualización, conversación y motivo de un envío fallido.
+EVENT_KEY = "event"
+UPDATED_AT_KEY = "updated_at"
+CONVERSATION_KEY = "conversation"
+EXTERNAL_ERROR_KEY = "external_error"
 
 # --- Claves y valores de las peticiones ---------------------------------------------------
 INBOX_ID_KEY = "inbox_id"
@@ -68,6 +74,9 @@ SORT_BY_PARAM = "sort_by"
 SORT_LAST_ACTIVITY_DESC = "last_activity_at_desc"
 ATTACHMENT_FILE_FIELD = "attachments[]"
 
+EVENT_MESSAGE_UPDATED = "message_updated"
+EVENT_CONVERSATION_PREFIX = "conversation_"
+
 OUTGOING_MESSAGE_TYPE = "outgoing"
 INPUT_SELECT_CONTENT_TYPE = "input_select"
 TEMPLATE_PLACEHOLDER = "[plantilla:{name}]"
@@ -88,6 +97,12 @@ _CONVERSATION_STATUSES: Mapping[str, ConversationStatus] = {
 }
 _CHATWOOT_STATUSES: Mapping[ConversationStatus, str] = {
     status: chatwoot_status for chatwoot_status, status in _CONVERSATION_STATUSES.items()
+}
+# Estados de un mensaje saliente que se registran; `sent` y cualquier otro no se registran.
+_DELIVERY_STATUSES: Mapping[str, DeliveryStatus] = {
+    "delivered": DeliveryStatus.DELIVERED,
+    "read": DeliveryStatus.READ,
+    "failed": DeliveryStatus.FAILED,
 }
 
 _MICROSECONDS_PER_SECOND = 1_000_000
@@ -409,3 +424,36 @@ def _attachment_filename(item: Mapping[str, Any]) -> str | None:
     if not isinstance(url, str):
         return None
     return unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or None
+
+
+# --- Webhooks y estado de entrega ---------------------------------------------------------
+
+
+def delivery_status_from(value: Any) -> DeliveryStatus | None:
+    """Estado de entrega que se registra, o `None` para `sent` y cualquier valor desconocido."""
+
+    return _DELIVERY_STATUSES.get(value) if isinstance(value, str) else None
+
+
+def external_error(message: Mapping[str, Any]) -> str | None:
+    """Motivo del rechazo (`content_attributes.external_error`), si el mensaje lo trae."""
+
+    attributes = message.get(CONTENT_ATTRIBUTES_KEY)
+    reason = attributes.get(EXTERNAL_ERROR_KEY) if isinstance(attributes, Mapping) else None
+    return reason if isinstance(reason, str) and reason else None
+
+
+def event_time(value: Any) -> datetime | None:
+    """Hora de actualización de un evento en UTC, o `None` si falta o no se puede leer.
+
+    A diferencia de `instant`, no suma el desempate por id: es la hora real del evento.
+    """
+
+    if not isinstance(value, str | int | float) or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, str):
+            return _parse_text_time(value)
+        return datetime.fromtimestamp(int(value), UTC)
+    except (ValueError, OverflowError, OSError):
+        return None

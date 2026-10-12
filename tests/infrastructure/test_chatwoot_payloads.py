@@ -15,6 +15,7 @@ from app.application.dtos.messaging_dto import (
     MessageReceipt,
 )
 from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
+from app.domain.value_objects.outbox import DeliveryStatus
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.adapters.secondary.external_services.chatwoot import chatwoot_payloads
 from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_payloads import (
@@ -516,3 +517,62 @@ def test_every_chatwoot_field_name_is_a_module_constant() -> None:
     assert constants["CAN_REPLY_KEY"] == "can_reply"
     assert constants["ATTACHMENT_FILE_FIELD"] == "attachments[]"
     assert all(isinstance(value, str) and value for value in constants.values())
+
+
+# ---------------------------------------------------------------------------
+# webhooks y estado de entrega
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2026-10-12T14:01:00.000Z", datetime(2026, 10, 12, 14, 1, tzinfo=UTC)),
+        ("2026-10-12T09:01:00-05:00", datetime(2026, 10, 12, 14, 1, tzinfo=UTC)),
+        ("2026-10-12T14:01:00", datetime(2026, 10, 12, 14, 1, tzinfo=UTC)),
+        (1_791_813_660, datetime.fromtimestamp(1_791_813_660, UTC)),
+        ("1791813660", datetime.fromtimestamp(1_791_813_660, UTC)),
+    ],
+)
+def test_event_time_reads_text_and_epoch_forms_in_utc(value: Any, expected: datetime) -> None:
+    assert chatwoot_payloads.event_time(value) == expected
+
+
+@pytest.mark.parametrize("value", [None, True, "", "ayer", [], {}, 10**30])
+def test_event_time_returns_none_for_missing_or_unreadable_values(value: Any) -> None:
+    assert chatwoot_payloads.event_time(value) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("delivered", DeliveryStatus.DELIVERED),
+        ("read", DeliveryStatus.READ),
+        ("failed", DeliveryStatus.FAILED),
+        ("sent", None),
+        ("DELIVERED", None),
+        (None, None),
+        (3, None),
+    ],
+)
+def test_delivery_status_from_maps_only_the_recordable_statuses(
+    value: Any, expected: DeliveryStatus | None
+) -> None:
+    assert chatwoot_payloads.delivery_status_from(value) is expected
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ({"content_attributes": {"external_error": "motivo"}}, "motivo"),
+        ({"content_attributes": {"external_error": ""}}, None),
+        ({"content_attributes": {"external_error": 4}}, None),
+        ({"content_attributes": {}}, None),
+        ({"content_attributes": None}, None),
+        ({}, None),
+    ],
+)
+def test_external_error_reads_the_rejection_reason(
+    message: dict[str, Any], expected: str | None
+) -> None:
+    assert chatwoot_payloads.external_error(message) == expected
