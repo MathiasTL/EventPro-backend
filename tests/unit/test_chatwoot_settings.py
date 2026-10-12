@@ -158,3 +158,63 @@ def test_timeouts_must_be_positive(clean_env: pytest.MonkeyPatch, name: str, val
 def test_default_timeout_fits_in_one_dispatch_cycle(clean_env: pytest.MonkeyPatch) -> None:
     # Un envío hace hasta cuatro llamadas HTTP seguidas (búsqueda, contacto, conversación, mensaje).
     assert 4 * _settings().chatwoot_timeout_seconds < CYCLE_TIMEOUT_SECONDS
+
+
+# --- Entornos con configuración obligatoria (staging y producción) ---------------------------
+
+_MANDATORY = (
+    "CHATWOOT_BASE_URL",
+    "CHATWOOT_ACCOUNT_ID",
+    "CHATWOOT_INBOX_ID",
+    "CHATWOOT_BOT_TOKEN",
+    "CHATWOOT_AGENT_TOKEN",
+    "CHATWOOT_WEBHOOK_SECRET",
+)
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_staging_and_production_require_every_chatwoot_variable(
+    clean_env: pytest.MonkeyPatch, app_env: str
+) -> None:
+    clean_env.setenv("APP_ENV", app_env)
+    with pytest.raises(PydanticValidationError) as error:
+        _settings()
+    message = str(error.value)
+    for name in _MANDATORY:
+        assert name in message
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+@pytest.mark.parametrize("missing", _MANDATORY)
+def test_staging_and_production_name_only_the_missing_variable(
+    clean_env: pytest.MonkeyPatch, app_env: str, missing: str
+) -> None:
+    clean_env.setenv("APP_ENV", app_env)
+    _configure(clean_env)
+    clean_env.delenv(missing)
+    with pytest.raises(PydanticValidationError) as error:
+        _settings()
+    message = str(error.value)
+    assert missing in message
+    for name in _MANDATORY:
+        if name != missing:
+            assert name not in message
+    for value in (_BOT_TOKEN, _AGENT_TOKEN, _SECRET):
+        assert value not in message
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_staging_and_production_build_with_the_complete_configuration(
+    clean_env: pytest.MonkeyPatch, app_env: str
+) -> None:
+    clean_env.setenv("APP_ENV", app_env)
+    _configure(clean_env)
+    assert _settings().chatwoot_enabled is True
+
+
+@pytest.mark.parametrize("app_env", ["development", "test"])
+def test_development_and_test_keep_chatwoot_optional(
+    clean_env: pytest.MonkeyPatch, app_env: str
+) -> None:
+    clean_env.setenv("APP_ENV", app_env)
+    assert _settings().chatwoot_enabled is False

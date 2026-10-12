@@ -18,6 +18,12 @@ from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_c
 from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_event_gateway import (  # noqa: E501
     ChatwootEventGateway,
 )
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_messaging_adapter import (  # noqa: E501
+    ChatwootMessagingAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
+    FakeMessagingAdapter,
+)
 from app.infrastructure.adapters.secondary.persistence.database import (
     get_engine,
     get_sessionmaker,
@@ -89,6 +95,34 @@ def test_the_http_client_is_a_cached_singleton() -> None:
 def test_the_http_client_cannot_be_built_without_configuration() -> None:
     with pytest.raises(RuntimeError, match="CHATWOOT_BASE_URL"):
         containers.get_chatwoot_http_client()
+
+
+# --- Puerto de mensajería -----------------------------------------------------------------
+
+
+def test_the_messaging_port_is_the_fake_adapter_without_a_base_url() -> None:
+    port = containers.get_messaging_port()
+
+    assert isinstance(port, FakeMessagingAdapter)
+    assert containers.get_messaging_port() is port
+    assert containers.get_chatwoot_http_client.cache_info().currsize == 0
+
+
+@pytest.mark.usefixtures("chatwoot_env")
+def test_the_messaging_port_is_the_chatwoot_adapter_when_the_base_url_is_set() -> None:
+    port = containers.get_messaging_port()
+
+    assert isinstance(port, ChatwootMessagingAdapter)
+    assert containers.get_messaging_port() is port
+
+
+@pytest.mark.usefixtures("chatwoot_env")
+def test_the_messaging_port_shares_the_cached_http_client_and_the_inbox() -> None:
+    port = containers.get_messaging_port()
+
+    assert isinstance(port, ChatwootMessagingAdapter)
+    assert port._client._http is containers.get_chatwoot_http_client()
+    assert port._inbox_id == 2
 
 
 # --- Puerto de eventos --------------------------------------------------------------------

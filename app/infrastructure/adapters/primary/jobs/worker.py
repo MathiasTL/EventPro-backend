@@ -45,11 +45,11 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["dispatch_lock"] = asyncio.Lock()
     ctx["dispatch_due_messages"] = get_dispatch_due_messages_use_case()
     ctx["process_gateway_event"] = get_process_gateway_event_use_case()
-    get_logger("worker").warning(
-        "worker_using_fake_messaging",
-        detail="Los mensajes se marcan SENT sin llegar a WhatsApp hasta que exista "
-        "ChatwootMessagingAdapter.",
-    )
+    if not settings.chatwoot_enabled:
+        get_logger("worker").warning(
+            "worker_using_fake_messaging",
+            detail="Los mensajes se marcan SENT sin llegar a WhatsApp: falta CHATWOOT_BASE_URL.",
+        )
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:

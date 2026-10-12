@@ -97,6 +97,9 @@ from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_c
 from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_event_gateway import (  # noqa: E501
     ChatwootEventGateway,
 )
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_messaging_adapter import (  # noqa: E501
+    ChatwootMessagingAdapter,
+)
 from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
     FakeMessagingAdapter,
 )
@@ -291,10 +294,24 @@ def get_route_estimator() -> IRouteEstimatorPort:
 
 @lru_cache
 def get_messaging_port() -> IMessagingPort:
-    # Mientras no exista ChatwootMessagingAdapter, todos los entornos usan el adaptador falso.
-    # Es un singleton del proceso cuyo historial en memoria crece sin límite; es temporal.
+    """Chatwoot cuando ``CHATWOOT_BASE_URL`` está definida; si no, el adaptador simulado.
+
+    El simulado es un singleton del proceso cuyo historial en memoria crece sin límite; solo se
+    usa en desarrollo y pruebas, porque staging y producción exigen Chatwoot (ver ``Settings``).
+    """
+
+    settings = get_settings()
+    if settings.chatwoot_enabled and settings.chatwoot_inbox_id is not None:
+        client = _chatwoot_client()
+        if client is not None:
+            return ChatwootMessagingAdapter(
+                client,
+                inbox_id=settings.chatwoot_inbox_id,
+                template_language=settings.chatwoot_template_language,
+                template_category=settings.chatwoot_template_category,
+            )
     return FakeMessagingAdapter(
-        clock=get_clock_port(), log_messages=get_settings().app_env == "development"
+        clock=get_clock_port(), log_messages=settings.app_env == "development"
     )
 
 

@@ -13,6 +13,9 @@ from typing import Annotated, Self
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# Entornos donde la configuración de Chatwoot (incluido el secreto del webhook) es obligatoria.
+_CHATWOOT_REQUIRED_ENVIRONMENTS = frozenset({"staging", "production"})
+
 
 class Settings(BaseSettings):
     """Ajustes de la aplicación EventPro."""
@@ -120,17 +123,26 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _chatwoot_configuration_is_complete(self) -> Self:
-        if not self.chatwoot_enabled:
+        # En staging y producción la mensajería real es obligatoria: el adaptador simulado
+        # marcaría SENT mensajes que nunca llegan a WhatsApp, y el webhook sin secreto no firma.
+        strict = self.app_env in _CHATWOOT_REQUIRED_ENVIRONMENTS
+        if not (self.chatwoot_enabled or strict):
             return self
         required = {
+            "CHATWOOT_BASE_URL": self.chatwoot_enabled,
             "CHATWOOT_ACCOUNT_ID": self.chatwoot_account_id is not None,
             "CHATWOOT_INBOX_ID": self.chatwoot_inbox_id is not None,
             "CHATWOOT_BOT_TOKEN": bool(self.chatwoot_bot_token.get_secret_value()),
             "CHATWOOT_AGENT_TOKEN": bool(self.chatwoot_agent_token.get_secret_value()),
         }
+        if strict:
+            required["CHATWOOT_WEBHOOK_SECRET"] = bool(
+                self.chatwoot_webhook_secret.get_secret_value()
+            )
         missing = [name for name, present in required.items() if not present]
         if missing:
-            raise ValueError("CHATWOOT_BASE_URL requiere definir también: " + ", ".join(missing))
+            scope = f"APP_ENV={self.app_env}" if strict else "CHATWOOT_BASE_URL"
+            raise ValueError(f"{scope} requiere definir también: " + ", ".join(missing))
         return self
 
 
