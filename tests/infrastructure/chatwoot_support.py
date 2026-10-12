@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from email.message import Message
 from email.parser import BytesParser
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -34,6 +35,10 @@ ERROR_BODY = "Codigo 123456 para 51999111222"
 _ACCOUNT_PREFIX = f"/api/v1/accounts/{ACCOUNT_ID}"
 _CONVERSATION_PATH = re.compile(r"/conversations/(\d+)")
 _MESSAGES_PATH = re.compile(r"/conversations/(\d+)/messages")
+_MESSAGES_PER_PAGE = 20
+_FILES_URL = "https://files.example.org/storage"
+_TOGGLE_STATUS_PATH = re.compile(r"/conversations/(\d+)/toggle_status")
+_CONVERSATIONS_PER_PAGE = 25
 _OUTGOING_TYPE = 1
 
 
@@ -41,7 +46,7 @@ _OUTGOING_TYPE = 1
 class FakeContact:
     id: int
     name: str
-    phone_number: str
+    phone_number: str | None
 
 
 @dataclass
@@ -50,6 +55,9 @@ class FakeMessage:
     conversation_id: int
     content: str | None
     created_at: int
+    message_type: int = _OUTGOING_TYPE
+    private: bool = False
+    attachment_url: str | None = None
 
 
 @dataclass
@@ -60,7 +68,7 @@ class FakeConversation:
     can_reply: bool
     status: str = "pending"
     messages: list[FakeMessage] = field(default_factory=list)
-    last_activity_at: int = FIRST_EPOCH
+    last_activity_at: int | None = FIRST_EPOCH
 
 
 class FakeChatwootServer:
@@ -92,6 +100,61 @@ class FakeChatwootServer:
         self.contacts[contact_id] = FakeContact(contact_id, phone.value, phone.value)
         return contact_id
 
+    def add_conversation(
+        self,
+        phone: PhoneNumber | None,
+        *,
+        status: str = "pending",
+        can_reply: bool = True,
+        inbox_id: int = INBOX_ID,
+    ) -> FakeConversation:
+        """Conversación existente y más reciente que las previas; `None` = contacto sin teléfono."""
+
+        contact_id = len(self.contacts) + 1
+        number = phone.value if phone is not None else None
+        self.contacts[contact_id] = FakeContact(contact_id, number or "Sin telefono", number)
+        self._epoch += 1
+        conversation = FakeConversation(
+            id=len(self.conversations) + 1,
+            inbox_id=inbox_id,
+            contact_id=contact_id,
+            can_reply=can_reply,
+            status=status,
+            last_activity_at=self._epoch,
+        )
+        self.conversations[conversation.id] = conversation
+        return conversation
+
+    def add_message(
+        self,
+        conversation_id: int,
+        content: str | None,
+        *,
+        created_at: int | None = None,
+        message_type: int = _OUTGOING_TYPE,
+        private: bool = False,
+        attachment_url: str | None = None,
+    ) -> FakeMessage:
+        """Mensaje existente; sin `created_at` avanza el reloj simulado un segundo."""
+
+        conversation = self.conversations[conversation_id]
+        if created_at is None:
+            self._epoch += 1
+            created_at = self._epoch
+        message = FakeMessage(
+            id=self._next_message_id,
+            conversation_id=conversation_id,
+            content=content,
+            created_at=created_at,
+            message_type=message_type,
+            private=private,
+            attachment_url=attachment_url,
+        )
+        self._next_message_id += 1
+        conversation.messages.append(message)
+        conversation.last_activity_at = created_at
+        return message
+
     def client(self) -> ChatwootClient:
         http = httpx.AsyncClient(transport=httpx.MockTransport(self.handler), base_url=BASE_URL)
         return ChatwootClient(http, bot_token=BOT_TOKEN, agent_token=AGENT_TOKEN)
@@ -122,8 +185,14 @@ class FakeChatwootServer:
             return self._create_contact(request)
         if method == "POST" and path == "/conversations":
             return self._create_conversation(request)
+        if method == "GET" and path == "/conversations":
+            return self._list_conversations(request)
+        if method == "POST" and (match := _TOGGLE_STATUS_PATH.fullmatch(path)):
+            return self._toggle_status(request, int(match.group(1)))
         if method == "GET" and (match := _CONVERSATION_PATH.fullmatch(path)):
             return self._get_conversation(int(match.group(1)))
+        if method == "GET" and (match := _MESSAGES_PATH.fullmatch(path)):
+            return self._list_messages(request, int(match.group(1)))
         if method == "POST" and (match := _MESSAGES_PATH.fullmatch(path)):
             return self._create_message(request, int(match.group(1)))
         return httpx.Response(404)
@@ -135,7 +204,7 @@ class FakeChatwootServer:
         found = [
             self._contact_json(contact)
             for contact in self.contacts.values()
-            if query in contact.phone_number
+            if contact.phone_number is not None and query in contact.phone_number
         ]
         return httpx.Response(200, json={cw.PAYLOAD_KEY: found})
 
@@ -201,6 +270,42 @@ class FakeChatwootServer:
             ),
         )
 
+    def _list_conversations(self, request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        # Chatwoot filtra por `open` cuando no se pide estado; `all` devuelve todos.
+        status = params.get(cw.STATUS_KEY, cw.STATUS_OPEN)
+        matching = sorted(
+            (
+                conversation
+                for conversation in self.conversations.values()
+                if conversation.inbox_id == int(params[cw.INBOX_ID_KEY])
+                and status in (cw.STATUS_ALL, conversation.status)
+            ),
+            key=lambda conversation: (conversation.last_activity_at or 0, conversation.id),
+            reverse=True,
+        )
+        start = (int(params.get(cw.PAGE_PARAM, "1")) - 1) * _CONVERSATIONS_PER_PAGE
+        page = matching[start : start + _CONVERSATIONS_PER_PAGE]
+        rendered = [self._conversation_json(item, include_can_reply=True) for item in page]
+        return httpx.Response(200, json={cw.DATA_KEY: {cw.PAYLOAD_KEY: rendered}})
+
+    def _toggle_status(self, request: httpx.Request, conversation_id: int) -> httpx.Response:
+        conversation = self.conversations.get(conversation_id)
+        if conversation is None:
+            return httpx.Response(404)
+        conversation.status = json.loads(request.content)[cw.STATUS_KEY]
+        return httpx.Response(
+            200,
+            json={
+                cw.META_KEY: {},
+                cw.PAYLOAD_KEY: {
+                    "success": True,
+                    "current_status": conversation.status,
+                    "conversation_id": conversation.id,
+                },
+            },
+        )
+
     def _conversation_json(
         self, conversation: FakeConversation, *, include_can_reply: bool
     ) -> dict[str, Any]:
@@ -208,14 +313,27 @@ class FakeChatwootServer:
             cw.ID_KEY: conversation.id,
             cw.INBOX_ID_KEY: conversation.inbox_id,
             cw.STATUS_KEY: conversation.status,
+            cw.MESSAGES_KEY: [self._embedded_message_json(m) for m in conversation.messages[-1:]],
             cw.META_KEY: {
                 cw.SENDER_KEY: self._contact_json(self.contacts[conversation.contact_id])
             },
-            cw.LAST_ACTIVITY_AT_KEY: conversation.last_activity_at,
         }
+        if conversation.last_activity_at is not None:
+            rendered[cw.LAST_ACTIVITY_AT_KEY] = conversation.last_activity_at
         if include_can_reply:
             rendered[cw.CAN_REPLY_KEY] = self.window_open and conversation.can_reply
         return rendered
+
+    @staticmethod
+    def _embedded_message_json(message: FakeMessage) -> dict[str, Any]:
+        """Último mensaje incrustado en la conversación, como lo informa el listado."""
+
+        return {
+            cw.ID_KEY: message.id,
+            cw.CONTENT_KEY: message.content,
+            cw.MESSAGE_TYPE_KEY: message.message_type,
+            cw.CREATED_AT_KEY: message.created_at,
+        }
 
     # --- Mensajes --------------------------------------------------------------------------
 
@@ -228,16 +346,11 @@ class FakeChatwootServer:
         if self.message_post_status is not None:
             # El cuerpo de error trae contenido y teléfono a propósito: no debe filtrarse.
             return httpx.Response(self.message_post_status, text=ERROR_BODY)
-        self._epoch += 1
-        message = FakeMessage(
-            id=self._next_message_id,
-            conversation_id=conversation_id,
-            content=self._message_content(request),
-            created_at=self._epoch,
+        message = self.add_message(
+            conversation_id,
+            self._message_content(request),
+            attachment_url=self._attachment_url(request),
         )
-        self._next_message_id += 1
-        conversation.messages.append(message)
-        conversation.last_activity_at = message.created_at
         return httpx.Response(200, json=self._message_json(message))
 
     @staticmethod
@@ -249,6 +362,41 @@ class FakeChatwootServer:
             return caption.data.decode() if caption is not None else None
         content = json.loads(request.content).get(cw.CONTENT_KEY)
         return content if isinstance(content, str) else None
+
+    @staticmethod
+    def _attachment_url(request: httpx.Request) -> str | None:
+        if not request.headers.get("content-type", "").startswith("multipart/"):
+            return None
+        filename = next(
+            (part.filename for part in parse_multipart(request) if part.filename is not None), None
+        )
+        return f"{_FILES_URL}/{quote(filename)}" if filename is not None else None
+
+    def _list_messages(self, request: httpx.Request, conversation_id: int) -> httpx.Response:
+        conversation = self.conversations.get(conversation_id)
+        if conversation is None:
+            return httpx.Response(404)
+        before = request.url.params.get(cw.BEFORE_PARAM)
+        older = [m for m in conversation.messages if before is None or m.id < int(before)]
+        page = sorted(older, key=lambda message: message.id)[-_MESSAGES_PER_PAGE:]
+        return httpx.Response(200, json={cw.PAYLOAD_KEY: [self._list_item_json(m) for m in page]})
+
+    @staticmethod
+    def _list_item_json(message: FakeMessage) -> dict[str, Any]:
+        attachments = (
+            [{cw.DATA_URL_KEY: message.attachment_url}]
+            if message.attachment_url is not None
+            else []
+        )
+        return {
+            cw.ID_KEY: message.id,
+            cw.CONVERSATION_ID_KEY: message.conversation_id,
+            cw.MESSAGE_TYPE_KEY: message.message_type,
+            cw.PRIVATE_KEY: message.private,
+            cw.CONTENT_KEY: message.content,
+            cw.CREATED_AT_KEY: message.created_at,
+            cw.ATTACHMENTS_KEY: attachments,
+        }
 
     @staticmethod
     def _message_json(message: FakeMessage) -> dict[str, Any]:

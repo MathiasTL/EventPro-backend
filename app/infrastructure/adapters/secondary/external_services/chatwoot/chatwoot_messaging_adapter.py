@@ -6,7 +6,7 @@ tenga activo `lock_to_single_conversation`. Los textos de error y los logs no ll
 mensajes, códigos ni teléfonos.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -28,6 +28,13 @@ from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_c
     ChatwootClient,
     ChatwootToken,
 )
+
+# Chatwoot pagina las conversaciones de 25 en 25; el recorrido se acota para no barrer la cuenta.
+CONVERSATIONS_PAGE_SIZE = 25
+MAX_CONVERSATION_PAGES = 20
+# Los mensajes se paginan de 20 en 20 con un cursor por id.
+MESSAGES_PAGE_SIZE = 20
+MAX_MESSAGE_PAGES = 25
 
 
 class ChatwootMessagingAdapter:
@@ -98,7 +105,14 @@ class ChatwootMessagingAdapter:
     async def set_conversation_status(
         self, conversation_id: int, status: ConversationStatus
     ) -> None:
-        raise NotImplementedError("El cambio de estado de conversación aún no está implementado")
+        await self._client.request(
+            "POST",
+            f"/conversations/{conversation_id}/toggle_status",
+            token=ChatwootToken.AGENT,
+            operation="set_conversation_status",
+            json=cw.build_status_request(status),
+            not_found_is_missing=True,
+        )
 
     async def list_conversations(
         self,
@@ -107,7 +121,36 @@ class ChatwootMessagingAdapter:
         page: int = 1,
         page_size: int = 25,
     ) -> Sequence[ConversationSummary]:
-        raise NotImplementedError("El listado de conversaciones aún no está implementado")
+        """Conversaciones pendientes y abiertas, de la más reciente a la más antigua.
+
+        Chatwoot pagina de 25 en 25 y el puerto pide `page`/`page_size` sobre la secuencia ya
+        filtrada, así que se recorren las páginas de Chatwoot hasta cubrir el tramo pedido.
+        """
+
+        if page_size < 1:
+            return ()
+        first = (max(page, 1) - 1) * page_size
+        last = first + page_size
+        collected: list[ConversationSummary] = []
+        for chatwoot_page in range(1, MAX_CONVERSATION_PAGES + 1):
+            body = await self._client.request(
+                "GET",
+                "/conversations",
+                token=ChatwootToken.AGENT,
+                operation="list_conversations",
+                params=cw.build_conversation_list_params(self._inbox_id, status, chatwoot_page),
+                required_keys=(cw.DATA_KEY,),
+            )
+            items = cw.conversation_items(body)
+            collected.extend(self._summaries(items))
+            if len(collected) >= last or len(items) < CONVERSATIONS_PAGE_SIZE:
+                return tuple(collected[first:last])
+        get_logger("chatwoot").warning(
+            "chatwoot_scan_truncated",
+            operation="list_conversations",
+            pages=MAX_CONVERSATION_PAGES,
+        )
+        return tuple(collected[first:last])
 
     async def list_messages(
         self,
@@ -116,7 +159,51 @@ class ChatwootMessagingAdapter:
         before: datetime | None = None,
         limit: int = 50,
     ) -> Sequence[ConversationMessage]:
-        raise NotImplementedError("El listado de mensajes aún no está implementado")
+        """Los `limit` mensajes más recientes anteriores a `before`, en orden cronológico.
+
+        Chatwoot entrega 20 por llamada con un cursor por id, y `before` del puerto es una hora:
+        se pagina hacia atrás desde el más reciente y se descartan los que no son anteriores.
+        """
+
+        newest_first: list[ConversationMessage] = []
+        cursor: int | None = None
+        for _ in range(MAX_MESSAGE_PAGES):
+            body = await self._client.request(
+                "GET",
+                f"/conversations/{conversation_id}/messages",
+                token=ChatwootToken.AGENT,
+                operation="list_messages",
+                params=cw.build_message_list_params(cursor),
+                not_found_is_missing=True,
+                required_keys=(cw.PAYLOAD_KEY,),
+            )
+            if limit < 1:
+                return ()
+            items = cw.message_items(body)
+            for item in reversed(items):
+                message = cw.parse_conversation_message(item)
+                if message is not None and (before is None or message.sent_at < before):
+                    newest_first.append(message)
+            if len(newest_first) >= limit or len(items) < MESSAGES_PAGE_SIZE:
+                return tuple(reversed(newest_first[:limit]))
+            cursor = cw.oldest_message_id(items)
+        get_logger("chatwoot").warning(
+            "chatwoot_scan_truncated", operation="list_messages", pages=MAX_MESSAGE_PAGES
+        )
+        return tuple(reversed(newest_first[:limit]))
+
+    @staticmethod
+    def _summaries(items: Sequence[Mapping[str, Any]]) -> Iterator[ConversationSummary]:
+        for item in items:
+            summary = cw.parse_conversation_summary(item)
+            if summary is not None:
+                yield summary
+            elif cw.has_listable_status(item):
+                get_logger("chatwoot").warning(
+                    "chatwoot_conversation_skipped",
+                    conversation_id=item.get(cw.ID_KEY),
+                    reason="missing_phone",
+                )
 
     # --- Resolución de contacto y conversación ---------------------------------------------
 

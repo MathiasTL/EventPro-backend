@@ -62,6 +62,10 @@ TEMPLATE_PARAMS_KEY = "template_params"
 PROCESSED_PARAMS_KEY = "processed_params"
 BODY_PARAMS_KEY = "body"
 SEARCH_QUERY_PARAM = "q"
+PAGE_PARAM = "page"
+BEFORE_PARAM = "before"
+SORT_BY_PARAM = "sort_by"
+SORT_LAST_ACTIVITY_DESC = "last_activity_at_desc"
 ATTACHMENT_FILE_FIELD = "attachments[]"
 
 OUTGOING_MESSAGE_TYPE = "outgoing"
@@ -71,6 +75,7 @@ TEMPLATE_PLACEHOLDER = "[plantilla:{name}]"
 # --- Valores que Chatwoot devuelve --------------------------------------------------------
 STATUS_PENDING = "pending"
 STATUS_OPEN = "open"
+STATUS_ALL = "all"
 _DIRECTIONS: Mapping[int | str, MessageDirection] = {
     0: MessageDirection.INCOMING,
     "incoming": MessageDirection.INCOMING,
@@ -80,6 +85,9 @@ _DIRECTIONS: Mapping[int | str, MessageDirection] = {
 _CONVERSATION_STATUSES: Mapping[str, ConversationStatus] = {
     STATUS_PENDING: ConversationStatus.BOT,
     STATUS_OPEN: ConversationStatus.HUMAN,
+}
+_CHATWOOT_STATUSES: Mapping[ConversationStatus, str] = {
+    status: chatwoot_status for chatwoot_status, status in _CONVERSATION_STATUSES.items()
 }
 
 _MICROSECONDS_PER_SECOND = 1_000_000
@@ -213,6 +221,25 @@ def parse_conversation_ref(body: Any) -> ConversationRef:
     )
 
 
+def build_status_request(status: ConversationStatus) -> dict[str, str]:
+    """Cambio de estado: el bot atiende `pending` y un encargado `open`."""
+
+    return {STATUS_KEY: _CHATWOOT_STATUSES[status]}
+
+
+def build_conversation_list_params(
+    inbox_id: int, status: ConversationStatus | None, page: int
+) -> dict[str, str | int]:
+    """Parámetros del listado; sin filtro se piden todas y se descartan resueltas y pospuestas."""
+
+    return {
+        INBOX_ID_KEY: inbox_id,
+        STATUS_KEY: STATUS_ALL if status is None else _CHATWOOT_STATUSES[status],
+        PAGE_PARAM: page,
+        SORT_BY_PARAM: SORT_LAST_ACTIVITY_DESC,
+    }
+
+
 def conversation_items(list_body: Any) -> Sequence[Mapping[str, Any]]:
     return _require_list(_require(list_body, DATA_KEY), PAYLOAD_KEY)
 
@@ -231,6 +258,12 @@ def parse_conversation_summary(item: Mapping[str, Any]) -> ConversationSummary |
         service_window_open=item.get(CAN_REPLY_KEY) is True,
         last_message_at=_last_message_at(item),
     )
+
+
+def has_listable_status(item: Mapping[str, Any]) -> bool:
+    """Indica si la conversación está pendiente o abierta (las únicas que se listan)."""
+
+    return str(item.get(STATUS_KEY)) in _CONVERSATION_STATUSES
 
 
 def _sender_phone(item: Mapping[str, Any]) -> PhoneNumber | None:
@@ -334,8 +367,20 @@ def parse_message_receipt(body: Any) -> MessageReceipt:
     )
 
 
+def build_message_list_params(before_id: int | None) -> dict[str, int]:
+    """Cursor por id: `before` es exclusivo y Chatwoot devuelve los 20 mensajes anteriores."""
+
+    return {} if before_id is None else {BEFORE_PARAM: before_id}
+
+
 def message_items(list_body: Any) -> Sequence[Mapping[str, Any]]:
     return _require_list(list_body, PAYLOAD_KEY)
+
+
+def oldest_message_id(items: Sequence[Mapping[str, Any]]) -> int:
+    """Id menor de una página: es el cursor `before` de la página anterior."""
+
+    return min(_require_int(item, ID_KEY) for item in items)
 
 
 def parse_conversation_message(item: Mapping[str, Any]) -> ConversationMessage | None:
