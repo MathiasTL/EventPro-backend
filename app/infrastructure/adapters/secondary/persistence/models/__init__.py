@@ -18,6 +18,9 @@ from app.infrastructure.adapters.secondary.persistence.models.event_resource_mod
     CrewAssignmentModel,
     InventoryReservationModel,
 )
+from app.infrastructure.adapters.secondary.persistence.models.outbox_message_model import (
+    OutboxMessageModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.payment_model import PaymentModel
 from app.infrastructure.adapters.secondary.persistence.models.quote_model import (
     QuoteExtraModel,
@@ -40,6 +43,7 @@ __all__ = [
     "ExtraModel",
     "InventoryItemModel",
     "InventoryReservationModel",
+    "OutboxMessageModel",
     "PackageInventoryItemModel",
     "PackageModel",
     "PackageThemeModel",
