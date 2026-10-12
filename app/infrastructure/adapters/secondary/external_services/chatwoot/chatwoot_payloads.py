@@ -1,0 +1,364 @@
+"""Formato de intercambio con Chatwoot: constructores de peticiones y lectores de respuestas.
+
+Todos los nombres de campo de Chatwoot son constantes de este módulo. Varios no están confirmados
+con capturas reales (ver `tests/fixtures/chatwoot/README.md`): corregirlos es un cambio local aquí.
+Las funciones son puras; los fallos de forma se informan como `MessagingUnavailableError` con un
+texto fijo que nombra la clave ausente y nunca el contenido recibido.
+"""
+
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import unquote, urlsplit
+
+from app.application.dtos.messaging_dto import (
+    ConversationMessage,
+    ConversationStatus,
+    ConversationSummary,
+    ListSection,
+    MessageDirection,
+    MessageReceipt,
+)
+from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
+from app.domain.exceptions.resource_exceptions import ValidationError
+from app.domain.value_objects.phone_number import PhoneNumber
+
+# --- Claves de las respuestas -------------------------------------------------------------
+ID_KEY = "id"
+PAYLOAD_KEY = "payload"
+DATA_KEY = "data"
+CONTACT_KEY = "contact"
+PHONE_NUMBER_KEY = "phone_number"
+CONVERSATION_ID_KEY = "conversation_id"
+CREATED_AT_KEY = "created_at"
+CONTENT_KEY = "content"
+MESSAGE_TYPE_KEY = "message_type"
+PRIVATE_KEY = "private"
+ATTACHMENTS_KEY = "attachments"
+DATA_URL_KEY = "data_url"
+STATUS_KEY = "status"
+CAN_REPLY_KEY = "can_reply"
+MESSAGES_KEY = "messages"
+META_KEY = "meta"
+SENDER_KEY = "sender"
+LAST_ACTIVITY_AT_KEY = "last_activity_at"
+
+# --- Claves y valores de las peticiones ---------------------------------------------------
+INBOX_ID_KEY = "inbox_id"
+CONTACT_ID_KEY = "contact_id"
+NAME_KEY = "name"
+CATEGORY_KEY = "category"
+LANGUAGE_KEY = "language"
+CONTENT_TYPE_KEY = "content_type"
+CONTENT_ATTRIBUTES_KEY = "content_attributes"
+ITEMS_KEY = "items"
+ITEM_TITLE_KEY = "title"
+ITEM_VALUE_KEY = "value"
+TEMPLATE_PARAMS_KEY = "template_params"
+PROCESSED_PARAMS_KEY = "processed_params"
+BODY_PARAMS_KEY = "body"
+SEARCH_QUERY_PARAM = "q"
+ATTACHMENT_FILE_FIELD = "attachments[]"
+
+OUTGOING_MESSAGE_TYPE = "outgoing"
+INPUT_SELECT_CONTENT_TYPE = "input_select"
+TEMPLATE_PLACEHOLDER = "[plantilla:{name}]"
+
+# --- Valores que Chatwoot devuelve --------------------------------------------------------
+STATUS_PENDING = "pending"
+STATUS_OPEN = "open"
+_DIRECTIONS: Mapping[int | str, MessageDirection] = {
+    0: MessageDirection.INCOMING,
+    "incoming": MessageDirection.INCOMING,
+    1: MessageDirection.OUTGOING,
+    "outgoing": MessageDirection.OUTGOING,
+}
+_CONVERSATION_STATUSES: Mapping[str, ConversationStatus] = {
+    STATUS_PENDING: ConversationStatus.BOT,
+    STATUS_OPEN: ConversationStatus.HUMAN,
+}
+
+_MICROSECONDS_PER_SECOND = 1_000_000
+_NON_DIGITS = re.compile(r"\D")
+
+
+@dataclass(frozen=True)
+class ConversationRef:
+    """Conversación resuelta; `can_reply` es `None` si la respuesta no lo informa."""
+
+    conversation_id: int
+    can_reply: bool | None
+
+
+def _unexpected(key: str) -> MessagingUnavailableError:
+    return MessagingUnavailableError(f"Respuesta inesperada de Chatwoot: falta '{key}'")
+
+
+def _require(mapping: Any, key: str) -> Any:
+    if not isinstance(mapping, Mapping) or key not in mapping:
+        raise _unexpected(key)
+    return mapping[key]
+
+
+def _require_int(mapping: Any, key: str) -> int:
+    value = _require(mapping, key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _unexpected(key)
+    return value
+
+
+def _require_list(mapping: Any, key: str) -> Sequence[Mapping[str, Any]]:
+    value = _require(mapping, key)
+    if not isinstance(value, list) or not all(isinstance(entry, Mapping) for entry in value):
+        raise _unexpected(key)
+    return value
+
+
+def instant(created_at: int | float | str | None, message_id: int) -> datetime:
+    """Convierte la hora de Chatwoot en un `datetime` UTC con desempate por id.
+
+    Chatwoot informa segundos enteros (o texto ISO 8601 en los webhooks). Dos mensajes del mismo
+    segundo recibirían la misma hora y un cursor `before` exclusivo saltaría uno; los
+    microsegundos llevan `message_id` para dar un orden estricto.
+    """
+
+    if created_at is None or isinstance(created_at, bool):
+        raise _unexpected(CREATED_AT_KEY)
+    try:
+        if isinstance(created_at, str):
+            moment = _parse_text_time(created_at)
+        else:
+            moment = datetime.fromtimestamp(int(created_at), UTC)
+    except (ValueError, OverflowError, OSError):
+        raise _unexpected(CREATED_AT_KEY) from None
+    return moment.replace(microsecond=0) + timedelta(
+        microseconds=message_id % _MICROSECONDS_PER_SECOND
+    )
+
+
+def _parse_text_time(text: str) -> datetime:
+    if text.isdigit():
+        return datetime.fromtimestamp(int(text), UTC)
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def decode_direction(message_type: Any) -> MessageDirection | None:
+    """Dirección del mensaje; `None` para actividad, plantillas y valores desconocidos.
+
+    Chatwoot usa enteros en la API y texto en los webhooks, así que se aceptan ambos.
+    """
+
+    try:
+        return _DIRECTIONS.get(message_type)
+    except TypeError:
+        return None
+
+
+# --- Contactos ----------------------------------------------------------------------------
+
+
+def _digits(raw: str) -> str:
+    return _NON_DIGITS.sub("", raw)
+
+
+def build_contact_search_params(phone: PhoneNumber) -> dict[str, str]:
+    return {SEARCH_QUERY_PARAM: phone.digits}
+
+
+def build_contact_request(inbox_id: int, phone: PhoneNumber) -> dict[str, Any]:
+    return {INBOX_ID_KEY: inbox_id, NAME_KEY: phone.value, PHONE_NUMBER_KEY: phone.value}
+
+
+def find_contact_id(search_body: Any, phone: PhoneNumber) -> int | None:
+    """Id del contacto cuyo teléfono coincide exactamente.
+
+    La búsqueda de Chatwoot es por subcadena (`ILIKE %q%`), así que un resultado más largo o más
+    corto que el número pedido no sirve.
+    """
+
+    wanted = phone.digits
+    for contact in _require_list(search_body, PAYLOAD_KEY):
+        raw = contact.get(PHONE_NUMBER_KEY)
+        if isinstance(raw, str) and _digits(raw) == wanted:
+            return _require_int(contact, ID_KEY)
+    return None
+
+
+def parse_contact_id(created_body: Any) -> int:
+    contact = _require(_require(created_body, PAYLOAD_KEY), CONTACT_KEY)
+    return _require_int(contact, ID_KEY)
+
+
+# --- Conversaciones -----------------------------------------------------------------------
+
+
+def build_conversation_request(inbox_id: int, contact_id: int) -> dict[str, Any]:
+    """Sin `status`: una conversación existente podría estar tomada por un encargado."""
+
+    return {INBOX_ID_KEY: inbox_id, CONTACT_ID_KEY: contact_id}
+
+
+def parse_conversation_ref(body: Any) -> ConversationRef:
+    can_reply = body.get(CAN_REPLY_KEY) if isinstance(body, Mapping) else None
+    return ConversationRef(
+        conversation_id=_require_int(body, ID_KEY),
+        can_reply=can_reply if isinstance(can_reply, bool) else None,
+    )
+
+
+def conversation_items(list_body: Any) -> Sequence[Mapping[str, Any]]:
+    return _require_list(_require(list_body, DATA_KEY), PAYLOAD_KEY)
+
+
+def parse_conversation_summary(item: Mapping[str, Any]) -> ConversationSummary | None:
+    """Resumen de una conversación, o `None` si no es pendiente/abierta o no tiene teléfono."""
+
+    status = _CONVERSATION_STATUSES.get(str(item.get(STATUS_KEY)))
+    phone = _sender_phone(item)
+    if status is None or phone is None:
+        return None
+    return ConversationSummary(
+        conversation_id=_require_int(item, ID_KEY),
+        phone=phone,
+        status=status,
+        service_window_open=item.get(CAN_REPLY_KEY) is True,
+        last_message_at=_last_message_at(item),
+    )
+
+
+def _sender_phone(item: Mapping[str, Any]) -> PhoneNumber | None:
+    meta = item.get(META_KEY)
+    sender = meta.get(SENDER_KEY) if isinstance(meta, Mapping) else None
+    raw = sender.get(PHONE_NUMBER_KEY) if isinstance(sender, Mapping) else None
+    if not isinstance(raw, str):
+        return None
+    try:
+        return PhoneNumber.parse(raw)
+    except ValidationError:
+        return None
+
+
+def _last_message_at(item: Mapping[str, Any]) -> datetime | None:
+    messages = item.get(MESSAGES_KEY)
+    if isinstance(messages, list) and messages:
+        last = messages[-1]
+        return instant(_require(last, CREATED_AT_KEY), _require_int(last, ID_KEY))
+    activity = item.get(LAST_ACTIVITY_AT_KEY)
+    return instant(activity, 0) if activity is not None else None
+
+
+# --- Mensajes: envío ----------------------------------------------------------------------
+
+
+def build_text_message(content: str) -> dict[str, Any]:
+    return {CONTENT_KEY: content, MESSAGE_TYPE_KEY: OUTGOING_MESSAGE_TYPE, PRIVATE_KEY: False}
+
+
+def flatten_sections(sections: Sequence[ListSection]) -> list[dict[str, str]]:
+    """Filas de todas las secciones, en orden.
+
+    Chatwoot construye el mensaje interactivo solo con `items`: se pierden los títulos de sección
+    y las descripciones de fila.
+    """
+
+    return [
+        {ITEM_TITLE_KEY: row.title, ITEM_VALUE_KEY: row.id}
+        for section in sections
+        for row in section.rows
+    ]
+
+
+def build_list_message(body: str, sections: Sequence[ListSection]) -> dict[str, Any]:
+    return {
+        **build_text_message(body),
+        CONTENT_TYPE_KEY: INPUT_SELECT_CONTENT_TYPE,
+        CONTENT_ATTRIBUTES_KEY: {ITEMS_KEY: flatten_sections(sections)},
+    }
+
+
+def build_template_params(
+    name: str, params: Mapping[str, str], *, category: str, language: str
+) -> dict[str, Any]:
+    """Solo parámetros del cuerpo; los botones de la plantilla no están soportados."""
+
+    return {
+        NAME_KEY: name,
+        CATEGORY_KEY: category,
+        LANGUAGE_KEY: language,
+        PROCESSED_PARAMS_KEY: {BODY_PARAMS_KEY: dict(params)},
+    }
+
+
+def build_template_message(
+    name: str, params: Mapping[str, str], *, category: str, language: str
+) -> dict[str, Any]:
+    return {
+        **build_text_message(TEMPLATE_PLACEHOLDER.format(name=name)),
+        TEMPLATE_PARAMS_KEY: build_template_params(
+            name, params, category=category, language=language
+        ),
+    }
+
+
+def build_attachment_form(caption: str | None) -> dict[str, str]:
+    form = {MESSAGE_TYPE_KEY: OUTGOING_MESSAGE_TYPE}
+    if caption is not None:
+        form[CONTENT_KEY] = caption
+    return form
+
+
+def build_attachment_files(
+    filename: str, data: bytes, content_type: str
+) -> list[tuple[str, tuple[str, bytes, str]]]:
+    return [(ATTACHMENT_FILE_FIELD, (filename, data, content_type))]
+
+
+# --- Mensajes: respuestas -----------------------------------------------------------------
+
+
+def parse_message_receipt(body: Any) -> MessageReceipt:
+    """Recibo del envío; el id es el de Chatwoot, nunca el WAMID (`source_id`)."""
+
+    message_id = _require_int(body, ID_KEY)
+    return MessageReceipt(
+        message_id=str(message_id),
+        conversation_id=_require_int(body, CONVERSATION_ID_KEY),
+        sent_at=instant(_require(body, CREATED_AT_KEY), message_id),
+    )
+
+
+def message_items(list_body: Any) -> Sequence[Mapping[str, Any]]:
+    return _require_list(list_body, PAYLOAD_KEY)
+
+
+def parse_conversation_message(item: Mapping[str, Any]) -> ConversationMessage | None:
+    """Mensaje entrante o saliente; `None` para actividad, plantillas y notas privadas."""
+
+    direction = decode_direction(item.get(MESSAGE_TYPE_KEY))
+    if direction is None or item.get(PRIVATE_KEY) is True:
+        return None
+    message_id = _require_int(item, ID_KEY)
+    content = item.get(CONTENT_KEY)
+    return ConversationMessage(
+        message_id=str(message_id),
+        conversation_id=_require_int(item, CONVERSATION_ID_KEY),
+        direction=direction,
+        body=content if isinstance(content, str) else None,
+        sent_at=instant(_require(item, CREATED_AT_KEY), message_id),
+        attachment_filename=_attachment_filename(item),
+    )
+
+
+def _attachment_filename(item: Mapping[str, Any]) -> str | None:
+    attachments = item.get(ATTACHMENTS_KEY)
+    if not isinstance(attachments, list) or not attachments:
+        return None
+    url = attachments[0].get(DATA_URL_KEY) if isinstance(attachments[0], Mapping) else None
+    if not isinstance(url, str):
+        return None
+    return unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or None
