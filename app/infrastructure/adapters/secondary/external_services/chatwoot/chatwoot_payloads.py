@@ -36,6 +36,8 @@ CREATED_AT_KEY = "created_at"
 CONTENT_KEY = "content"
 MESSAGE_TYPE_KEY = "message_type"
 PRIVATE_KEY = "private"
+# WAMID del mensaje: el adaptador no lo lee (el recibo usa el id de Chatwoot); lo usa el simulador.
+SOURCE_ID_KEY = "source_id"
 ATTACHMENTS_KEY = "attachments"
 DATA_URL_KEY = "data_url"
 STATUS_KEY = "status"
