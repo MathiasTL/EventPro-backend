@@ -1,0 +1,53 @@
+{
+  "provisional": true,
+  "headers": {
+    "Content-Type": "application/json",
+    "User-Agent": "Rails Testing",
+    "X-Chatwoot-Delivery": "00000000-0000-4000-8000-000000000001",
+    "X-Chatwoot-Signature": "REDACTED",
+    "X-Chatwoot-Timestamp": "1791813660"
+  },
+  "body": {
+    "event": "message_updated",
+    "id": 4821,
+    "content": "Hola, tu cotizacion esta lista",
+    "content_type": "text",
+    "content_attributes": {},
+    "message_type": "outgoing",
+    "created_at": "2026-10-12T14:00:00.000Z",
+    "private": false,
+    "source_id": "wamid.FAKEMESSAGEID0001",
+    "sender": {
+      "id": 3,
+      "name": "Bot EventPro",
+      "type": "agent_bot"
+    },
+    "account": {
+      "id": 1,
+      "name": "EventPro Demo"
+    },
+    "inbox": {
+      "id": 2,
+      "name": "WhatsApp EventPro Demo"
+    },
+    "conversation": {
+      "id": 57,
+      "inbox_id": 2,
+      "status": "pending",
+      "channel": "Channel::Whatsapp",
+      "contact_inbox": {
+        "source_id": "51999111222"
+      },
+      "meta": {
+        "sender": {
+          "id": 11,
+          "name": "Cliente Demo",
+          "phone_number": "+51999111222"
+        }
+      }
+    },
+    "additional_attributes": {},
+    "status": "delivered",
+    "updated_at": "2026-10-12T14:01:00.000Z"
+  }
+}
