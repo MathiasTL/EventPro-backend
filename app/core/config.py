@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     advance_percent: int = 10
     transit_rest_buffer_minutes: int = 30
 
-    # --- Cotización y movilidad (E1, supuestos pendientes de validar con el negocio) ---
+    # --- Cotización y movilidad (E1, valores aprobados por el negocio, RN-03) ---
     advance_deadline_hours: int = Field(default=24, gt=0)
     mobility_rate_per_km: Decimal = Field(default=Decimal("1.00"), ge=0, decimal_places=2)
     mobility_rate_per_minute: Decimal = Field(default=Decimal("0.30"), ge=0, decimal_places=2)
@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     mobility_zone_1_amount: Decimal = Field(default=Decimal("25.00"), ge=0, decimal_places=2)
     mobility_zone_2_amount: Decimal = Field(default=Decimal("45.00"), ge=0, decimal_places=2)
     mobility_zone_3_amount: Decimal = Field(default=Decimal("70.00"), ge=0, decimal_places=2)
+
+    # --- Cola de mensajes salientes / outbox (E1, RNF-03.2) ---
+    outbox_batch_size: int = Field(default=20, gt=0)
+    # Debe superar el tiempo máximo de un ciclo de despacho; si no, el lote se reenvía.
+    outbox_lease_seconds: int = Field(default=60, gt=0)
+    outbox_max_attempts: int = Field(default=6, gt=0)
 
     # --- Almacenamiento de comprobantes/evidencias (E5) ---
     storage_backend: str = "local"

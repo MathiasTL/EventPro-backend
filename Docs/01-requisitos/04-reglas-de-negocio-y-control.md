@@ -28,9 +28,9 @@ $$\text{Movilidad Base} = \max\left(D_{\text{ida+vuelta}} \times \text{tarifa}_{
 $$\text{Costo Movilidad} = \text{Movilidad Base} \times 1.15$$
 4. **Excepción de Transporte del Cliente:** Si el cliente opta por brindar movilidad propia de ida y vuelta para el elenco, el costo de movilidad se fija en **S/. 0.00**. Esta excepción prevalece sobre el estimador y sobre la contingencia por zona.
 5. **Contingencia por zona:** si el estimador de rutas falla, se aplica un monto fijo según la zona del distrito del evento (Lima Metropolitana y Callao). El monto de la zona ya es final: no se le aplica el margen del 15%. Un distrito desconocido se asigna a la **zona 3** para no cobrar de menos; el encargado puede corregirlo con el *override* de movilidad.
-6. **Valores iniciales (supuestos pendientes de validación con el negocio):** la documentación original no define la función de la movilidad base; estos valores y la asignación de distritos a zonas son configurables o editables y deben confirmarse antes de producción.
+6. **Valores aprobados por el negocio (2026-10-08):** la documentación original no definía la función de la movilidad base; el negocio aprobó estos valores y la asignación de distritos a zonas. Siguen siendo configurables (variables de entorno) o editables (tabla de zonas) si el negocio los cambia.
 
-| Parámetro | Variable de entorno | Valor inicial |
+| Parámetro | Variable de entorno | Valor aprobado |
 | :--- | :--- | :--- |
 | Tarifa por kilómetro | `MOBILITY_RATE_PER_KM` | S/. 1.00 |
 | Tarifa por minuto | `MOBILITY_RATE_PER_MINUTE` | S/. 0.30 |

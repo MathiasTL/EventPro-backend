@@ -34,7 +34,7 @@ El 2026-10-07 se reemplazó la cadena incremental `0001`–`0006` por `0001_init
 
 ### 1.4 US-18: `0002_event_extensions`
 
-La cadena vigente es `base → 0001_initial_schema → 0002_event_extensions`, con un
+Al cerrar US-18 la cadena era `base → 0001_initial_schema → 0002_event_extensions`, con un
 único head. `0002` crea el detalle de extensiones y añade los acumuladores
 `extra_minutes_total` y `legacy_extra_hours_amount`. El baseline permanece intacto.
 
@@ -65,6 +65,16 @@ Las fixtures crean `clients`, `packages` y `quotes` antes de sus eventos y pagos
 Este cambio se valida únicamente en bases efímeras; no recrea ni actualiza la base
 local del desarrollador automáticamente. Los nuevos escritores de disponibilidad
 deben respetar el [protocolo de bloqueo de US-18](../02-arquitectura/02-backend-arquitectura-hexagonal.md).
+
+### 1.5 E1 Bloque 2: `0004_outbox_delivery_tracking`
+
+La cadena vigente es `base → 0001_initial_schema → 0002_event_extensions → 0003_manual_booking_documents → 0004_outbox_delivery_tracking`, con un único head. `0004` solo agrega columnas y restricciones a `outbox_messages` y cambia un valor por defecto, según la [especificación de la cola de mensajes salientes](../02-arquitectura/07-spec-e1-outbox-mensajeria.md):
+
+* Columnas nuevas: `external_message_id` (única), `conversation_id`, `delivery_status` (con `CHECK`), `delivery_error`, `delivered_at`, `read_at` y `redact_after_send` (`NOT NULL`, por defecto `false`).
+* `max_attempts` pasa de `5` a `6` por defecto (RNF-03.2: el primer envío más cinco reintentos). Las filas existentes conservan su valor.
+* El `downgrade` elimina las restricciones y las columnas nuevas y restaura el valor por defecto `5`. Conserva los mensajes existentes, pero pierde los datos de entrega.
+
+Las pruebas usan PostgreSQL 16 efímero: upgrade a `0003` con un mensaje heredado, upgrade a `0004`, comprobación de columnas, restricciones y valor por defecto, downgrade a `0003` y nuevo upgrade a head.
 
 ---
 
