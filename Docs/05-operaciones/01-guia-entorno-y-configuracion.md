@@ -74,6 +74,10 @@ EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como 
 * Nota de despliegue: en producción debe fijarse `APP_ENV` con un valor distinto de `development`. El adaptador de mensajería falso registra el contenido de los mensajes (incluidos los códigos OTP) cuando `APP_ENV=development`, que es el valor por defecto.
 * `ADVANCE_PERCENT`: Porcentaje del adelanto sobre servicios base (por defecto `10`).
 * `TRANSIT_REST_BUFFER_MINUTES`: Minutos mínimos de margen para descanso y desarme entre shows sucesivos (por defecto `30`).
+* `OUTBOX_BATCH_SIZE`: Mensajes que el worker reserva en cada ciclo de despacho de la cola de mensajes salientes (por defecto `20`).
+* `OUTBOX_LEASE_SECONDS`: Vencimiento de la reserva de un mensaje; debe superar el tiempo máximo de un ciclo de despacho (por defecto `60`). Si el worker termina antes de guardar el resultado, el mensaje se envía de nuevo al vencer la reserva (entrega al menos una vez).
+* `OUTBOX_MAX_ATTEMPTS`: Intentos por mensaje: el primer envío más cinco reintentos, con espera de 30 s, 2 min, 10 min, 30 min y 2 h (por defecto `6`).
+* Nota de despliegue: hasta que exista `ChatwootMessagingAdapter`, el servicio `worker` despacha la cola cada 5 segundos con el adaptador de mensajería falso y los mensajes pasan a `SENT` sin llegar a WhatsApp. No debe usarse con tráfico real antes de ese bloque.
 
 ### 2.7 Repositorio de Archivos y Documentos
 * `STORAGE_BACKEND`: Tipo de almacenamiento (`local` o `s3`).
