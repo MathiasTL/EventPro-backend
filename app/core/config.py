@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     mobility_zone_2_amount: Decimal = Field(default=Decimal("45.00"), ge=0, decimal_places=2)
     mobility_zone_3_amount: Decimal = Field(default=Decimal("70.00"), ge=0, decimal_places=2)
 
+    # --- Cola de mensajes salientes / outbox (E1, RNF-03.2) ---
+    outbox_batch_size: int = Field(default=20, gt=0)
+    # Debe superar el tiempo máximo de un ciclo de despacho; si no, el lote se reenvía.
+    outbox_lease_seconds: int = Field(default=60, gt=0)
+    outbox_max_attempts: int = Field(default=6, gt=0)
+
     # --- Almacenamiento de comprobantes/evidencias (E5) ---
     storage_backend: str = "local"
     local_storage_path: str = "./uploads"
