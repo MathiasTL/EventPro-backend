@@ -21,6 +21,7 @@ from app.infrastructure.adapters.primary.web.v1 import (
     payments_router,
     users_router,
 )
+from app.infrastructure.adapters.primary.webhooks import chatwoot_webhook
 from app.infrastructure.di.containers import shutdown_infrastructure
 
 SECURITY_HEADERS = {
@@ -76,6 +77,8 @@ def create_app() -> FastAPI:
     application.include_router(budgets_router.router, prefix=settings.api_v1_prefix)
     application.include_router(manual_bookings_router.router, prefix=settings.api_v1_prefix)
     application.include_router(audit_logs_router.router, prefix=settings.api_v1_prefix)
+    # Siempre registrada: sin secreto configurado responde 401, así no depende de la configuración.
+    application.include_router(chatwoot_webhook.router, prefix=settings.api_v1_prefix)
     return application
 
 

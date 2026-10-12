@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Annotated
 
 import httpx
+from arq.connections import ArqRedis
 from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +22,9 @@ from app.application.ports.output.client_repository_port import IClientRepositor
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
+from app.application.ports.output.event_dedup_port import IEventDedupPort
 from app.application.ports.output.gateway_event_port import IGatewayEventPort
+from app.application.ports.output.gateway_event_queue_port import IGatewayEventQueuePort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
@@ -50,6 +53,7 @@ from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
 from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
+from app.application.use_cases.messaging.receive_gateway_event import ReceiveGatewayEvent
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
 )
@@ -78,6 +82,9 @@ from app.infrastructure.adapters.secondary.availability.availability_adapter imp
     AvailabilityAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_cache_adapter import RedisCacheAdapter
+from app.infrastructure.adapters.secondary.cache.redis_event_dedup_adapter import (
+    RedisEventDedupAdapter,
+)
 from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
 from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
@@ -133,6 +140,9 @@ from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter
 )
 from app.infrastructure.adapters.secondary.persistence.user_repository import (
     SQLAlchemyUserRepository,
+)
+from app.infrastructure.adapters.secondary.queue.arq_gateway_event_queue import (
+    ArqGatewayEventQueue,
 )
 from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
 from app.infrastructure.adapters.secondary.storage.document_source_adapter import (
@@ -328,6 +338,39 @@ def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
         transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
         gateway=get_gateway_event_port(),
     )
+
+
+@lru_cache
+def get_arq_pool() -> ArqRedis:
+    """Pool de arq de la API para encolar trabajos; lo cierra ``shutdown_infrastructure``.
+
+    Se construye con ``ArqRedis`` y no con ``create_pool``: este no abre ninguna conexión, así que
+    la API arranca con Redis caído (``/health`` lo reporta) y las pruebas con ``ASGITransport``,
+    que no ejecutan el lifespan, también lo tienen.
+    """
+
+    settings = get_settings()
+    return ArqRedis(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+    )
+
+
+@lru_cache
+def get_event_dedup_port() -> IEventDedupPort:
+    return RedisEventDedupAdapter(get_redis_client())
+
+
+@lru_cache
+def get_gateway_event_queue_port() -> IGatewayEventQueuePort:
+    return ArqGatewayEventQueue(get_arq_pool())
+
+
+@lru_cache
+def get_receive_gateway_event_use_case() -> ReceiveGatewayEvent:
+    return ReceiveGatewayEvent(get_event_dedup_port(), get_gateway_event_queue_port())
 
 
 @lru_cache
@@ -568,6 +611,10 @@ def clear_application_caches() -> None:
     _chatwoot_client.cache_clear()
     get_gateway_event_port.cache_clear()
     get_process_gateway_event_use_case.cache_clear()
+    get_arq_pool.cache_clear()
+    get_event_dedup_port.cache_clear()
+    get_gateway_event_queue_port.cache_clear()
+    get_receive_gateway_event_use_case.cache_clear()
 
 
 async def shutdown_infrastructure() -> None:
@@ -582,6 +629,8 @@ async def shutdown_infrastructure() -> None:
     get_cache_port.cache_clear()
     if get_chatwoot_http_client.cache_info().currsize:
         await get_chatwoot_http_client().aclose()
+    if get_arq_pool.cache_info().currsize:
+        await get_arq_pool().aclose()
     clear_application_caches()
 
 
