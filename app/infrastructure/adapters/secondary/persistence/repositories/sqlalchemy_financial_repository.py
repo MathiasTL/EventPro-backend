@@ -84,6 +84,9 @@ class SqlAlchemyFinancialRepository:
                 select(
                     func.count(EventModel.id).label("events"),
                     func.count(EventModel.id).filter(snapshot.event_id.is_(None)).label("missing"),
+                    func.array_agg(EventModel.id)
+                    .filter(snapshot.event_id.is_(None))
+                    .label("missing_event_ids"),
                     *(
                         func.coalesce(func.sum(column), 0).label(name)
                         for name, column in (
@@ -105,7 +108,10 @@ class SqlAlchemyFinancialRepository:
         ).one()
         if row.missing:
             logger.warning(
-                "financial_data_inconsistent", period=period.label, missing_snapshots=row.missing
+                "financial_data_inconsistent",
+                period=period.label,
+                missing_snapshots=row.missing,
+                event_ids=sorted(str(event_id) for event_id in row.missing_event_ids),
             )
             raise FinancialDataInconsistentError(
                 "Existen eventos liquidados sin instantánea financiera."

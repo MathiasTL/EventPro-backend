@@ -287,14 +287,21 @@ erDiagram
         uuid id PK "default gen_random_uuid()"
         varchar(20) recipient_phone
         varchar(30) message_type "CHECK in (TEXT, TEMPLATE, INTERACTIVE, DOCUMENT)"
-        jsonb payload "NULL"
+        jsonb payload "NULL; se anula tras el envío si redact_after_send"
         varchar(20) status "default 'PENDING'; CHECK in (PENDING, SENT, FAILED)"
         integer attempts "default 0; CHECK (attempts >= 0)"
-        integer max_attempts "default 5; CHECK (max_attempts > 0)"
+        integer max_attempts "default 6; CHECK (max_attempts > 0)"
         timestamptz next_attempt_at "default CURRENT_TIMESTAMP; INDEX"
         text last_error "NULL"
         timestamptz sent_at "NULL"
         timestamptz created_at "default CURRENT_TIMESTAMP"
+        varchar(64) external_message_id UK "NULL; UNIQUE"
+        bigint conversation_id "NULL"
+        varchar(20) delivery_status "NULL; CHECK in (DELIVERED, READ, FAILED)"
+        text delivery_error "NULL"
+        timestamptz delivered_at "NULL"
+        timestamptz read_at "NULL"
+        boolean redact_after_send "default false"
     }
 
     CONVERSATION_LINKS {
@@ -360,6 +367,8 @@ Restricciones compuestas, parciales o de varias columnas que no se pueden expres
   * `UNIQUE(event_id, crew_id)`: también cubre las búsquedas por `event_id`.
 * **`outbox_messages`**
   * `INDEX(status, next_attempt_at)` para el despachador de mensajes pendientes.
+  * `UNIQUE(external_message_id)`: un aviso de entrega corresponde a un único mensaje; admite varios valores nulos.
+  * `CHECK (delivery_status IN ('DELIVERED', 'READ', 'FAILED'))`: el valor nulo (sin aviso todavía) es válido.
 * **`conversation_links`**
   * `UNIQUE(chatwoot_conversation_id)`: una conversación de Chatwoot se vincula a un único cliente.
   * `INDEX(client_id)`

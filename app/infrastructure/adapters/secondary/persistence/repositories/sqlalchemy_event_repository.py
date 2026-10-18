@@ -206,12 +206,12 @@ class SqlAlchemyEventRepository:
             if (await self._session.execute(stmt)).scalar_one_or_none() is None:
                 raise InvalidEventStateError("El evento ya no admite esta liquidación.")
             await self._session.commit()
-            get_logger(__name__).info(
-                "event_financial_snapshot_created", event_id=str(event.id), origin="SETTLEMENT"
-            )
         except BaseException:
             await self._session.rollback()
             raise
+        get_logger(__name__).info(
+            "event_financial_snapshot_created", event_id=str(event.id), origin="SETTLEMENT"
+        )
 
     async def get_by_id_for_update(self, event_id: UUID) -> Event | None:
         stmt = (

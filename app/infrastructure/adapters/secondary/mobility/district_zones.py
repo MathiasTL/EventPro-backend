@@ -1,7 +1,7 @@
 """Zonas tarifarias de la contingencia de movilidad (RN-03, escenario C).
 
 Distritos de Lima Metropolitana y del Callao agrupados por cercanía a la base de operaciones.
-La asignación es un supuesto pendiente de validar con el negocio; un distrito desconocido se
+La asignación fue aprobada por el negocio (2026-10-08); un distrito desconocido se
 asigna a la zona 3 para no cobrar de menos (el encargado puede corregirlo con el override).
 """
 

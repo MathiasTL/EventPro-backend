@@ -43,9 +43,9 @@ La documentación define `Costo Movilidad = Movilidad Base × 1.15` con `Movilid
 * **Cálculo principal (escenario A):** `Movilidad Base = max(D × tarifa_km + T × tarifa_minuto, monto_mínimo)`.
 * **Contingencia (escenario C):** si el estimador de rutas falla, se aplica un monto fijo por **zona** del distrito del evento. El monto de la zona ya es final (no se le aplica el margen).
 
-Valores iniciales, configurables por variables de entorno y **registrados como supuestos pendientes de validación con el negocio**:
+Valores **aprobados por el negocio (2026-10-08)**, configurables por variables de entorno:
 
-| Variable | Valor inicial |
+| Variable | Valor aprobado |
 | :--- | :--- |
 | `MOBILITY_RATE_PER_KM` | `1.00` |
 | `MOBILITY_RATE_PER_MINUTE` | `0.30` |
@@ -59,7 +59,7 @@ Valores iniciales, configurables por variables de entorno y **registrados como s
 
 La tabla de distritos por zona (Lima Metropolitana y Callao) vive en infraestructura. Un distrito desconocido se asigna a la **zona 3** para no cobrar de menos; el encargado puede corregirlo con el *override* de movilidad (E4).
 
-RN-03 en [`01-requisitos/04-reglas-de-negocio-y-control.md`](../01-requisitos/04-reglas-de-negocio-y-control.md) se actualiza con esta fórmula, los valores y la nota de supuesto.
+RN-03 en [`01-requisitos/04-reglas-de-negocio-y-control.md`](../01-requisitos/04-reglas-de-negocio-y-control.md) se actualiza con esta fórmula y los valores aprobados.
 
 ### 2.2 Integración con Google Maps
 
@@ -203,7 +203,7 @@ Puertas de calidad: `ruff check`, `ruff format --check`, `mypy --strict` y cober
 ## 5. Pendientes abiertos
 
 1. **Comprobante tardío aprobado:** un comprobante recibido después del vencimiento entra en `REQUIRES_MANUAL_APPROVAL` (RF-11). La documentación no define si, al aprobarse, la cotización pasa de `EXPIRED` a `CONVERTED`. En este bloque **no se permite** esa transición; debe resolverse con E5 antes de implementar la aprobación de comprobantes tardíos.
-2. **Valores de tarifa de movilidad y montos por zona:** supuestos iniciales (sección 2.1) a validar con el negocio.
+2. ~~**Valores de tarifa de movilidad y montos por zona.**~~ **Resuelto (2026-10-08):** el negocio aprobó sin cambios los valores de la sección 2.1 y la asignación de distritos a zonas.
 3. **Proveedor de rutas:** Google Maps Platform u alternativa; se decide en el bloque del bot.
 4. **Migración del flujo manual (PR #22):** reemplazar su SQL crudo sobre `quotes` y `clients` por los repositorios de este bloque, y corregir su `pending_balance`, que hoy omite la movilidad (contradice RN-02 cuando la movilidad es distinta de cero). Detalle en la sección 5.1.
 
@@ -226,7 +226,7 @@ Mientras no se migre, las filas existentes con `source = 'MANUAL'` se cargan tal
 
 | Documento | Cambio |
 | :--- | :--- |
-| `01-requisitos/04-reglas-de-negocio-y-control.md` | RN-03: fórmula de `f(D, T)`, contingencia por zona y valores como supuestos. |
+| `01-requisitos/04-reglas-de-negocio-y-control.md` | RN-03: fórmula de `f(D, T)`, contingencia por zona y valores aprobados. |
 | `05-operaciones/01-guia-entorno-y-configuracion.md` | Nuevas variables de movilidad y zonas. |
 | `02-arquitectura/02-backend-arquitectura-hexagonal.md` | `IRouteEstimatorPort` y `FinancialEngine` en el árbol de módulos. |
 | `README.md` de `Docs/` | Enlace a esta especificación. |

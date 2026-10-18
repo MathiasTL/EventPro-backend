@@ -70,10 +70,14 @@ EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como 
 * `MOBILITY_RATE_PER_MINUTE`: Tarifa en soles por minuto de traslado de ida y vuelta (por defecto `0.30`).
 * `MOBILITY_MINIMUM_AMOUNT`: Monto mínimo de la movilidad base, antes del margen (por defecto `20.00`).
 * `MOBILITY_ZONE_1_AMOUNT`, `MOBILITY_ZONE_2_AMOUNT`, `MOBILITY_ZONE_3_AMOUNT`: Montos fijos finales (sin margen) de la contingencia por zona cuando el estimador de rutas falla (por defecto `25.00`, `45.00` y `70.00`). Un distrito desconocido se asigna a la zona 3. La tabla de distritos por zona vive en `app/infrastructure/adapters/secondary/mobility/district_zones.py`.
-* Los valores de movilidad y la asignación de distritos a zonas son **supuestos pendientes de validación con el negocio** (RN-03).
+* Los valores de movilidad y la asignación de distritos a zonas fueron **aprobados por el negocio el 2026-10-08** (RN-03).
 * Nota de despliegue: en producción debe fijarse `APP_ENV` con un valor distinto de `development`. El adaptador de mensajería falso registra el contenido de los mensajes (incluidos los códigos OTP) cuando `APP_ENV=development`, que es el valor por defecto.
 * `ADVANCE_PERCENT`: Porcentaje del adelanto sobre servicios base (por defecto `10`).
 * `TRANSIT_REST_BUFFER_MINUTES`: Minutos mínimos de margen para descanso y desarme entre shows sucesivos (por defecto `30`).
+* `OUTBOX_BATCH_SIZE`: Mensajes que el worker reserva en cada ciclo de despacho de la cola de mensajes salientes (por defecto `20`).
+* `OUTBOX_LEASE_SECONDS`: Vencimiento de la reserva de un mensaje; debe superar el tiempo máximo de un ciclo de despacho (por defecto `60`). Si el worker termina antes de guardar el resultado, el mensaje se envía de nuevo al vencer la reserva (entrega al menos una vez).
+* `OUTBOX_MAX_ATTEMPTS`: Intentos por mensaje: el primer envío más cinco reintentos, con espera de 30 s, 2 min, 10 min, 30 min y 2 h (por defecto `6`).
+* Nota de despliegue: hasta que exista `ChatwootMessagingAdapter`, el servicio `worker` despacha la cola cada 5 segundos con el adaptador de mensajería falso y los mensajes pasan a `SENT` sin llegar a WhatsApp. No debe usarse con tráfico real antes de ese bloque.
 
 ### 2.7 Repositorio de Archivos y Documentos
 * `STORAGE_BACKEND`: Tipo de almacenamiento (`local` o `s3`).
@@ -122,7 +126,7 @@ El equipo comparte una única base de datos **Supabase** (PostgreSQL gestionado)
 Para conectarse (una vez por desarrollador):
 
 1. Copiar `.env.example` a `.env` y reemplazar `DATABASE_URL` por la cadena de `CREDENCIALES-SUPABASE.md`.
-2. Verificar: tras desplegar US-21, `alembic current` debe responder `0004_event_financial_snapshots (head)`. Una base todavía en `0002` requiere aplicar también `0003_manual_booking_documents` mediante el flujo manual de `develop`.
+2. Verificar: tras desplegar US-21, `alembic current` debe responder `0005_event_financial_snapshots (head)`. Una base todavía en `0002` requiere aplicar en orden `0003_manual_booking_documents`, `0004_outbox_delivery_tracking` y `0005_event_financial_snapshots` mediante el flujo manual de `develop`.
 
 Dos formas de ejecutar la app contra esa BD:
 

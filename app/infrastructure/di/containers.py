@@ -20,8 +20,10 @@ from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.client_repository_port import IClientRepositoryPort
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
+from app.application.ports.output.document_source_port import IDocumentSourcePort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
+from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
 from app.application.ports.output.payment_evidence_storage_port import IPaymentEvidenceStoragePort
 from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
 from app.application.ports.output.pre_show_payment_verification_port import (
@@ -45,6 +47,8 @@ from app.application.use_cases.event.register_event_extension import RegisterEve
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
+from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
+from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
 )
@@ -112,6 +116,7 @@ from app.infrastructure.adapters.secondary.persistence.refresh_token_repository 
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_client_repository,
     sqlalchemy_event_repository,
+    sqlalchemy_outbox_repository,
     sqlalchemy_payment_repository,
     sqlalchemy_quote_repository,
 )
@@ -125,6 +130,9 @@ from app.infrastructure.adapters.secondary.persistence.user_repository import (
     SQLAlchemyUserRepository,
 )
 from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
+from app.infrastructure.adapters.secondary.storage.document_source_adapter import (
+    StorageDocumentSource,
+)
 from app.infrastructure.adapters.secondary.storage.local_evidence_storage import (
     LocalEvidenceStorage,
 )
@@ -272,6 +280,42 @@ def get_messaging_port() -> IMessagingPort:
     # Es un singleton del proceso cuyo historial en memoria crece sin límite; es temporal.
     return FakeMessagingAdapter(
         clock=get_clock_port(), log_messages=get_settings().app_env == "development"
+    )
+
+
+@lru_cache
+def get_document_source_port() -> IDocumentSourcePort:
+    return StorageDocumentSource(get_sessionmaker())
+
+
+def get_outbox_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IOutboxRepositoryPort:
+    return sqlalchemy_outbox_repository.SqlAlchemyOutboxRepository(session)
+
+
+def get_enqueue_message_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EnqueueMessage:
+    """Encola sobre la sesión del llamador: el mensaje y la operación de negocio van juntos."""
+
+    return EnqueueMessage(
+        get_outbox_repository(session),
+        get_clock_port(),
+        max_attempts=get_settings().outbox_max_attempts,
+    )
+
+
+@lru_cache
+def get_dispatch_due_messages_use_case() -> DispatchDueMessages:
+    settings = get_settings()
+    return DispatchDueMessages(
+        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
+        messaging=get_messaging_port(),
+        documents=get_document_source_port(),
+        clock=get_clock_port(),
+        batch_size=settings.outbox_batch_size,
+        lease_seconds=settings.outbox_lease_seconds,
     )
 
 
@@ -480,6 +524,8 @@ def clear_application_caches() -> None:
     get_financial_engine.cache_clear()
     get_route_estimator.cache_clear()
     get_messaging_port.cache_clear()
+    get_document_source_port.cache_clear()
+    get_dispatch_due_messages_use_case.cache_clear()
 
 
 async def shutdown_infrastructure() -> None:

@@ -3,11 +3,14 @@
 import asyncio
 from datetime import date
 from decimal import Decimal
+from unittest.mock import Mock
 from uuid import uuid4
 
 import httpx
 import pytest
+from alembic.autogenerate import compare_metadata
 from alembic.config import Config
+from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import inspect, text
@@ -36,6 +39,9 @@ from app.infrastructure.adapters.secondary.persistence.models.event_financial_sn
     EventFinancialSnapshotModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
+from app.infrastructure.adapters.secondary.persistence.repositories import (
+    sqlalchemy_financial_repository,
+)
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_event_repository import (  # noqa: E501
     SqlAlchemyEventRepository,
 )
@@ -257,14 +263,25 @@ def test_client_transport_and_large_accumulated_revenue(db):
     asyncio.run(exercise())
 
 
-def test_missing_snapshot_rejects_period_instead_of_partial_report(db):
+def test_missing_snapshot_rejects_period_instead_of_partial_report(db, monkeypatch):
+    logger = Mock()
+    monkeypatch.setattr(sqlalchemy_financial_repository, "logger", logger)
+
     async def exercise():
         engine = build_engine(db)
         factory = async_sessionmaker(engine, expire_on_commit=False)
         try:
-            await seed(factory, status=EventStatus.SETTLED)
+            first, _ = await seed(factory, status=EventStatus.SETTLED)
+            second, _ = await seed(factory, status=EventStatus.SETTLED)
+            await seed(factory, day=date(2026, 11, 1), status=EventStatus.SETTLED)
             with pytest.raises(FinancialDataInconsistentError):
                 await report(factory)
+            logger.warning.assert_called_once_with(
+                "financial_data_inconsistent",
+                period="2026-10",
+                missing_snapshots=2,
+                event_ids=sorted([str(first.id), str(second.id)]),
+            )
         finally:
             await engine.dispose()
 
@@ -410,7 +427,7 @@ def test_api_reads_postgres_with_fresh_rbac(db):
 def test_migration_backfills_and_is_reversible(db):
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", db)
-    command.downgrade(config, "0003_manual_booking_documents")
+    command.downgrade(config, "0004_outbox_delivery_tracking")
 
     async def seed_historical():
         engine = build_engine(db)
@@ -424,12 +441,38 @@ def test_migration_backfills_and_is_reversible(db):
 
     event_id = asyncio.run(seed_historical())
     command.upgrade(config, "head")
-    assert ScriptDirectory.from_config(config).get_heads() == ["0004_event_financial_snapshots"]
-    command.check(config)
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_heads() == ["0005_event_financial_snapshots"]
+    assert (
+        scripts.get_revision("0005_event_financial_snapshots").down_revision
+        == "0004_outbox_delivery_tracking"
+    )
 
     async def check():
         engine = build_engine(db)
         try:
+            # US-21 valida su tabla sin incluir los defaults de movilidad de develop.
+            def schema_diff(connection):
+                context = MigrationContext.configure(
+                    connection,
+                    opts={
+                        "compare_type": True,
+                        "compare_server_default": True,
+                        "include_object": lambda obj, name, type_, reflected, compare_to: (
+                            name == "event_financial_snapshots"
+                            if type_ == "table"
+                            else obj.table.name == "event_financial_snapshots"
+                        ),
+                    },
+                )
+                return compare_metadata(context, EventFinancialSnapshotModel.metadata)
+
+            async with engine.connect() as connection:
+                assert await connection.run_sync(schema_diff) == []
+                assert (
+                    await connection.scalar(text("SELECT version_num FROM alembic_version"))
+                    == "0005_event_financial_snapshots"
+                )
             async with async_sessionmaker(engine, expire_on_commit=False)() as session:
                 snapshot = await session.get(EventFinancialSnapshotModel, event_id)
                 assert snapshot.origin == "LEGACY_BACKFILL"
@@ -445,9 +488,110 @@ def test_migration_backfills_and_is_reversible(db):
             await engine.dispose()
 
     asyncio.run(check())
-    command.downgrade(config, "0003_manual_booking_documents")
+    command.downgrade(config, "0004_outbox_delivery_tracking")
     command.upgrade(config, "head")
     asyncio.run(check())
+
+
+def test_downgrade_loses_frozen_costs_and_upgrade_uses_current_catalog(db):
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", db)
+
+    async def seed_settlement():
+        engine = build_engine(db)
+        try:
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            evt, actor = await seed(factory)
+            await settle(factory, evt, actor)
+            async with factory() as session:
+                snapshot = await session.get(EventFinancialSnapshotModel, evt.id)
+                assert snapshot.origin == "SETTLEMENT"
+                assert snapshot.fixed_packages_cost == Decimal(400)
+                await session.execute(
+                    text(
+                        "UPDATE packages SET direct_cost=700 WHERE id=("
+                        "SELECT package_id FROM quotes WHERE id=:q)"
+                    ),
+                    {"q": evt.quote_id},
+                )
+                await session.commit()
+            return evt.id
+        finally:
+            await engine.dispose()
+
+    event_id = asyncio.run(seed_settlement())
+    command.downgrade(config, "0004_outbox_delivery_tracking")
+
+    async def check_downgrade():
+        engine = build_engine(db)
+        try:
+            async with engine.connect() as connection:
+                assert not await connection.run_sync(
+                    lambda conn: inspect(conn).has_table("event_financial_snapshots")
+                )
+                assert await connection.run_sync(
+                    lambda conn: (
+                        "delivery_status"
+                        in {col["name"] for col in inspect(conn).get_columns("outbox_messages")}
+                    )
+                )
+                assert (
+                    await connection.scalar(
+                        text("SELECT status FROM events WHERE id=:e"), {"e": event_id}
+                    )
+                    == "SETTLED"
+                )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(check_downgrade())
+    finally:
+        command.upgrade(config, "head")
+
+    async def check_rebuilt():
+        engine = build_engine(db)
+        try:
+            async with async_sessionmaker(engine)() as session:
+                snapshot = await session.get(EventFinancialSnapshotModel, event_id)
+                assert snapshot.origin == "LEGACY_BACKFILL"
+                assert snapshot.fixed_packages_cost == Decimal(700)
+                assert snapshot.gross_revenue == Decimal(1000)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(check_rebuilt())
+
+
+def test_migration_times_out_on_concurrent_writer_and_can_be_retried(db):
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", db)
+    command.downgrade(config, "0004_outbox_delivery_tracking")
+
+    async def exercise():
+        engine = build_engine(db)
+        try:
+            async with engine.begin() as writer:
+                await writer.execute(text("LOCK TABLE events IN ROW EXCLUSIVE MODE"))
+                with pytest.raises(Exception, match="lock timeout"):
+                    await asyncio.wait_for(
+                        asyncio.to_thread(command.upgrade, config, "head"), timeout=15
+                    )
+            async with engine.connect() as connection:
+                assert (
+                    await connection.scalar(text("SELECT version_num FROM alembic_version"))
+                    == "0004_outbox_delivery_tracking"
+                )
+                assert not await connection.run_sync(
+                    lambda conn: inspect(conn).has_table("event_financial_snapshots")
+                )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        command.upgrade(config, "head")
 
 
 def test_iso_week_and_month_boundaries_use_event_date(db):
@@ -515,13 +659,16 @@ def test_catalog_update_during_capture_keeps_one_coherent_cost_read(db):
 def test_migration_inconsistent_history_is_atomic(db, corruption):
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", db)
-    command.downgrade(config, "0003_manual_booking_documents")
+    command.downgrade(config, "0004_outbox_delivery_tracking")
 
     async def corrupt():
         engine = build_engine(db)
         try:
             factory = async_sessionmaker(engine, expire_on_commit=False)
-            evt, _ = await seed(factory, status=EventStatus.SETTLED, extension=True)
+            events = [
+                (await seed(factory, status=EventStatus.SETTLED, extension=True))[0]
+                for _ in range(2)
+            ]
             async with factory() as session:
                 statements = {
                     "amount": "UPDATE events SET extra_hours_amount=200 WHERE id=:e",
@@ -530,18 +677,21 @@ def test_migration_inconsistent_history_is_atomic(db, corruption):
                     "validation_status='PENDING_VERIFICATION' WHERE event_id=:e",
                     "mobility": "UPDATE quotes SET base_mobility_amount=-1 WHERE id=:q",
                 }
-                await session.execute(
-                    text(statements[corruption]), {"e": evt.id, "q": evt.quote_id}
-                )
+                for evt in events:
+                    await session.execute(
+                        text(statements[corruption]), {"e": evt.id, "q": evt.quote_id}
+                    )
                 await session.commit()
-            return evt.id
+            return [evt.id for evt in events]
         finally:
             await engine.dispose()
 
-    event_id = asyncio.run(corrupt())
+    event_ids = asyncio.run(corrupt())
     try:
-        with pytest.raises(Exception, match="financial-data-inconsistent"):
+        with pytest.raises(Exception, match="financial-data-inconsistent") as error:
             command.upgrade(config, "head")
+        for event_id in event_ids:
+            assert str(event_id) in str(error.value)
 
         async def check_and_restore():
             engine = build_engine(db)
@@ -549,20 +699,22 @@ def test_migration_inconsistent_history_is_atomic(db, corruption):
                 async with engine.begin() as connection:
                     assert (
                         await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                        == "0003_manual_booking_documents"
+                        == "0004_outbox_delivery_tracking"
                     )
                     assert not await connection.run_sync(
                         lambda conn: inspect(conn).has_table("event_financial_snapshots")
                     )
-                    assert (
-                        await connection.scalar(
-                            text("SELECT status FROM events WHERE id=:e"), {"e": event_id}
+                    for event_id in event_ids:
+                        assert (
+                            await connection.scalar(
+                                text("SELECT status FROM events WHERE id=:e"), {"e": event_id}
+                            )
+                            == "SETTLED"
                         )
-                        == "SETTLED"
-                    )
-                    await connection.execute(
-                        text("UPDATE events SET status='IN_PROGRESS' WHERE id=:e"), {"e": event_id}
-                    )
+                        await connection.execute(
+                            text("UPDATE events SET status='IN_PROGRESS' WHERE id=:e"),
+                            {"e": event_id},
+                        )
             finally:
                 await engine.dispose()
 

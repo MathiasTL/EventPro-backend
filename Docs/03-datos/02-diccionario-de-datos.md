@@ -376,24 +376,32 @@ Extensiones de tiempo registradas durante el show (RF-19). El cobro vive en `pay
 ---
 
 ### 2.19 Tabla: `outbox_messages`
-Cola de mensajes salientes con reintentos (patrón *outbox*). Desacopla las transacciones de negocio de la disponibilidad de la pasarela de mensajería: el despachador entrega cada mensaje a Chatwoot mediante `IMessagingPort`, y Chatwoot lo envía por WhatsApp (ADR-05, ADR-10).
+Cola de mensajes salientes con reintentos (patrón *outbox*). Desacopla las transacciones de negocio de la disponibilidad de la pasarela de mensajería: el caso de uso encola el mensaje en su propia transacción, un despachador (worker de arq) lo entrega a Chatwoot mediante `IMessagingPort` y Chatwoot lo envía por WhatsApp (ADR-05, ADR-10). El envío y la entrega son estados separados: `status` indica si Chatwoot aceptó el mensaje y `delivery_status` indica si WhatsApp lo entregó al cliente. Ver la [especificación de la cola de mensajes salientes](../02-arquitectura/07-spec-e1-outbox-mensajeria.md).
 
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del mensaje. |
 | `recipient_phone` | `VARCHAR(20)` | NO | - | - | Teléfono de destino en formato E.164. |
 | `message_type` | `VARCHAR(30)` | NO | - | CHECK in (`TEXT`, `TEMPLATE`, `INTERACTIVE`, `DOCUMENT`) | Tipo de mensaje de WhatsApp enviado a través de la pasarela. |
-| `payload` | `JSONB` | SÍ | `NULL` | - | Contenido estructurado del mensaje; se anula (`NULL`) tras el envío de mensajes con OTP. |
-| `status` | `VARCHAR(20)` | NO | `'PENDING'` | CHECK in (`PENDING`, `SENT`, `FAILED`) | `PENDING` en cola, `SENT` entregado a la pasarela (Chatwoot), `FAILED` reintentos agotados. |
+| `payload` | `JSONB` | SÍ | `NULL` | - | Contenido estructurado del mensaje. Se anula (`NULL`) tras el envío cuando `redact_after_send` es verdadero (mensajes con OTP). En los mensajes `DOCUMENT` guarda la ruta del archivo en el almacenamiento, el nombre, el tipo de contenido y el pie, no los bytes. |
+| `status` | `VARCHAR(20)` | NO | `'PENDING'` | CHECK in (`PENDING`, `SENT`, `FAILED`) | `PENDING` en cola, `SENT` aceptado por la pasarela (Chatwoot), `FAILED` reintentos agotados o error permanente. |
 | `attempts` | `INTEGER` | NO | `0` | CHECK (`attempts >= 0`) | Intentos de envío realizados. |
-| `max_attempts` | `INTEGER` | NO | `5` | CHECK (`max_attempts > 0`) | Máximo de intentos antes de marcar `FAILED`. |
-| `next_attempt_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | INDEX | Momento del próximo intento (retroceso exponencial). |
-| `last_error` | `TEXT` | SÍ | `NULL` | - | Último error devuelto por la pasarela de mensajería. |
-| `sent_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento del envío exitoso. |
+| `max_attempts` | `INTEGER` | NO | `6` | CHECK (`max_attempts > 0`) | Máximo de intentos antes de marcar `FAILED`: el primer envío más cinco reintentos (RNF-03.2). |
+| `next_attempt_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | INDEX | Momento del próximo intento. Tras un fallo sigue la espera creciente de 30 s, 2 min, 10 min, 30 min y 2 h. Mientras un despachador lo procesa, la reserva con vencimiento lo adelanta en `OUTBOX_LEASE_SECONDS`. |
+| `last_error` | `TEXT` | SÍ | `NULL` | - | Último error del envío a la pasarela, sin el contenido del mensaje. |
+| `sent_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que Chatwoot aceptó el mensaje. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de encolado. |
+| `external_message_id` | `VARCHAR(64)` | SÍ | `NULL` | UNIQUE | Identificador del mensaje en Chatwoot; permite asociar el aviso de entrega. |
+| `conversation_id` | `BIGINT` | SÍ | `NULL` | - | Conversación de Chatwoot a la que pertenece el mensaje. |
+| `delivery_status` | `VARCHAR(20)` | SÍ | `NULL` | CHECK in (`DELIVERED`, `READ`, `FAILED`) | Estado de entrega informado por WhatsApp. Nulo hasta el primer aviso; nunca retrocede. |
+| `delivery_error` | `TEXT` | SÍ | `NULL` | - | Motivo del rechazo de WhatsApp cuando `delivery_status` es `FAILED`. |
+| `delivered_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que WhatsApp entregó el mensaje. |
+| `read_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que el cliente leyó el mensaje. |
+| `redact_after_send` | `BOOLEAN` | NO | `false` | - | Si es verdadero, el `payload` se anula al marcar el mensaje como `SENT`. |
 
 *Restricciones de tabla:*
 * `INDEX(status, next_attempt_at)` para el despachador de mensajes pendientes.
+* `UNIQUE(external_message_id)`: un aviso de entrega corresponde a un único mensaje; admite varios valores nulos.
 
 ---
 

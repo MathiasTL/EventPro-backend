@@ -25,6 +25,7 @@ from app.infrastructure.adapters.secondary.persistence.models import (  # noqa: 
     event_extension_model,
     event_financial_snapshot_model,
     event_model,
+    outbox_message_model,
     payment_model,
     quote_model,
     refresh_token,

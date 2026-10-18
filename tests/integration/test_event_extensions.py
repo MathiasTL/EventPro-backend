@@ -110,7 +110,11 @@ def test_migration_extends_previous_head_and_preserves_existing_events(database_
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0004_event_financial_snapshots"]
+    assert scripts.get_heads() == ["0005_event_financial_snapshots"]
+    assert (
+        scripts.get_revision("0005_event_financial_snapshots").down_revision
+        == "0004_outbox_delivery_tracking"
+    )
     assert scripts.get_revision("0002_event_extensions").down_revision == "0001_initial_schema"
     command.upgrade(config, "0001_initial_schema")
     event_id, quote_id, orphan_id, orphan_quote_id, user_id = [uuid4() for _ in range(5)]

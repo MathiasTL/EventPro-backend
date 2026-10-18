@@ -34,9 +34,8 @@ El 2026-10-07 se reemplazó la cadena incremental `0001`–`0006` por `0001_init
 
 ### 1.4 US-18: `0002_event_extensions`
 
-La cadena vigente es `base → 0001_initial_schema → 0002_event_extensions →
-0003_manual_booking_documents → 0004_event_financial_snapshots`, con un único
-head `0004_event_financial_snapshots`. `0002` crea el detalle de extensiones y añade los acumuladores
+Al cerrar US-18 la cadena era `base → 0001_initial_schema → 0002_event_extensions`, con un
+único head. `0002` crea el detalle de extensiones y añade los acumuladores
 `extra_minutes_total` y `legacy_extra_hours_amount`. El baseline permanece intacto.
 
 El upgrade copia el importe adicional anterior como crédito histórico únicamente
@@ -57,7 +56,7 @@ Las fixtures crean `clients`, `packages` y `quotes` antes de sus eventos y pagos
    y evidencias que deban conservarse antes de cualquier recreación.
 2. Para datos descartables, crear una base nueva y configurar la conexión hacia ella.
    Ejecutar `alembic upgrade head` y después el seed. Verificar un único head
-   `0004_event_financial_snapshots` antes de sustituir la conexión anterior.
+   `0005_event_financial_snapshots` antes de sustituir la conexión anterior.
 3. Para datos que deban conservarse, restaurar una copia aislada y preparar una
    reconciliación explícita del esquema y datos con el baseline, incluidas las FK
    de cotizaciones y detalles de pagos. Validar allí primero. No usar `stamp` para
@@ -67,30 +66,65 @@ Este cambio se valida únicamente en bases efímeras; no recrea ni actualiza la 
 local del desarrollador automáticamente. Los nuevos escritores de disponibilidad
 deben respetar el [protocolo de bloqueo de US-18](../02-arquitectura/02-backend-arquitectura-hexagonal.md).
 
+### 1.5 E1 Bloque 2: `0004_outbox_delivery_tracking`
+
+`0004_outbox_delivery_tracking` parte de `0003_manual_booking_documents` y precede a `0005_event_financial_snapshots`. `0004` solo agrega columnas y restricciones a `outbox_messages` y cambia un valor por defecto, según la [especificación de la cola de mensajes salientes](../02-arquitectura/07-spec-e1-outbox-mensajeria.md):
+
+* Columnas nuevas: `external_message_id` (única), `conversation_id`, `delivery_status` (con `CHECK`), `delivery_error`, `delivered_at`, `read_at` y `redact_after_send` (`NOT NULL`, por defecto `false`).
+* `max_attempts` pasa de `5` a `6` por defecto (RNF-03.2: el primer envío más cinco reintentos). Las filas existentes conservan su valor.
+* El `downgrade` elimina las restricciones y las columnas nuevas y restaura el valor por defecto `5`. Conserva los mensajes existentes, pero pierde los datos de entrega.
+
+Las pruebas usan PostgreSQL 16 efímero: upgrade a `0003` con un mensaje heredado, upgrade a `0004`, comprobación de columnas, restricciones y valor por defecto, downgrade a `0003` y nuevo upgrade a head.
+
 ---
 
-### 1.5 Migraciones posteriores al baseline: US-21
+### 1.6 US-21: `0005_event_financial_snapshots`
+
+La cadena vigente es `base → 0001_initial_schema → 0002_event_extensions →
+0003_manual_booking_documents → 0004_outbox_delivery_tracking →
+0005_event_financial_snapshots`, con un único head `0005_event_financial_snapshots`.
 
 `0003_manual_booking_documents` incorpora documentos privados e idempotencia del
-flujo manual. `0004_event_financial_snapshots` agrega exclusivamente la tabla
+flujo manual. `0005_event_financial_snapshots` agrega exclusivamente la tabla
 contable por evento y reconstruye los eventos ya `SETTLED`, sin modificar el
 baseline, el catálogo, los pagos ni los defaults de cotizaciones.
 
 La reconstrucción verifica cobertura y correspondencia de extensiones, pagos,
 minutos y acumulados. Usa los costos vigentes y marca `LEGACY_BACKFILL`, conservando
 identificadores, cantidades y componentes monetarios en JSONB. Durante diagnóstico
-y captura, bloqueos `SHARE` evitan escrituras concurrentes en las fuentes; aplicar
-durante una ventana de despliegue. Una inconsistencia aborta toda la migración con
-el identificador del evento. Conciliar datos antes de reintentar.
+y captura, bloqueos `SHARE` evitan escrituras concurrentes en las fuentes. Se fija
+`SET LOCAL lock_timeout = '5s'` antes de adquirirlos para abortar si una transacción
+concurrente impide el bloqueo; aplicar durante una ventana de despliegue y reintentar
+cuando termine la escritura en curso. Una inconsistencia aborta toda la migración
+con la lista completa de IDs afectados en un único error. Conciliar cotizaciones,
+costos, pagos y extensiones de esos eventos antes de reintentar.
 
-El downgrade a `0003` elimina las instantáneas y pierde sus costos históricos;
-respaldarlas antes de revertir. Conserva eventos y pagos. Un nuevo upgrade usa los
-costos vigentes en ese nuevo instante, no recupera la instantánea eliminada.
+**Rollback y PC-09:** el downgrade de `0005` a `0004_outbox_delivery_tracking`
+elimina la tabla `event_financial_snapshots` y todas sus instantáneas, incluidos
+los costos históricos congelados al liquidar. Conserva eventos, pagos y outbox.
+Respaldar y verificar una copia de las instantáneas antes de revertir si se necesita
+conservar el histórico de PC-09. Un posterior upgrade a `0005` reconstruye los
+snapshots de eventos `SETTLED` bajo la etiqueta `LEGACY_BACKFILL` tomando los costos
+vigentes del catálogo en ese momento; no recupera los costos históricos eliminados.
+
+Si el P&L responde 409 porque hay eventos `SETTLED` sin snapshot, el log
+`financial_data_inconsistent` incluye el período y todos los `event_ids` afectados.
+Usar esos IDs para conciliar las fuentes y restaurar las instantáneas desde un
+respaldo verificado cuando exista. Si no existe respaldo, preparar y validar en
+una copia aislada una reconstrucción explícita marcada `LEGACY_BACKFILL` con
+costos vigentes, siguiendo las validaciones de `0005`, y verificar después el P&L
+del mes y la semana. Evitar un downgrade global como reparación de un evento:
+eliminaría también los históricos correctos de los demás eventos.
 
 Validación: Testcontainers PostgreSQL 16, upgrade con históricos válidos e
-inconsistentes, rollback, downgrade/upgrade, PK/FK/CHECK y `alembic check`.
+inconsistentes, rollback, downgrade/upgrade, PK/FK/CHECK y consistencia de revisiones.
+La comparación ORM de esta US se limita a `event_financial_snapshots`. Al conservar
+`quote_model.py` como en `develop`, el `alembic check` global detecta dos diferencias
+preexistentes: los defaults de `quotes.calculated_distance_km` y
+`quotes.calculated_transit_minutes` existen en el baseline, pero se omiten en el ORM
+para persistir `NULL` explícito en contingencia. Su reconciliación queda fuera de US-21.
 La BD compartida solo se migra desde `develop` mediante el flujo manual existente.
-Si aún está en `0002`, `upgrade head` aplica `0003` y después `0004`.
+Si aún está en `0002`, `upgrade head` aplica `0003`, `0004` y después `0005`.
 
 ---
 

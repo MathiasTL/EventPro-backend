@@ -30,6 +30,7 @@ app/
 │   │   ├── event.py                      # Entidad Evento con su ciclo de vida y reglas
 │   │   ├── quote.py                      # Agregado Cotización: QuoteStatus, QuoteSource, QuoteExtraLine y máquina de estados
 │   │   ├── client.py                     # Entidad Cliente (teléfono, nombre, DNI y RUC opcionales)
+│   │   ├── outbox_message.py             # Agregado OutboxMessage: envío con reintentos y seguimiento de entrega
 │   │   ├── contract.py                   # Entidad Contrato
 │   │   ├── payment.py                    # Entidad Pago y validaciones
 │   │   └── catalog.py                    # Entidades Paquete, Temática y Extra
@@ -38,6 +39,7 @@ app/
 │   │   ├── phone_number.py               # PhoneNumber: normalización a E.164 (única fuente de la regla)
 │   │   ├── mobility.py                   # MobilityTariff, RouteEstimate, RouteLocation, MobilityZone y MobilityResult
 │   │   ├── liquidation.py                # ExtraCharge y Liquidation (resultado inmutable de la liquidación)
+│   │   ├── outbox.py                     # OutboxStatus, DeliveryStatus, MessageType y RetrySchedule (espera creciente entre reintentos)
 │   │   ├── location.py                   # Dirección, distrito, coordenadas GPS
 │   │   └── time_window.py                # Intervalos de tiempo, inicio y fin de show
 │   ├── services/                         # Servicios de Dominio (lógica que involucra múltiples entidades)
@@ -47,6 +49,7 @@ app/
 │   └── exceptions/                       # Excepciones de negocio de dominio
 │       ├── quote_exceptions.py           # InvalidQuoteStateError, QuoteExpiredError, RouteEstimationError
 │       ├── messaging_exceptions.py       # ServiceWindowClosedError, MessagingUnavailableError
+│       ├── outbox_exceptions.py          # InvalidOutboxStateError
 │       └── resource_exceptions.py
 │
 ├── application/                          # CAPA 2: CASOS DE USO Y PUERTOS (Orquestación)
@@ -64,6 +67,8 @@ app/
 │   │       ├── client_repository_port.py # IClientRepositoryPort (get_by_id, get_by_phone, get_or_create)
 │   │       ├── route_estimator_port.py   # IRouteEstimatorPort (distancia y duración de ida y vuelta; su fallo activa la contingencia por zona)
 │   │       ├── messaging_port.py         # IMessagingPort (texto, listas interactivas, plantillas, adjuntos, estado de conversación y consulta de conversaciones y mensajes)
+│   │       ├── outbox_repository_port.py   # IOutboxRepositoryPort (add, save, get_by_id, get_by_external_id, claim_due; nunca confirma la transacción)
+│   │       ├── document_source_port.py      # IDocumentSourcePort (lee los bytes de los mensajes DOCUMENT)
 │   │       ├── pdf_port.py               # IPdfGeneratorPort (compilación de contratos)
 │   │       ├── storage_port.py           # IFileStoragePort (guardar imágenes y PDFs)
 │   │       ├── signature_port.py         # SignaturePort (sello PAdES, hash y marca de tiempo del contrato)
@@ -72,6 +77,11 @@ app/
 │   │   ├── quote/
 │   │   │   ├── create_quote.py
 │   │   │   └── apply_mobility_override.py
+│   │   ├── messaging/
+│   │   │   ├── enqueue_message.py
+│   │   │   ├── dispatch_due_messages.py
+│   │   │   ├── record_delivery_status.py
+│   │   │   └── retry_message.py
 │   │   ├── payment/
 │   │   │   └── process_advance_payment.py
 │   │   ├── contract/
@@ -102,7 +112,7 @@ app/
 │   │   │   ├── webhooks/                 # Controladores de Webhooks
 │   │   │   │   └── chatwoot_webhook.py   # Receptor del webhook de cuenta de Chatwoot (solo red interna)
 │   │   │   └── jobs/                     # Tareas programadas y reintentos (arq, respaldado en Redis)
-│   │   │       └── worker.py             # WorkerSettings: vencimiento de cotizaciones, cola outbox_messages, reconciliación con Chatwoot
+│   │   │       └── worker.py             # WorkerSettings: despacho de outbox_messages cada 5 s; pendientes: vencimiento de cotizaciones y reconciliación con Chatwoot
 │   │   │
 │   │   └── secondary/                    # Adaptadores de Salida (Driven Adapters)
 │   │       ├── persistence/              # Base de Datos Relacional (PostgreSQL)
@@ -112,11 +122,13 @@ app/
 │   │       │   ├── models/               # Tablas SQLAlchemy (ORM Models)
 │   │       │   │   ├── client_model.py
 │   │       │   │   ├── event_model.py
+│   │       │   │   ├── outbox_message_model.py
 │   │       │   │   └── quote_model.py        # QuoteModel y QuoteExtraModel
 │   │       │   ├── mappers/              # Transformadores ORM Model <--> Entidad de Dominio
 │   │       │   └── repositories/         # Implementaciones concretas de los repositorios
 │   │       │       ├── sqlalchemy_client_repository.py
 │   │       │       ├── sqlalchemy_event_repository.py
+│   │       │       ├── sqlalchemy_outbox_repository.py   # SqlAlchemyOutboxRepository y SqlAlchemyOutboxTransaction
 │   │       │       └── sqlalchemy_quote_repository.py
 │   │       ├── mobility/                 # Tabla de zonas por distrito y construcción de la tarifa desde la configuración
 │   │       │   ├── district_zones.py
@@ -133,6 +145,7 @@ app/
 │   │       ├── signature/                # Sello de firma electrónica
 │   │       │   └── pades_signature_adapter.py # Adaptador propio PAdES (pyHanko + PKCS#12)
 │   │       ├── storage/                  # Adaptador de almacenamiento
+│   │       │   ├── document_source_adapter.py # StorageDocumentSource: IDocumentSourcePort sobre el almacenamiento de documentos
 │   │       │   └── local_storage_adapter.py (o S3StorageAdapter)
 │   │       └── cache/                    # Adaptador de Redis
 │   │           └── redis_cache_adapter.py
@@ -212,7 +225,7 @@ Contiene las implementaciones técnicas concretas de los puertos.
   * `quotes_router.py`: Expone endpoints HTTP (`POST /api/v1/quotes`). Recibe payloads validados con Pydantic, invoca al caso de uso correspondiente e inyecta la respuesta serializada.
   * `chatwoot_webhook.py`: Endpoint `POST /api/v1/webhooks/chatwoot`, accesible solo por la red interna. Valida `X-Chatwoot-Signature` (HMAC-SHA256 sobre `"{timestamp}.{raw_body}"`, ventana de 5 minutos), descarta duplicados (idempotencia), responde `200` y encola el evento en arq. El worker enruta los mensajes entrantes de conversaciones en `pending` hacia los casos de uso del chatbot y publica el resto por SSE.
   * `conversations_router.py`: Expone `/conversations/*` (bandeja, mensajes, `takeover`, `release`) y el stream SSE (`GET /conversations/stream`) para los roles `ENCARGADO` y `SUPERADMIN`; delega en casos de uso que consultan Chatwoot mediante `IMessagingPort`.
-  * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), los casos de uso periódicos y diferidos: vencimiento de cotizaciones, despacho y reintentos de `outbox_messages` (hacia Chatwoot), el job de reconciliación de mensajes entrantes (cada 5 minutos); US-21 consolida al consultar y no requiere job de reportes. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
+  * `jobs/worker.py` (`WorkerSettings` de **arq**): adaptador primario de tareas. Ejecuta, como proceso aparte (servicio `worker` de Docker Compose), el despacho y los reintentos de `outbox_messages` cada 5 segundos (hacia Chatwoot, ver 3.5). Quedan pendientes el vencimiento de cotizaciones y el job de reconciliación de mensajes entrantes (cada 5 minutos). US-21 consolida al consultar y no requiere job de reportes. Usa Redis como cola y no contiene lógica de negocio. Ver [ADR-08](04-adr-decisiones-arquitectura.md#adr-08-tareas-programadas-y-reintentos-con-arq).
 * **Adaptadores Secundarios (Infraestructura de soporte):**
   * `SqlAlchemyQuoteRepository`: Implementa la interfaz `IQuoteRepository` usando transacciones de PostgreSQL.
   * `GoogleMapsAdapter`: Implementa `IMapsServicePort` llamando a la API REST de Google Maps con cliente asíncrono `httpx`.
@@ -227,6 +240,16 @@ Contiene las implementaciones técnicas concretas de los puertos.
 * **Adaptador por defecto:** `PadesSignatureAdapter` (propio, ADR-07), basado en **pyHanko** y un certificado **PKCS#12** (`.p12`). En desarrollo se usa un `.p12` autofirmado; incorporar un certificado acreditado por INDECOPI es un cambio de configuración, no de dominio.
 * **Adaptadores futuros documentados (opciones, no implementados):** Documenso (autoalojado), BoldSign y Llama.pe (proveedor acreditado). Cualquiera se integra implementando `SignaturePort` sin tocar el dominio ni los casos de uso.
 * **Fuera del puerto:** el envío del enlace y del OTP por WhatsApp usa `IMessagingPort` (vía `outbox_messages`), y el almacenamiento de PDFs usa `IFileStoragePort`.
+
+### 3.5 Cola de mensajes salientes (outbox)
+Los casos de uso no llaman al gateway de mensajería: **encolan** el mensaje en `outbox_messages` dentro de su propia transacción (`EnqueueMessage`, sin `commit`) y un worker de arq lo entrega después. Así, una caída de Chatwoot no bloquea la operación de negocio ni pierde el mensaje (RNF-03.2). La [especificación](07-spec-e1-outbox-mensajeria.md) detalla las decisiones.
+
+* **Puertos:** `IOutboxRepositoryPort` (`add`, `save`, `get_by_id`, `get_by_external_id`, `claim_due`; nunca confirma la transacción) e `IDocumentSourcePort` (lee los bytes de los mensajes `DOCUMENT`; el adaptador reutiliza el almacenamiento de documentos existente).
+* **Agregado `OutboxMessage`:** `status` (`PENDING`, `SENT`, `FAILED`) indica si Chatwoot aceptó el mensaje; `delivery_status` (nulo, `DELIVERED`, `READ`, `FAILED`) indica si WhatsApp lo entregó al cliente y nunca retrocede. La espera entre intentos es de 30 s, 2 min, 10 min, 30 min y 2 h, y el sexto fallo deja el mensaje en `FAILED`.
+* **Casos de uso** (`application/use_cases/messaging/`): `EnqueueMessage`, `DispatchDueMessages`, `RecordDeliveryStatus` (lo invocará el webhook del bloque siguiente) y `RetryMessage` (lo invocará el endpoint de «Reintentar»).
+* **Despacho:** un cron de arq cada 5 s invoca `DispatchDueMessages`. El caso de uso reserva el lote con `SELECT … FOR UPDATE SKIP LOCKED` en una transacción corta que adelanta `next_attempt_at` en `OUTBOX_LEASE_SECONDS`, envía fuera de esa transacción y guarda el resultado de cada mensaje en otra transacción corta. La garantía es de entrega al menos una vez.
+* **Errores:** `ServiceWindowClosedError` es permanente (`FAILED` inmediato); `MessagingUnavailableError` y cualquier otro error son transitorios. Los registros nunca incluyen el contenido del mensaje.
+* **Pendiente:** hasta que exista `ChatwootMessagingAdapter`, el worker usa el adaptador falso y los mensajes pasan a `SENT` sin llegar a WhatsApp.
 
 ---
 
