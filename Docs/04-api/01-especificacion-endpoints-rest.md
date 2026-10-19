@@ -1180,6 +1180,7 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 
 #### `POST /events/{id}/settle`
 * **Descripción:** Cierra definitivamente el evento marcándolo como `SETTLED` (desde `IN_PROGRESS` o `EXTENDED`) y consolida los totales cobrados.
+* **US-21:** guarda en la misma transacción una instantánea del ingreso y los costos del paquete, extras cotizados y movilidad base. Un fallo revierte estado e instantánea; un reintento sobre `SETTLED` mantiene `409`. Datos de costos inválidos producen `409 financial-data-inconsistent`. El request y la respuesta de cierre no cambian.
 * **Seguridad:** Roles `OPERADOR` (solo eventos propios), `ENCARGADO` o `SUPERADMIN`.
 * **Request Body:** vacío o `{}`; se rechazan campos adicionales.
 * **Response `200 OK`:** `{"event_id": "evt-77a8...", "status": "SETTLED"}`
@@ -1255,9 +1256,13 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
   ```
 
 #### `GET /reports/financial/pnl`
-* **Descripción:** Reporte semanal o mensual de Ingresos vs. Costos Fijos y Utilidad Neta (RF-24).
+* **Descripción:** Consolidación automática al consultar de Ingresos vs. Costos Fijos, Utilidad Neta y margen (RF-24). Solo eventos `SETTLED`, por `event_date`, con costos congelados al liquidar.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Query Params:** `period_type=MONTHLY`, `year=2026`, `month=10` (para `WEEKLY` se usa `week=42` en lugar de `month`).
+* `period_type` y `year` son obligatorios. Años `1..9998`; `MONTHLY` exige `month=1..12` y prohíbe `week`; `WEEKLY` exige una semana ISO existente en el año (`1..53`) y prohíbe `month`. Parámetros desconocidos o incompatibles: `422`.
+* Las semanas abarcan lunes a domingo; rangos internos `[inicio, fin)`. `period` se devuelve como `YYYY-MM` o `YYYY-Www`. Sin eventos: `200`, contador, importes y margen en cero. Utilidad y margen pueden ser negativos.
+* **Errores:** `401` sin cuenta autenticada activa, `403` rol no permitido, `422` período inválido, `409` (`financial-data-inconsistent`) si falta una instantánea o hay datos contables inválidos. Todos usan `application/problem+json`; no se devuelve un reporte parcial.
+* **Fuentes:** ingreso = acumulados base de US-18 + crédito histórico + extensiones verificadas, sin duplicar `final_total_amount`. Costos = paquete + cantidades de extras cotizados + movilidad base (cero con transporte del cliente). Las extensiones no tienen costo adicional registrado. No es conciliación bancaria ni de gastos reales. Los históricos con costos reconstruidos quedan identificados en persistencia como `LEGACY_BACKFILL`.
 * **Response `200 OK`:**
   ```json
   {

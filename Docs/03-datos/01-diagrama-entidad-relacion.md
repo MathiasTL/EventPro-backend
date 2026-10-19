@@ -35,6 +35,7 @@ erDiagram
     EVENTS |o--o{ PAYMENTS : receives
     EVENTS ||--o{ CONTRACTS : formalizes
     EVENTS ||--o{ EVENT_EXTENSIONS : logs
+    EVENTS ||--o| EVENT_FINANCIAL_SNAPSHOTS : freezes
     PAYMENTS ||--o| EVENT_EXTENSIONS : charges
     EVENTS ||--o{ CREW_ASSIGNMENTS : assigns
     EVENTS ||--o{ INVENTORY_RESERVATIONS : reserves
@@ -44,6 +45,17 @@ erDiagram
     CREWS ||--o{ CREW_ASSIGNMENTS : participates
     USERS |o--o{ PAYMENTS : verifies_registers_audits
     USERS |o--o{ AUDIT_LOGS : performs
+
+    EVENT_FINANCIAL_SNAPSHOTS {
+        uuid event_id PK,FK "FK (events.id); una captura por evento"
+        numeric(18_2) gross_revenue "CHECK >= 0 y distinto de NaN"
+        numeric(18_2) fixed_packages_cost "CHECK >= 0 y distinto de NaN"
+        numeric(18_2) fixed_extras_cost "CHECK >= 0 y distinto de NaN"
+        numeric(18_2) mobility_operational_cost "CHECK >= 0 y distinto de NaN"
+        timestamptz recorded_at "UTC; sin default"
+        varchar(20) origin "CHECK in (SETTLEMENT, LEGACY_BACKFILL)"
+        jsonb details "CHECK jsonb_typeof = object"
+    }
 
     ROLES {
         uuid id PK "default gen_random_uuid()"
@@ -322,6 +334,11 @@ erDiagram
 ## 3. Restricciones a Nivel de Tabla
 
 Restricciones compuestas, parciales o de varias columnas que no se pueden expresar en la sintaxis de atributos del diagrama. Son las mismas que figuran en el [Diccionario de Datos](02-diccionario-de-datos.md).
+
+* **`event_financial_snapshots`**
+  * La PK indexa la FK `event_id`; no se duplica un índice.
+  * Captura y transición `SETTLED` se confirman juntas bajo bloqueo del evento.
+  * `details` conserva costos unitarios, cantidades y componentes de ingreso como cadenas decimales. Los históricos reconstruidos usan `LEGACY_BACKFILL`.
 
 * **`package_inventory_items`**
   * `UNIQUE(package_id, inventory_item_id)`

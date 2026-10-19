@@ -32,6 +32,9 @@ class FakeExtensionRepository(FakeStartEventRepository):
         self.payments = []
         self.total_reads = []
         self.locks = 0
+        self.snapshots = {}
+        self.cost_reads = []
+        self.rollbacks = 0
 
     async def lock_availability(self):
         self.locks += 1
@@ -42,7 +45,7 @@ class FakeExtensionRepository(FakeStartEventRepository):
         return EventOccupancy()
 
     async def rollback_operation(self):
-        pass
+        self.rollbacks += 1
 
     async def save_extension(self, event, extension, payment):
         if self.fail_save:
@@ -62,8 +65,17 @@ class FakeExtensionRepository(FakeStartEventRepository):
             sum(row.extra_minutes for row in rows),
         )
 
-    async def save_settlement(self, event):
+    async def get_settlement_costs(self, event_id):
+        from uuid import uuid4
+
+        from app.domain.value_objects.financial_reporting import EventDirectCosts
+
+        self.cost_reads.append(event_id)
+        return EventDirectCosts(uuid4(), Money(Decimal("400")), (), Money.zero())
+
+    async def save_settlement(self, event, snapshot):
         await self.save_start(event)
+        self.snapshots[event.id] = snapshot
 
     async def can_discard_extension_evidence(self, payment_id):
         return all(payment.id != payment_id for payment in self.payments)

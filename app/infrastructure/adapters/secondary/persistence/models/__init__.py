@@ -13,6 +13,9 @@ from app.infrastructure.adapters.secondary.persistence.models.client_model impor
 from app.infrastructure.adapters.secondary.persistence.models.event_extension_model import (
     EventExtensionModel,
 )
+from app.infrastructure.adapters.secondary.persistence.models.event_financial_snapshot_model import (  # noqa: E501
+    EventFinancialSnapshotModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
 from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
     CrewAssignmentModel,
@@ -39,6 +42,7 @@ __all__ = [
     "CrewAssignmentModel",
     "CrewModel",
     "EventExtensionModel",
+    "EventFinancialSnapshotModel",
     "EventModel",
     "ExtraModel",
     "InventoryItemModel",

@@ -110,7 +110,11 @@ def test_migration_extends_previous_head_and_preserves_existing_events(database_
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0004_outbox_delivery_tracking"]
+    assert scripts.get_heads() == ["0005_event_financial_snapshots"]
+    assert (
+        scripts.get_revision("0005_event_financial_snapshots").down_revision
+        == "0004_outbox_delivery_tracking"
+    )
     assert scripts.get_revision("0002_event_extensions").down_revision == "0001_initial_schema"
     command.upgrade(config, "0001_initial_schema")
     event_id, quote_id, orphan_id, orphan_quote_id, user_id = [uuid4() for _ in range(5)]
@@ -240,7 +244,7 @@ def test_migration_extends_previous_head_and_preserves_existing_events(database_
                     )
             async with factory() as session:
                 result = await SettleEventUseCase(
-                    SqlAlchemyEventRepository(session), FakeCrewScheduleReadAdapter()
+                    SqlAlchemyEventRepository(session), FakeCrewScheduleReadAdapter(), FixedClock()
                 ).execute(event_id, ScheduleActor(user_id, Role.ENCARGADO))
                 assert result.status is EventStatus.SETTLED
         finally:
@@ -492,7 +496,7 @@ def test_concurrent_operations_serialize_without_lost_updates(
                                 actor,
                             )
                         return await SettleEventUseCase(
-                            repo, FakeCrewScheduleReadAdapter()
+                            repo, FakeCrewScheduleReadAdapter(), FixedClock()
                         ).execute(event.id, actor)
                     except InvalidEventStateError as exc:
                         return exc
@@ -604,7 +608,9 @@ def test_settlement_rejects_inconsistent_payments(database_url, tmp_path, corrup
             async with factory() as session:
                 with pytest.raises(ExtensionPaymentMismatchError):
                     await SettleEventUseCase(
-                        SqlAlchemyEventRepository(session), FakeCrewScheduleReadAdapter()
+                        SqlAlchemyEventRepository(session),
+                        FakeCrewScheduleReadAdapter(),
+                        FixedClock(),
                     ).execute(event.id, actor)
             async with factory() as session:
                 assert (await session.get(EventModel, event.id)).status == "EXTENDED"
@@ -630,14 +636,18 @@ def test_failed_settlement_commit_preserves_state_and_releases_lock(database_url
                 sqlalchemy_event.listen(session.sync_session, "before_commit", reject_commit)
                 with pytest.raises(RuntimeError, match="settlement commit failed"):
                     await SettleEventUseCase(
-                        SqlAlchemyEventRepository(session), FakeCrewScheduleReadAdapter()
+                        SqlAlchemyEventRepository(session),
+                        FakeCrewScheduleReadAdapter(),
+                        FixedClock(),
                     ).execute(event.id, actor)
                 assert not session.in_transaction()
             async with factory() as session:
                 assert (await session.get(EventModel, event.id)).status == "IN_PROGRESS"
                 closed = await asyncio.wait_for(
                     SettleEventUseCase(
-                        SqlAlchemyEventRepository(session), FakeCrewScheduleReadAdapter()
+                        SqlAlchemyEventRepository(session),
+                        FakeCrewScheduleReadAdapter(),
+                        FixedClock(),
                     ).execute(event.id, actor),
                     timeout=5,
                 )
