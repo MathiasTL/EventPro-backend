@@ -13,6 +13,7 @@ from app.application.dtos.gateway_event_dto import (
     DeliveryNotice,
     DeliveryReport,
     GatewayEvent,
+    IncomingClientMessage,
     UnhandledGatewayEvent,
 )
 from app.application.dtos.messaging_dto import MessageDirection
@@ -50,6 +51,10 @@ class ChatwootEventGateway:
             and not is_note
         ):
             return _delivery_notice(body)
+        if kind == cw.EVENT_MESSAGE_CREATED and direction is MessageDirection.INCOMING:
+            message = _incoming_message(body)
+            if message is not None:
+                return message
         return _unhandled(kind, body, direction)
 
     # --- API -------------------------------------------------------------------------------
@@ -116,6 +121,33 @@ def _delivery_notice(body: Mapping[str, Any]) -> DeliveryNotice:
         error=cw.external_error(body) or cw.external_error(embedded),
         updated_at=cw.event_time(embedded.get(cw.UPDATED_AT_KEY)),
         status_in_payload=embedded.get(cw.STATUS_KEY) is not None,
+    )
+
+
+def _incoming_message(body: Mapping[str, Any]) -> IncomingClientMessage | None:
+    """Mensaje del cliente; `None` si no trae lo mínimo para responder (queda como no atendido).
+
+    El estado de la conversación viaja en `conversation.status`: solo `pending` (bot) y `open`
+    (encargado) se reconocen.
+    """
+
+    message_id = _int_or_none(body.get(cw.ID_KEY))
+    conversation_id = _conversation_id(body)
+    conversation = body.get(cw.CONVERSATION_KEY)
+    status = cw.conversation_status_of(
+        conversation.get(cw.STATUS_KEY) if isinstance(conversation, Mapping) else None
+    )
+    phone = cw.incoming_sender_phone(body)
+    if message_id is None or conversation_id is None or status is None or phone is None:
+        return None
+    content = body.get(cw.CONTENT_KEY)
+    return IncomingClientMessage(
+        external_message_id=str(message_id),
+        conversation_id=conversation_id,
+        conversation_status=status,
+        sender_phone=phone,
+        content=content if isinstance(content, str) else "",
+        is_private=body.get(cw.PRIVATE_KEY) is True,
     )
 
 

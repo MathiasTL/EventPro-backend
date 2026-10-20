@@ -21,16 +21,20 @@ from app.application.ports.input.quote_lifecycle_port import ICancelQuotePort, I
 from app.application.ports.input.quote_read_port import IGetQuotePort, IListQuotesPort
 from app.application.ports.output.audit_log_port import IAuditLogPort
 from app.application.ports.output.availability_port import IAvailabilityPort
+from app.application.ports.output.bot_unit_of_work_port import BotTransaction, BotUnitOfWork
+from app.application.ports.output.cache_lock_port import ICacheLockPort
 from app.application.ports.output.cache_port import ICachePort
 from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, ICrewAdminPort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.client_repository_port import IClientRepositoryPort
 from app.application.ports.output.clock_port import IClockPort
+from app.application.ports.output.conversation_session_port import IConversationSessionPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
 from app.application.ports.output.event_dedup_port import IEventDedupPort
 from app.application.ports.output.gateway_event_port import IGatewayEventPort
 from app.application.ports.output.gateway_event_queue_port import IGatewayEventQueuePort
+from app.application.ports.output.language_model_port import ILanguageModelPort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
@@ -50,6 +54,8 @@ from app.application.use_cases.audit.list_audit_logs import ListAuditLogsUseCase
 from app.application.use_cases.auth.login import LoginUseCase
 from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
+from app.application.use_cases.bot.agent_engine import ConversationAgent
+from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
 from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
@@ -89,6 +95,9 @@ from app.infrastructure.adapters.secondary.availability.availability_adapter imp
     AvailabilityAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_cache_adapter import RedisCacheAdapter
+from app.infrastructure.adapters.secondary.cache.redis_conversation_session_adapter import (
+    RedisConversationSessionAdapter,
+)
 from app.infrastructure.adapters.secondary.cache.redis_event_dedup_adapter import (
     RedisEventDedupAdapter,
 )
@@ -128,6 +137,9 @@ from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapt
     FakeCrewScheduleReadAdapter,
     FakeQuoteScheduleReadAdapter,
 )
+from app.infrastructure.adapters.secondary.external_services.openai.openai_language_model_adapter import (  # noqa: E501
+    OpenAILanguageModelAdapter,
+)
 from app.infrastructure.adapters.secondary.mobility.tariff import build_mobility_tariff
 from app.infrastructure.adapters.secondary.persistence import (
     SqlAlchemyAvailabilityRepository,
@@ -158,6 +170,9 @@ from app.infrastructure.adapters.secondary.persistence.repositories import (
 )
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
     SqlAlchemyFinancialRepository,
+)
+from app.infrastructure.adapters.secondary.persistence.sqlalchemy_bot_unit_of_work import (
+    SqlAlchemyBotUnitOfWork,
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
     SQLAlchemyHealthAdapter,
@@ -375,6 +390,7 @@ def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
     return ProcessGatewayEvent(
         transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
         gateway=get_gateway_event_port(),
+        incoming_handler=get_handle_incoming_message_use_case(),
     )
 
 
@@ -658,6 +674,12 @@ def clear_application_caches() -> None:
     _chatwoot_client.cache_clear()
     get_gateway_event_port.cache_clear()
     get_process_gateway_event_use_case.cache_clear()
+    get_conversation_session_port.cache_clear()
+    get_bot_lock.cache_clear()
+    get_bot_unit_of_work.cache_clear()
+    get_language_model_port.cache_clear()
+    get_conversation_agent.cache_clear()
+    get_handle_incoming_message_use_case.cache_clear()
     get_arq_pool.cache_clear()
     get_event_dedup_port.cache_clear()
     get_gateway_event_queue_port.cache_clear()
@@ -793,3 +815,76 @@ def get_find_clients_use_case() -> IFindClientsPort:
 @lru_cache
 def get_client_use_case() -> IGetClientPort:
     return FakeGetClient(get_fake_quote_store(), clock=get_clock_port())
+
+
+# --- E1 bot de WhatsApp (Mathias) ---
+
+
+@lru_cache
+def get_conversation_session_port() -> IConversationSessionPort:
+    return RedisConversationSessionAdapter(get_redis_client())
+
+
+@lru_cache
+def get_bot_lock() -> ICacheLockPort:
+    return RedisLockAdapter(get_redis_client())
+
+
+def build_bot_transaction(session: AsyncSession) -> BotTransaction:
+    """Casos de uso del bot sobre la sesión de un turno (spec 08, sección 6, pregunta 5).
+
+    ``CreateQuote`` y ``PayAdvance`` salen de los proveedores de arriba, hoy fakes sin sesión.
+    Cuando un responsable entregue su caso de uso real, cambia solo su línea aquí y en el
+    proveedor, y le pasa ``session`` para que comparta la transacción con ``EnqueueMessage``.
+    """
+
+    return BotTransaction(
+        create_quote=get_create_quote_use_case(),
+        pay_advance=get_pay_advance_use_case(),
+        enqueue_message=get_enqueue_message_use_case(session),
+        catalog=get_catalog_read_port(session),
+    )
+
+
+@lru_cache
+def get_bot_unit_of_work() -> BotUnitOfWork:
+    return SqlAlchemyBotUnitOfWork(get_sessionmaker(), build_bot_transaction)
+
+
+@lru_cache
+def get_language_model_port() -> ILanguageModelPort:
+    """Modelo de lenguaje del agente; solo se construye con ``OPENAI_API_KEY`` definida."""
+
+    settings = get_settings()
+    if settings.openai_api_key is None or not settings.openai_enabled:
+        raise RuntimeError("OPENAI_API_KEY no está definida: el agente no está disponible.")
+    return OpenAILanguageModelAdapter(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.openai_model,
+        timeout_seconds=settings.openai_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_conversation_agent() -> ConversationAgent | None:
+    """Agente conversacional con OpenAI, o ``None`` (motor de menús) sin clave configurada."""
+
+    if not get_settings().openai_enabled:
+        return None
+    return ConversationAgent(
+        unit_of_work=get_bot_unit_of_work(),
+        model=get_language_model_port(),
+        clock=get_clock_port(),
+    )
+
+
+@lru_cache
+def get_handle_incoming_message_use_case() -> HandleIncomingMessage:
+    return HandleIncomingMessage(
+        agent=get_conversation_agent(),
+        unit_of_work=get_bot_unit_of_work(),
+        sessions=get_conversation_session_port(),
+        messaging=get_messaging_port(),
+        clock=get_clock_port(),
+        lock=get_bot_lock(),
+    )

@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from app.application.dtos.messaging_dto import MessageDirection
+from app.application.dtos.messaging_dto import ConversationStatus, MessageDirection
 from app.domain.value_objects.outbox import DeliveryStatus
+from app.domain.value_objects.phone_number import PhoneNumber
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,23 @@ class UnhandledGatewayEvent:
     external_message_id: str | None
 
 
-GatewayEvent = DeliveryNotice | UnhandledGatewayEvent
+@dataclass(frozen=True)
+class IncomingClientMessage:
+    """Mensaje de texto que un cliente escribió; el bot decide si lo responde.
+
+    ``content`` es vacío cuando el mensaje solo trae adjuntos. ``is_private`` marca las notas
+    internas de un encargado, que nunca deben recibir respuesta.
+    """
+
+    external_message_id: str
+    conversation_id: int
+    conversation_status: ConversationStatus
+    sender_phone: PhoneNumber
+    content: str
+    is_private: bool = False
+
+
+GatewayEvent = DeliveryNotice | IncomingClientMessage | UnhandledGatewayEvent
 
 
 @dataclass(frozen=True)

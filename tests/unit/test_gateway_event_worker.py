@@ -131,6 +131,18 @@ async def test_final_outcomes_return_normally_without_retry(
     assert len(use_case.calls) == 1
 
 
+async def test_an_unexpected_bot_failure_is_not_retried_so_the_client_gets_no_duplicate(
+    worker: ModuleType,
+) -> None:
+    # arq solo reintenta ``Retry``: un error inesperado termina el trabajo y no repite respuestas.
+    use_case = _RecordingUseCase(error=ConnectionError("redis caido"))
+
+    with pytest.raises(ConnectionError):
+        await worker.process_gateway_event(_ctx(use_case), RAW_BODY, RECEIVED_AT_EPOCH)
+
+    assert len(use_case.calls) == 1
+
+
 async def test_the_receive_time_is_passed_as_an_aware_utc_datetime(worker: ModuleType) -> None:
     use_case = _RecordingUseCase()
 

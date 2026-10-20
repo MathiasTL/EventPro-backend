@@ -76,6 +76,7 @@ SORT_BY_PARAM = "sort_by"
 SORT_LAST_ACTIVITY_DESC = "last_activity_at_desc"
 ATTACHMENT_FILE_FIELD = "attachments[]"
 
+EVENT_MESSAGE_CREATED = "message_created"
 EVENT_MESSAGE_UPDATED = "message_updated"
 EVENT_CONVERSATION_PREFIX = "conversation_"
 
@@ -281,6 +282,33 @@ def has_listable_status(item: Mapping[str, Any]) -> bool:
     """Indica si la conversación está pendiente o abierta (las únicas que se listan)."""
 
     return str(item.get(STATUS_KEY)) in _CONVERSATION_STATUSES
+
+
+def conversation_status_of(status: Any) -> ConversationStatus | None:
+    """Quién atiende según el estado de Chatwoot; `None` si no es `pending` ni `open`."""
+
+    try:
+        return _CONVERSATION_STATUSES.get(status)
+    except TypeError:
+        return None
+
+
+def incoming_sender_phone(body: Mapping[str, Any]) -> PhoneNumber | None:
+    """Teléfono del contacto que escribió: `sender` del mensaje o, si falta, `meta.sender`."""
+
+    candidates: list[Any] = [body.get(SENDER_KEY)]
+    conversation = body.get(CONVERSATION_KEY)
+    if isinstance(conversation, Mapping):
+        meta = conversation.get(META_KEY)
+        candidates.append(meta.get(SENDER_KEY) if isinstance(meta, Mapping) else None)
+    for sender in candidates:
+        raw = sender.get(PHONE_NUMBER_KEY) if isinstance(sender, Mapping) else None
+        if isinstance(raw, str):
+            try:
+                return PhoneNumber.parse(raw)
+            except ValidationError:
+                continue
+    return None
 
 
 def _sender_phone(item: Mapping[str, Any]) -> PhoneNumber | None:
