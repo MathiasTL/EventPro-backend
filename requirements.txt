@@ -19,6 +19,8 @@ slowapi>=0.1.9,<1.0.0
 pyhanko[image-support,async-http]>=0.25.0,<1.0.0
 # Subidas: deteccion real de tipo MIME por contenido
 filetype>=1.2.0,<2.0.0
+# Agente conversacional del bot (Responses API)
+openai>=2.0.0,<3.0.0
 # Tareas programadas y reintentos (cola respaldada en Redis)
 arq>=0.26.1,<1.0.0
 # Logs JSON con trace id (RNF-04.3)

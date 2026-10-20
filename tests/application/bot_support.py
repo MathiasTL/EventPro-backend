@@ -16,7 +16,9 @@ from app.application.dtos.gateway_event_dto import GatewayEventOutcome, Incoming
 from app.application.dtos.messaging_dto import ConversationStatus
 from app.application.ports.output.bot_unit_of_work_port import BotTransaction
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
+from app.application.ports.output.language_model_port import ILanguageModelPort
 from app.application.ports.output.messaging_port import IMessagingPort
+from app.application.use_cases.bot.agent_engine import ConversationAgent
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -148,7 +150,14 @@ class FakeLock:
 class BotHarness:
     """Arma el caso de uso sobre fakes y expone un cliente que escribe por turnos."""
 
-    def __init__(self, *, catalog: FakeCatalog | None = None, lock: FakeLock | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        catalog: FakeCatalog | None = None,
+        lock: FakeLock | None = None,
+        model: ILanguageModelPort | None = None,
+        turn_budget_seconds: float = 20.0,
+    ) -> None:
         self.outbox = InMemoryOutboxStore()
         self.quotes = FakeQuoteStore()
         self.create_quote = FakeCreateQuote(self.quotes)
@@ -165,6 +174,14 @@ class BotHarness:
             messaging=cast("IMessagingPort", self.messaging),
             clock=self.clock,
             lock=lock,
+            agent=ConversationAgent(
+                unit_of_work=self._unit_of_work,
+                model=model,
+                clock=self.clock,
+                turn_budget_seconds=turn_budget_seconds,
+            )
+            if model is not None
+            else None,
         )
 
     @asynccontextmanager

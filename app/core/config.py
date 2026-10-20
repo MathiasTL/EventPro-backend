@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     chatwoot_template_language: str = "es"
     chatwoot_template_category: str = "UTILITY"
 
+    # --- Agente conversacional con OpenAI (E1) ---
+    # Sin clave el bot usa el motor de menús; con clave, el agente es el motor principal.
+    openai_api_key: SecretStr | None = None
+    openai_model: str = "gpt-6-luna"
+    openai_timeout_seconds: float = Field(default=15.0, gt=0)
+
     # --- Almacenamiento de comprobantes/evidencias (E5) ---
     storage_backend: str = "local"
     local_storage_path: str = "./uploads"
@@ -120,6 +126,14 @@ class Settings(BaseSettings):
         """El adaptador real de Chatwoot se activa al definir la URL base."""
 
         return bool(self.chatwoot_base_url)
+
+    @property
+    def openai_enabled(self) -> bool:
+        """El agente de OpenAI se activa al definir una clave no vacía."""
+
+        return self.openai_api_key is not None and bool(
+            self.openai_api_key.get_secret_value().strip()
+        )
 
     @model_validator(mode="after")
     def _chatwoot_configuration_is_complete(self) -> Self:

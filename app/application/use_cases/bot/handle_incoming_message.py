@@ -1,6 +1,8 @@
 """Caso de uso HandleIncomingMessage: el bot de WhatsApp que guía la cotización (E1).
 
-Responde solo cuando la conversación está en manos del bot (``pending``, RF-01). El cliente
+Responde solo cuando la conversación está en manos del bot (``pending``, RF-01). El motor
+principal es el agente conversacional con OpenAI (``ConversationAgent``); si no está configurado,
+o si OpenAI falla o agota el tiempo (``bot_llm_fallback``), responde el motor de menús: el cliente
 avanza por pasos lineales con menús numerados (US-01 a US-03, US-05); al terminar se crea la
 cotización y se encola su resumen en la misma transacción (US-07, spec 08 sección 2.4). Ante
 un error de negocio reacciona según la spec 08 sección 2.3, y deriva a un encargado cuando el
@@ -23,8 +25,11 @@ from app.application.ports.output.bot_unit_of_work_port import BotTransaction, B
 from app.application.ports.output.cache_lock_port import ICacheLockPort
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.conversation_session_port import IConversationSessionPort
+from app.application.ports.output.language_model_port import LanguageModelError
 from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.use_cases.bot import bot_messages as texts
+from app.application.use_cases.bot.agent_engine import ConversationAgent
+from app.application.use_cases.bot.agent_session import AgentSession
 from app.application.use_cases.bot.bot_input import (
     NO_WORDS,
     SKIP_WORDS,
@@ -100,12 +105,14 @@ class HandleIncomingMessage:
         messaging: IMessagingPort,
         clock: IClockPort,
         lock: ICacheLockPort | None = None,
+        agent: ConversationAgent | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._sessions = sessions
         self._messaging = messaging
         self._clock = clock
         self._lock = lock
+        self._agent = agent
 
     async def execute(self, message: IncomingClientMessage) -> GatewayEventOutcome:
         """``APPLIED`` si el bot respondió; ``IGNORED`` si no le tocaba o ya lo había hecho."""
@@ -133,8 +140,7 @@ class HandleIncomingMessage:
 
     async def _handle(self, message: IncomingClientMessage) -> GatewayEventOutcome:
         stored = await self._sessions.get(message.conversation_id)
-        session = BotSession.from_dict(stored) if stored is not None else None
-        if session is not None and session.last_message_id == message.external_message_id:
+        if stored is not None and stored.get("last_message_id") == message.external_message_id:
             get_logger("bot").info("bot_message_duplicate", conversation_id=message.conversation_id)
             return GatewayEventOutcome.IGNORED
         text = message.content.strip()
@@ -142,9 +148,53 @@ class HandleIncomingMessage:
         if asks_for_a_person(normalized):
             await self._handoff(message, texts.HANDOFF_REQUESTED, reason="requested")
             return GatewayEventOutcome.APPLIED
+        session = BotSession.from_dict(stored) if stored is not None else None
+        # Una conversación que cayó al motor de menús sigue en él hasta que termine o el
+        # cliente escriba "menú"; ahí vuelve al agente.
+        if self._agent is not None and (session is None or asks_to_restart(normalized)):
+            agent_session = AgentSession()
+            if session is None and stored is not None:
+                agent_session = AgentSession.from_dict(stored) or agent_session
+            outcome = await self._run_agent(message, agent_session)
+            if outcome is not None:
+                return outcome
+            # Respaldo: el motor de menús empieza desde el principio para esta conversación.
+            return await self._run(message, BotSession(), self._begin, text, normalized)
         if session is None or asks_to_restart(normalized):
             return await self._run(message, BotSession(), self._begin, text, normalized)
         return await self._run(message, session, self._advance, text, normalized)
+
+    async def _run_agent(
+        self, message: IncomingClientMessage, session: AgentSession
+    ) -> GatewayEventOutcome | None:
+        """Turno del agente; ``None`` si el modelo falló sin cambiar nada y toca el respaldo."""
+
+        log = get_logger("bot")
+        agent = self._agent
+        if agent is None:
+            return None
+        try:
+            result = await agent.run_turn(session, message)
+        except LanguageModelError as error:
+            log.warning(
+                "bot_llm_fallback", conversation_id=message.conversation_id, reason=error.reason
+            )
+            return None
+        except Exception as error:
+            log.error(
+                "bot_turn_failed",
+                conversation_id=message.conversation_id,
+                step="agent",
+                error_type=type(error).__name__,
+            )
+            await self._handoff(message, texts.HANDOFF_ERROR, reason="error")
+            return GatewayEventOutcome.APPLIED
+        if result.handoff is not None:
+            await self._handoff(message, result.handoff.reply, reason=result.handoff.reason)
+            return GatewayEventOutcome.APPLIED
+        session.last_message_id = message.external_message_id
+        await self._sessions.save(message.conversation_id, session.to_dict())
+        return GatewayEventOutcome.APPLIED
 
     # --- Un turno: ejecuta, responde y guarda --------------------------------------------
 

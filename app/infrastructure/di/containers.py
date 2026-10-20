@@ -34,6 +34,7 @@ from app.application.ports.output.document_source_port import IDocumentSourcePor
 from app.application.ports.output.event_dedup_port import IEventDedupPort
 from app.application.ports.output.gateway_event_port import IGatewayEventPort
 from app.application.ports.output.gateway_event_queue_port import IGatewayEventQueuePort
+from app.application.ports.output.language_model_port import ILanguageModelPort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
@@ -53,6 +54,7 @@ from app.application.use_cases.audit.list_audit_logs import ListAuditLogsUseCase
 from app.application.use_cases.auth.login import LoginUseCase
 from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
+from app.application.use_cases.bot.agent_engine import ConversationAgent
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
@@ -134,6 +136,9 @@ from app.infrastructure.adapters.secondary.external_services.fake_route_estimato
 from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapters import (
     FakeCrewScheduleReadAdapter,
     FakeQuoteScheduleReadAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.openai.openai_language_model_adapter import (  # noqa: E501
+    OpenAILanguageModelAdapter,
 )
 from app.infrastructure.adapters.secondary.mobility.tariff import build_mobility_tariff
 from app.infrastructure.adapters.secondary.persistence import (
@@ -672,6 +677,8 @@ def clear_application_caches() -> None:
     get_conversation_session_port.cache_clear()
     get_bot_lock.cache_clear()
     get_bot_unit_of_work.cache_clear()
+    get_language_model_port.cache_clear()
+    get_conversation_agent.cache_clear()
     get_handle_incoming_message_use_case.cache_clear()
     get_arq_pool.cache_clear()
     get_event_dedup_port.cache_clear()
@@ -845,8 +852,36 @@ def get_bot_unit_of_work() -> BotUnitOfWork:
 
 
 @lru_cache
+def get_language_model_port() -> ILanguageModelPort:
+    """Modelo de lenguaje del agente; solo se construye con ``OPENAI_API_KEY`` definida."""
+
+    settings = get_settings()
+    if settings.openai_api_key is None or not settings.openai_enabled:
+        raise RuntimeError("OPENAI_API_KEY no está definida: el agente no está disponible.")
+    return OpenAILanguageModelAdapter(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.openai_model,
+        timeout_seconds=settings.openai_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_conversation_agent() -> ConversationAgent | None:
+    """Agente conversacional con OpenAI, o ``None`` (motor de menús) sin clave configurada."""
+
+    if not get_settings().openai_enabled:
+        return None
+    return ConversationAgent(
+        unit_of_work=get_bot_unit_of_work(),
+        model=get_language_model_port(),
+        clock=get_clock_port(),
+    )
+
+
+@lru_cache
 def get_handle_incoming_message_use_case() -> HandleIncomingMessage:
     return HandleIncomingMessage(
+        agent=get_conversation_agent(),
         unit_of_work=get_bot_unit_of_work(),
         sessions=get_conversation_session_port(),
         messaging=get_messaging_port(),
