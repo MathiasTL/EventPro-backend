@@ -26,7 +26,8 @@ Docs/
 │   ├── 04-adr-decisiones-arquitectura.md          # Registros de Decisiones de Arquitectura (ADR-01 a ADR-10)
 │   ├── 05-spec-chatwoot-gateway.md                # Especificación del gateway de mensajería Chatwoot (ADR-10)
 │   ├── 06-spec-e1-nucleo-cotizacion.md            # Especificación del núcleo de cotización de E1 (Bloque 1)
-│   └── 07-spec-e1-outbox-mensajeria.md            # Especificación de la cola de mensajes salientes de E1 (Bloque 2)
+│   ├── 07-spec-e1-outbox-mensajeria.md            # Especificación de la cola de mensajes salientes de E1 (Bloque 2)
+│   └── 08-spec-e1-contrato-cotizacion.md          # Contrato de casos de uso de cotización y división del trabajo de E1 (Bloque 4)
 │
 ├── 03-datos/                                      # FASE 3: Persistencia y Diseño de Base de Datos
 │   ├── 01-diagrama-entidad-relacion.md            # Diagrama Entidad-Relación (DER en Mermaid)

@@ -66,6 +66,18 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 - [ ] Chatwoot operativo según [Docker e infraestructura local, sección 5](02-docker-e-infraestructura-local.md#5-chatwoot-primera-configuración) y webhook interno firmado.
 - [ ] Traspaso bot-humano y bandeja de conversaciones con actualización en tiempo real (US-27 a US-32).
 
+> [!IMPORTANT]
+> **Piezas de E1 delegadas (contrato primero).** Para no saturar a Mathias, los casos de uso del ciclo de vida de la cotización y sus endpoints los construyen otras personas **en paralelo**, contra un contrato (puertos de entrada, DTOs, errores, fakes y suite de contrato) que Mathias fusiona primero. Detalle, archivos, criterios de aceptación y ramas en [`02-arquitectura/08-spec-e1-contrato-cotizacion.md`](../02-arquitectura/08-spec-e1-contrato-cotizacion.md).
+>
+> | Pieza | Responsable |
+> | :--- | :--- |
+> | Contrato (se fusiona primero), bot, Chatwoot, bandeja, SSE y conciliación | Mathias |
+> | `CreateQuote`, `GetQuote`, `ListQuotes`, `ExpireDueQuotes` + cron de arq, `POST/GET /quotes`, `GET /quotes/{id}`, migración 0006 (`observations`), migración del flujo manual (incluye la corrección de `pending_balance`, RN-02), frontend de cotizaciones | Brenis |
+> | `PayAdvance`, `CancelQuote`, `POST /quotes/{id}/pay-advance` y `/cancel`, decisión de comprobante tardío | Christian |
+> | `FindClients`, `GetClient`, `GET /clients`, `GET /clients/{id}`, frontend de clientes (US-25) | Nicolas |
+>
+> Los endpoints `/quotes` y `/clients` de la tabla de alcance de E1 los implementan, por tanto, las personas de la tabla anterior; Mathias conserva la revisión del contrato.
+
 ---
 
 ### E2 — Identidad, Seguridad, Contratos y Firma Electrónica · Diego
@@ -131,6 +143,9 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 - [ ] Prevención de doble reserva bajo concurrencia (pruebas con Testcontainers).
 
 > [!NOTE]
+> Según la [especificación 08](../02-arquitectura/08-spec-e1-contrato-cotizacion.md), el autor de git del catálogo, de la disponibilidad y del flujo manual (Brenis) asume también piezas del cotizador de E1 (`/quotes`, vencimiento y migración del flujo manual). Este documento no afirma que Brenis y el dueño de E3 sean la misma persona.
+
+> [!NOTE]
 > Revisar las fórmulas y los procesos de control en [`01-requisitos/04-reglas-de-negocio-y-control.md`](../01-requisitos/04-reglas-de-negocio-y-control.md) antes de escribir código: el motor de disponibilidad concentra las reglas de negocio más densas. Renzo apoya con las pruebas de concurrencia.
 
 ---
@@ -184,6 +199,9 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 - [ ] Almacenamiento seguro de comprobantes con validación de MIME real.
 - [ ] Apoyo a Mathias (E1) con las pruebas de integración del flujo cotización → adelanto.
 
+> [!NOTE]
+> Christian también implementa los casos de uso `PayAdvance` y `CancelQuote` de E1 y sus routers (`POST /quotes/{id}/pay-advance` y `/cancel`) contra el contrato de la [especificación 08](../02-arquitectura/08-spec-e1-contrato-cotizacion.md), y resuelve la regla de comprobante tardío (`EXPIRED` → `CONVERTED`).
+
 ---
 
 ### E6 — Operación del Evento y Analítica · Nicolas
@@ -207,6 +225,9 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 - [ ] Vista del operador usable en celular y restringida a sus propios eventos.
 - [ ] Bloqueo de inicio del show si el saldo no está cobrado.
 - [ ] Dashboard con datos consolidados de cotizaciones, pagos y eventos.
+
+> [!NOTE]
+> Nicolas también implementa la consulta de clientes de E1 (US-25: `FindClients`, `GetClient`, `GET /clients`, `GET /clients/{id}` y su frontend) contra el contrato de la [especificación 08](../02-arquitectura/08-spec-e1-contrato-cotizacion.md).
 
 > [!TIP]
 > Nicolas puede empezar en la ola 0 con la UI del cronograma y el dominio de `Event` contra mocks, mientras E2 termina los contratos que originan los eventos.
