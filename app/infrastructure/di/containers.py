@@ -7,6 +7,7 @@ from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.input.client_read_port import IFindClientsPort, IGetClientPort
 from app.application.ports.input.event_extension_port import (
     IRegisterEventExtensionPort,
     ISettleEventPort,
@@ -14,6 +15,10 @@ from app.application.ports.input.event_extension_port import (
 from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
 from app.application.ports.input.event_start_port import IStartEventPort
 from app.application.ports.input.financial_report_port import IGetFinancialPnlPort
+from app.application.ports.input.quote_create_port import ICreateQuotePort
+from app.application.ports.input.quote_expiry_port import IExpireDueQuotesPort
+from app.application.ports.input.quote_lifecycle_port import ICancelQuotePort, IPayAdvancePort
+from app.application.ports.input.quote_read_port import IGetQuotePort, IListQuotesPort
 from app.application.ports.output.audit_log_port import IAuditLogPort
 from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.cache_port import ICachePort
@@ -104,6 +109,17 @@ from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_m
 )
 from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
     FakeMessagingAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
+    FakeCancelQuote,
+    FakeCreateQuote,
+    FakeExpireDueQuotes,
+    FakeFindClients,
+    FakeGetClient,
+    FakeGetQuote,
+    FakeListQuotes,
+    FakePayAdvance,
+    FakeQuoteStore,
 )
 from app.infrastructure.adapters.secondary.external_services.fake_route_estimator_adapter import (
     FakeRouteEstimatorAdapter,
@@ -717,3 +733,63 @@ def get_refund_manual_booking_use_case(
     store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
 ) -> RefundManualBookingUseCase:
     return RefundManualBookingUseCase(store)
+
+
+# Contrato de casos de uso de cotización de E1 (spec 08, sección 2.7). Cada proveedor devuelve
+# hoy el fake de su puerto sobre un almacén compartido; el responsable de la pieza real cambia
+# solo la línea de su proveedor. Los bloques están separados por responsable para que esos
+# cambios no choquen en el mismo fragmento del archivo.
+
+
+@lru_cache
+def get_fake_quote_store() -> FakeQuoteStore:
+    return FakeQuoteStore()
+
+
+# --- E1 contrato: cotizacion (Brenis) ---
+
+
+@lru_cache
+def get_create_quote_use_case() -> ICreateQuotePort:
+    return FakeCreateQuote(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_quote_use_case() -> IGetQuotePort:
+    return FakeGetQuote(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_list_quotes_use_case() -> IListQuotesPort:
+    return FakeListQuotes(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_expire_due_quotes_use_case() -> IExpireDueQuotesPort:
+    return FakeExpireDueQuotes(get_fake_quote_store(), clock=get_clock_port())
+
+
+# --- E1 contrato: cotizacion (Christian) ---
+
+
+@lru_cache
+def get_pay_advance_use_case() -> IPayAdvancePort:
+    return FakePayAdvance(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_cancel_quote_use_case() -> ICancelQuotePort:
+    return FakeCancelQuote(get_fake_quote_store(), clock=get_clock_port())
+
+
+# --- E1 contrato: cotizacion (Nicolas) ---
+
+
+@lru_cache
+def get_find_clients_use_case() -> IFindClientsPort:
+    return FakeFindClients(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_client_use_case() -> IGetClientPort:
+    return FakeGetClient(get_fake_quote_store(), clock=get_clock_port())
