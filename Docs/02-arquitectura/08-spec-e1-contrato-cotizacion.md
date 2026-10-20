@@ -193,7 +193,7 @@ Un solo módulo: `app/infrastructure/adapters/secondary/external_services/fake_q
 | `PAYMENT_IN_VERIFICATION` | `CancelQuote` lanza `InvalidQuoteStateError`; `ExpireDueQuotes` omite la cotización y no la cuenta. | `CancelQuote`, `ExpireDueQuotes` |
 | `CLIENT_NOT_FOUND` | Lanza `ClientNotFoundError`. | `GetClient`, `CreateQuote` con `client_id` |
 
-Además, `FakeExpireDueQuotes.due_count` fija cuántas cotizaciones "vence" en `OK`, y `FakePayAdvance.rechecked` fija el indicador del resultado.
+Además, `FakeExpireDueQuotes` vence las cotizaciones del almacén cuyo plazo ya pasó (sin pago en verificación) y `due_count` suma cotizaciones adicionales "vencidas" que se consumen en la primera ejecución. `FakePayAdvance.rechecked` es `None` por defecto y entonces se deriva de la antigüedad de la cotización (más de 60 minutos desde `sent_at`, como `AVAILABILITY_RECHECK_MINUTES`); asignarle `True` o `False` fuerza el indicador.
 
 ### 2.6 Suite de contrato
 
@@ -204,8 +204,10 @@ Cada clase abstracta define ganchos que la prueba concreta implementa:
 | Gancho | Qué hace |
 | :--- | :--- |
 | `make_port()` | Devuelve el puerto bajo prueba (fake o implementación real). |
-| `seed_quote(status, *, payment_in_verification=False)` | Deja una cotización en el estado pedido (para el real, filas en una base de prueba) y devuelve su `id`. |
+| `seed_quote(status, *, payment_in_verification=False, age=timedelta(0), client_id=None, event_date=None)` | Deja una cotización en el estado pedido (para el real, filas en una base de prueba) y devuelve su `id`. `age` es cuánto tiempo atrás se envió (con `age` de 25 horas el plazo de 24 horas ya venció; con 90 minutos ya pasó la ventana de revalidación); `client_id` y `event_date` fijan su cliente y su fecha de evento. |
+| `seed_client(phone, full_name)` | Deja un cliente y devuelve su `id`. |
 | `arrange(port, scenario)` | Configura el escenario: el fake asigna `scenario`; la implementación real prepara sus dobles (por ejemplo, un `IAvailabilityPort` que devuelve `CONFLICT`). |
+| `quote_count()` | Cuántas cotizaciones existen; permite comprobar que un error no creó ninguna. |
 | `assert_nothing_committed()` | Verifica que, tras ejecutar un caso de uso sin que el llamador confirme, otra sesión no ve cambios. El fake lo cumple por construcción; la implementación real lo prueba con una base de integración. |
 
 Uso:
