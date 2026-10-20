@@ -173,10 +173,10 @@ El `downgrade` elimina las columnas nuevas y restaura el default de `max_attempt
 1. **Webhook de entrega (cerrado):** el mapeo se define en el bloque del gateway:
    * Solo un `message_updated` de un mensaje saliente es un aviso de entrega; su `id` es el `external_message_id`.
    * `delivered` → `DELIVERED`; `read` → `READ`; `failed` → `FAILED` con el motivo de `content_attributes.external_error` (o `None`). `sent` y cualquier otro valor se ignoran y solo se registran.
-   * Si el payload no trae `status` (lo esperado en Chatwoot v4.18.0), el worker lo consulta a la API de Chatwoot antes de llamar al caso de uso. Si el aviso llega antes de que el despachador confirme `SENT` (el identificador aún no existe), el trabajo se reintenta cinco veces con espera de 5, 10, 20 y 40 s; después se registra `delivery_notice_unmatched` y termina (puede ser un mensaje escrito a mano en Chatwoot).
-   * `at` es la hora de actualización del payload si la trae; si no, el instante de la cabecera firmada `X-Chatwoot-Timestamp`. Nunca la hora del reintento ni la de recepción local.
+   * El `status` del aviso se lee de la copia del mensaje incrustada en `conversation.messages[]` (en Chatwoot v4.18.0 el nivel superior del cuerpo no lo trae). Si esa copia no lo trae, el worker lo consulta a la API de Chatwoot antes de llamar al caso de uso. Si el aviso llega antes de que el despachador confirme `SENT` (el identificador aún no existe), el trabajo se reintenta cinco veces con espera de 5, 10, 20 y 40 s; después se registra `delivery_notice_unmatched` y termina (puede ser un mensaje escrito a mano en Chatwoot).
+   * `at` es la hora de actualización del mensaje incrustado (`conversation.messages[].updated_at`) si la trae; si no, el instante de la cabecera firmada `X-Chatwoot-Timestamp`. Nunca la hora del reintento ni la de recepción local.
    * Si el webhook se pierde, `delivery_status` queda nulo: Chatwoot no reintenta los webhooks de cuenta (ver el documento 05, §4).
-   * Los nombres exactos de los campos del payload son provisionales hasta conciliarlos con capturas reales de Chatwoot v4.18.0.
+   * Los campos del payload se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19).
 2. **Avisos al encargado:** la bandeja mostrará los mensajes con `status = FAILED` o `delivery_status = FAILED`; el contrato del endpoint se define en el bloque de la bandeja.
 3. **Retención:** no se define una purga de mensajes `SENT` antiguos; se revisará si el volumen lo requiere.
 

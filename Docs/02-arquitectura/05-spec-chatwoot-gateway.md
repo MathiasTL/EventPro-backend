@@ -2,7 +2,7 @@
 
 * **Estado:** Propuesto (pendiente de revisión).
 * **Fecha:** 2026-10-03.
-* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). La bandeja, el bot y el SSE siguen pendientes. Los nombres de campos de los payloads son **provisionales** hasta conciliarlos con capturas reales de Chatwoot v4.18.0 (tarea 7.1 del cambio).
+* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). La bandeja, el bot y el SSE siguen pendientes. Los payloads se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19, tarea 7.1 del cambio); la excepción son los adjuntos, que no se capturaron.
 * **Decisión asociada:** ADR-10 (por registrar en [`04-adr-decisiones-arquitectura.md`](04-adr-decisiones-arquitectura.md)); reemplaza la parte de WhatsApp de ADR-05. La parte de Google Maps de ADR-05 sigue vigente.
 
 ---
@@ -114,7 +114,7 @@ Los tokens no aparecen en logs ni en mensajes de error. Los logs omiten el conte
 
 El worker (`process_gateway_event`) enruta. En esta etapa solo se procesan los **avisos de entrega**:
 
-* **Aviso de entrega (`message_updated` de un mensaje saliente):** se aplica a `RecordDeliveryStatus` (ver el documento 07, §5). Si el payload no trae `status`, el worker lo consulta a la API.
+* **Aviso de entrega (`message_updated` de un mensaje saliente):** se aplica a `RecordDeliveryStatus` (ver el documento 07, §5). El `status` y la hora de actualización del mensaje no están en el nivel superior del cuerpo: viajan en la copia incrustada `conversation.messages[]` (la entrada con el mismo `id`). Si esa copia no trae `status`, el worker lo consulta a la API.
 * **Cualquier otro evento** (mensajes entrantes, ecos de mensajes salientes, `conversation_*`, notas privadas, eventos desconocidos): solo se registra (nombre del evento e identificadores, nunca contenido, teléfonos ni URL de adjuntos) y se reconoce sin cambiar datos.
 * **Pendiente (bot y bandeja):** el procesamiento del mensaje entrante en `pending` por el bot (estado conversacional en Redis por `conversation_id`; un comprobante adjunto ejecuta RF-11) y la publicación por SSE a la web llegan con sus propios bloques.
 
@@ -156,7 +156,7 @@ El adaptador detecta la ventana cerrada **antes de enviar**, leyendo `can_reply`
 | Chatwoot caído (salida) | Todo envío pasa por `outbox_messages`. Reintentos con espera creciente: 30 s, 2 min, 10 min, 30 min, 2 h. Agotados, el mensaje queda `FAILED` y la bandeja ofrece «Reintentar». Ninguna operación de negocio se bloquea. |
 | Chatwoot caído (entrada) | Meta reintenta sus webhooks hacia Chatwoot. **Chatwoot no reintenta los webhooks de cuenta** (confirmado; el tiempo de espera es de 5 s). **Limitación documentada:** si EventPro no está disponible cuando Chatwoot emite un aviso, el aviso se pierde y `delivery_status` del mensaje queda nulo. Un **job de reconciliación** (cada 5 minutos, conversaciones actualizadas desde el último cursor, idempotente) lo resolverá; pertenece al bloque del bot y no condiciona este cambio. |
 | Webhooks duplicados o fuera de orden | Deduplicación por `X-Chatwoot-Delivery` en Redis (TTL de 7 días). Un aviso fuera de orden no retrocede el estado (`record_delivery` solo avanza). Un aviso que llega antes de `SENT` se reintenta de forma acotada (5 intentos, 5 a 40 s). El procesamiento serial por conversación mediante lock queda para el bloque del bot. |
-| Meta rechaza un mensaje | Ventana de 24 h cerrada (si no se detectó antes de enviar) o número fuera de los 5 destinatarios de prueba: Chatwoot emite `message_updated`. En Chatwoot v4.18.0 se espera que ese evento **no traiga `status`**: el worker lo lee de la API, y el motivo del fallo está en `content_attributes.external_error`. El mensaje queda con `delivery_status = FAILED` y ese motivo; la bandeja mostrará un texto legible. |
+| Meta rechaza un mensaje | Ventana de 24 h cerrada (si no se detectó antes de enviar) o número fuera de los 5 destinatarios de prueba: Chatwoot emite `message_updated`. En Chatwoot v4.18.0 ese evento trae `status = failed` en `conversation.messages[]` (no en el nivel superior), y el motivo del fallo está en `content_attributes.external_error` (nivel superior y mensaje incrustado), por ejemplo `(#131030) Recipient phone number not in allowed list`; la consulta a la API queda como respaldo. El mensaje queda con `delivery_status = FAILED` y ese motivo; la bandeja mostrará un texto legible. |
 | Excepción no controlada del bot | El bot responde «Tuvimos un problema, te comunico con un encargado» y deriva con `handoff_reason = BOT_ERROR`. |
 | Desconexión SSE | Reconexión automática; al reconectar, la web vuelve a solicitar la bandeja completa. |
 | Vencimiento de tokens | El token temporal del número de prueba de Meta expira (aprox. 24 h, por confirmar); en Chatwoot se usa el token permanente de un *system user*. Los tokens de Chatwoot no expiran. |
@@ -266,6 +266,8 @@ No se levanta Chatwoot completo en CI (cuatro contenedores, ~4 GB); las fixtures
 
 **Pasos de operación obligatorios:** activar `lock_to_single_conversation` en la bandeja de WhatsApp (el adaptador depende de ello para mantener una conversación por teléfono). Crear el webhook de cuenta con un secreto y suscribirlo a `message_created` y `message_updated`.
 
+**Variable obligatoria de Chatwoot:** `SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true` (en `chatwoot.env`). Chatwoot 4.18 envía los webhooks de cuenta a través de SafeFetch/`ssrf_filter` y descarta toda URL que resuelva a una IP no pública; sin esta variable el webhook interno `http://api:8000/api/v1/webhooks/chatwoot` nunca llega. Contrapartida: se desactiva la protección SSRF para todas las peticiones de SafeFetch; es aceptable porque el panel de administración no es público. Además, la URL del webhook debe tener un host con punto y sin guion bajo para pasar la validación del panel (los receptores de prueba deben respetarlo).
+
 1. El Agent Bot funciona asignado a la bandeja sin `outgoing_url`.
 2. Una conversación resuelta se reabre en `pending` cuando el cliente vuelve a escribir.
 3. Chatwoot acepta conectar el canal oficial con las credenciales del número de prueba.
@@ -273,4 +275,4 @@ No se levanta Chatwoot completo en CI (cuatro contenedores, ~4 GB); las fixtures
 5. Duración del token temporal de Meta y configuración del token de *system user*.
 6. DuckDNS resuelve subdominios de segundo nivel.
 7. Disponibilidad `linux/arm64` de las imágenes usadas.
-8. Conciliar los payloads con capturas reales de Chatwoot v4.18.0 (tarea 7.1): `status` en `message_updated`, ubicación de `external_error` y de la hora de actualización, `conversation.id`, presencia de `X-Chatwoot-Delivery`, `can_reply` al crear una conversación y formas de `items` y `template_params`.
+8. *(Resuelto el 2026-10-19, tarea 7.1)* Conciliar los payloads con capturas reales de Chatwoot v4.18.0: `status` en `message_updated` (está en `conversation.messages[]`), ubicación de `external_error` y de la hora de actualización, `conversation.id`, presencia de `X-Chatwoot-Delivery`, `can_reply` al crear una conversación y formas de `items` y `template_params`.
