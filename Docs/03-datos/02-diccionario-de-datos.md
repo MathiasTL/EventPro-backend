@@ -5,7 +5,7 @@
 ## 1. Convenciones y Estándares de Base de Datos
 * **Motor:** PostgreSQL 16+.
 * **Claves Primarias (PK):** `UUIDv4` (`gen_random_uuid()`).
-* **Valores Monetarios:** `NUMERIC(10,2)` estricto para prevenir pérdidas de precisión decimal.
+* **Valores Monetarios:** `NUMERIC(10,2)` para importes operativos; `NUMERIC(18,2)` para instantáneas financieras que suman cobros y costos por evento. Los reportes se agregan con precisión decimal y admiten totales mayores que un importe operativo individual.
 * **Marcas Temporales:** `TIMESTAMPTZ` en UTC (`CURRENT_TIMESTAMP`).
 * **Nomenclatura:** `snake_case` para nombres de tablas y columnas; nombres en plural para tablas (`quotes`, `events`, `contracts`).
 * **Códigos de enumeración:** valores en inglés `UPPER_SNAKE_CASE`, implementados como `VARCHAR` con restricción `CHECK` (no como tipo `ENUM` nativo, para facilitar migraciones). Las etiquetas en español son solo de interfaz (ver [RN, sección 3.5](../01-requisitos/04-reglas-de-negocio-y-control.md#35-tabla-de-mapeo-código-etiqueta-de-interfaz-y-significado)).
@@ -35,9 +35,9 @@ Almacena los administradores (encargados) y personal operativo del negocio.
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador único del usuario. |
-| `role_id` | `UUID` | NO | - | FK (`roles.id`) | Rol asignado al usuario. |
+| `role_id` | `UUID` | NO | - | FK (`roles.id`), INDEX | Rol asignado al usuario. |
 | `full_name` | `VARCHAR(120)` | NO | - | - | Nombres y apellidos completos. |
-| `email` | `VARCHAR(150)` | NO | - | UNIQUE | Correo electrónico de inicio de sesión. |
+| `email` | `VARCHAR(150)` | NO | - | UNIQUE sin distinción de mayúsculas (`uq_users_email_lower` sobre `lower(email)`) | Correo electrónico de inicio de sesión. `Ana@x.pe` y `ana@x.pe` son el mismo correo. |
 | `phone` | `VARCHAR(20)` | NO | - | UNIQUE | Teléfono móvil de contacto. |
 | `hashed_password` | `VARCHAR(255)` | NO | - | - | Hash de contraseña con Argon2id/Bcrypt. |
 | `is_active` | `BOOLEAN` | NO | `TRUE` | - | Indica si el usuario está habilitado en el sistema. |
@@ -110,7 +110,7 @@ Relación muchos a muchos entre paquetes y temáticas compatibles.
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador de la relación. |
 | `package_id` | `UUID` | NO | - | FK (`packages.id`) | Paquete vinculado. |
-| `theme_id` | `UUID` | NO | - | FK (`themes.id`) | Temática compatible. |
+| `theme_id` | `UUID` | NO | - | FK (`themes.id`), INDEX | Temática compatible. |
 
 *Restricciones de tabla:*
 * `UNIQUE(package_id, theme_id)`
@@ -152,7 +152,7 @@ Reservas de unidades de inventario por evento, ítem y ventana de tiempo. Al cre
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador único de la reserva. |
 | `event_id` | `UUID` | NO | - | FK (`events.id`), INDEX | Evento que consume el inventario. |
-| `inventory_item_id` | `UUID` | NO | - | FK (`inventory_items.id`) | Ítem reservado. |
+| `inventory_item_id` | `UUID` | NO | - | FK (`inventory_items.id`), INDEX (primera columna del índice compuesto) | Ítem reservado. |
 | `quantity` | `INTEGER` | NO | `1` | CHECK (`quantity > 0`) | Unidades reservadas. |
 | `starts_at` | `TIMESTAMPTZ` | NO | - | - | Inicio de la ventana de reserva (incluye armado). |
 | `ends_at` | `TIMESTAMPTZ` | NO | - | CHECK (`ends_at > starts_at`) | Fin de la ventana de reserva (incluye desarme). |
@@ -178,8 +178,8 @@ Registra las solicitudes de cotización generadas por WhatsApp o por panel admin
 | `location_district` | `VARCHAR(80)` | NO | - | INDEX | Distrito de Lima Metropolitana / Callao. |
 | `latitude` | `NUMERIC(10,7)` | SÍ | `NULL` | - | Coordenada de latitud. |
 | `longitude` | `NUMERIC(10,7)` | SÍ | `NULL` | - | Coordenada de longitud. |
-| `package_id` | `UUID` | NO | - | FK (`packages.id`) | Paquete seleccionado. |
-| `theme_id` | `UUID` | SÍ | `NULL` | FK (`themes.id`) | Temática seleccionada. |
+| `package_id` | `UUID` | NO | - | FK (`packages.id`), INDEX | Paquete seleccionado. |
+| `theme_id` | `UUID` | SÍ | `NULL` | FK (`themes.id`), INDEX | Temática seleccionada. |
 | `client_provides_mobility` | `BOOLEAN` | NO | `FALSE` | - | Si el cliente provee movilidad (costo S/. 0). |
 | `calculated_distance_km` | `NUMERIC(6,2)` | SÍ | `0.00` | - | Distancia ida y vuelta calculada por Maps. |
 | `calculated_transit_minutes` | `INTEGER` | SÍ | `0` | - | Minutos de tránsito ida y vuelta. |
@@ -207,8 +207,8 @@ Detalle de extras incluidos en una cotización.
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del ítem. |
-| `quote_id` | `UUID` | NO | - | FK (`quotes.id` ON DELETE CASCADE) | Cotización vinculada. |
-| `extra_id` | `UUID` | NO | - | FK (`extras.id`) | Extra seleccionado. |
+| `quote_id` | `UUID` | NO | - | FK (`quotes.id` ON DELETE CASCADE), INDEX | Cotización vinculada. |
+| `extra_id` | `UUID` | NO | - | FK (`extras.id`), INDEX | Extra seleccionado. |
 | `quantity` | `INTEGER` | NO | `1` | CHECK (`quantity > 0`) | Cantidad contratada. |
 | `unit_price` | `NUMERIC(10,2)` | NO | - | - | Precio unitario congelado al cotizar. |
 | `subtotal` | `NUMERIC(10,2)` | NO | - | - | Cantidad × Precio unitario. |
@@ -225,18 +225,30 @@ Entidad principal del cronograma y ejecución operativa del servicio. Se crea ú
 | `quote_id` | `UUID` | NO | - | FK (`quotes.id`), UNIQUE | Cotización originaria (también para contratos manuales, que generan una cotización `MANUAL`). |
 | `event_date` | `DATE` | NO | - | INDEX | Fecha confirmada del evento. |
 | `start_time` | `TIME` | NO | - | - | Hora de inicio programada. |
-| `end_time` | `TIME` | NO | - | - | Hora de término programada. |
+| `end_time` | `TIME` | NO | - | CHECK (`end_time <> start_time`) | Hora de término programada. Puede ser anterior a `start_time` cuando el evento cruza la medianoche (termina al día siguiente). |
 | `address` | `VARCHAR(255)` | NO | - | - | Dirección confirmada. |
 | `district` | `VARCHAR(80)` | NO | - | INDEX | Distrito. |
 | `client_observations` | `TEXT` | SÍ | `NULL` | - | Directrices especiales del cliente (visibles en cronograma). |
 | `status` | `VARCHAR(30)` | NO | `'AWAITING_SIGNATURE'` | CHECK in (`AWAITING_SIGNATURE`, `SCHEDULED`, `AWAITING_BALANCE`, `IN_PROGRESS`, `EXTENDED`, `SETTLED`, `CANCELLED`) | Estado operativo (ver RN, sección 3.3). La aprobación manual por umbral de simultaneidad es un estado del pago (`REQUIRES_MANUAL_APPROVAL`), no un campo del evento; el aprobador queda en `payments.verified_by_user_id`. |
-| `total_services_amount` | `NUMERIC(10,2)` | NO | - | - | Monto liquidado de servicios. |
-| `total_mobility_amount` | `NUMERIC(10,2)` | NO | - | - | Monto liquidado de movilidad. |
-| `final_total_amount` | `NUMERIC(10,2)` | NO | - | - | Total final facturado. |
-| `advance_paid` | `NUMERIC(10,2)` | NO | `0.00` | - | Adelanto verificado (suma de pagos `ADVANCE` en `VERIFIED`). |
-| `pre_show_balance_paid` | `NUMERIC(10,2)` | NO | `0.00` | - | Saldo + movilidad cobrado antes de iniciar el show (suma de pagos `BALANCE`). |
-| `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | - | Monto adicional por extensiones en vivo (suma de pagos `EXTENSION`). |
+| `total_services_amount` | `NUMERIC(10,2)` | NO | - | CHECK (`>= 0`) | Monto liquidado de servicios. |
+| `total_mobility_amount` | `NUMERIC(10,2)` | NO | - | CHECK (`>= 0`) | Monto liquidado de movilidad. |
+| `final_total_amount` | `NUMERIC(10,2)` | NO | - | CHECK (`>= 0`) | Total final facturado. |
+| `advance_paid` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Adelanto verificado (suma de pagos `ADVANCE` en `VERIFIED`). |
+| `pre_show_balance_paid` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Saldo + movilidad cobrado antes de iniciar el show (suma de pagos `BALANCE`). |
+| `extra_hours_amount` | `NUMERIC(10,2)` | NO | `0.00` | CHECK (`>= 0`) | Crédito histórico más extensiones en vivo respaldadas por pagos `EXTENSION`. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de registro. |
+| `actual_start_time` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Inicio real en UTC, registrado por el servidor al pasar a `IN_PROGRESS` (US-17 parcial). Eventos históricos conservan `NULL`. |
+| `extra_minutes_total` | `INTEGER` | NO | `0` | CHECK (`extra_minutes_total >= 0`) | Minutos acumulados de las extensiones cobradas; el horario contratado se conserva. |
+| `legacy_extra_hours_amount` | `NUMERIC(10,2)` | NO | `0` | CHECK (`>= 0`) | Crédito histórico fijado por `0002` para eventos sin pagos `EXTENSION` previos. Sin entrada pública. |
+
+> **Claves foráneas y restricciones de `events`:** `quote_id` es UUID obligatorio y
+> único, con FOREIGN KEY a `quotes.id` (sin `ON DELETE`: una cotización con evento no
+> se elimina). Todos los importes de dinero son no negativos y `end_time <> start_time`
+> (un evento que cruza la medianoche termina al día siguiente, por lo que no se exige
+> `end_time > start_time`). `actual_start_time` es nulo hasta que el evento pasa a
+> `IN_PROGRESS`: `/start` sincroniza `pre_show_balance_paid` con el total `BALANCE`
+> verificado por el puerto de E5, no con una declaración del cliente, y persiste
+> estado, total verificado e instante en una misma transacción bajo bloqueo de fila.
 
 ---
 
@@ -287,11 +299,11 @@ Registro de pagos de una cotización: adelanto (`ADVANCE`, con ciclo de verifica
 | `transaction_reference` | `VARCHAR(60)` | SÍ | `NULL` | - | Número de operación bancaria o de Yape. |
 | `validation_status` | `VARCHAR(30)` | NO | `'PENDING_VERIFICATION'` | CHECK in (`PENDING_VERIFICATION`, `REQUIRES_MANUAL_APPROVAL`, `VERIFIED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED`) | Estado del pago (ver RN, sección 3.2). Los pagos `BALANCE` y `EXTENSION` nacen en `VERIFIED`. |
 | `rejection_reason` | `TEXT` | SÍ | `NULL` | - | Motivo de rechazo para el flujo de reintento. |
-| `verified_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Encargado que validó el adelanto o aprobó el sobrecupo. |
+| `verified_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que validó el adelanto o aprobó el sobrecupo. |
 | `verified_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha de verificación. |
-| `registered_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Operador o encargado que registró el cobro in situ; nulo en `ADVANCE` (lo envía el cliente por WhatsApp). |
+| `registered_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Operador o encargado que registró el cobro in situ; nulo en `ADVANCE` (lo envía el cliente por WhatsApp). |
 | `audit_status` | `VARCHAR(20)` | SÍ | `NULL` | CHECK in (`UNREVIEWED`, `REVIEWED`, `FLAGGED`) | Auditoría posterior del encargado (ver RN, sección 3.2); nulo en `ADVANCE`, `UNREVIEWED` al registrar un `BALANCE` o `EXTENSION`. |
-| `audited_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Encargado que revisó o marcó el cobro. |
+| `audited_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que revisó o marcó el cobro. |
 | `audited_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora de la auditoría. |
 | `audit_notes` | `TEXT` | SÍ | `NULL` | - | Observaciones de la auditoría (obligatorias al marcar `FLAGGED`). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de carga o registro del pago. |
@@ -323,7 +335,7 @@ Asignación de un elenco a un evento, con el intervalo de tránsito aplicado (RF
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador de la asignación. |
-| `event_id` | `UUID` | NO | - | FK (`events.id`), INDEX | Evento atendido. |
+| `event_id` | `UUID` | NO | - | FK (`events.id`), INDEX (cubierto por `UNIQUE(event_id, crew_id)`) | Evento atendido. |
 | `crew_id` | `UUID` | NO | - | FK (`crews.id`), INDEX | Elenco asignado. |
 | `transit_interval_minutes` | `INTEGER` | SÍ | `NULL` | CHECK (`transit_interval_minutes >= 0`) | Intervalo de tránsito aplicado respecto del evento anterior del elenco; nulo si es el primero del día. |
 | `transit_interval_overridden` | `BOOLEAN` | NO | `FALSE` | - | Si el encargado modificó el intervalo sugerido (la justificación se registra en `audit_logs`). |
@@ -346,27 +358,50 @@ Extensiones de tiempo registradas durante el show (RF-19). El cobro vive en `pay
 | `agreed_rate` | `NUMERIC(10,2)` | NO | - | CHECK (`agreed_rate > 0`) | Tarifa pactada por la extensión. |
 | `requested_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora del pedido del cliente. |
 
+> **US-18:** `0002_event_extensions`, encadenada a `0001_initial_schema`, crea esta
+> tabla y añade `events.extra_minutes_total` y `legacy_extra_hours_amount`.
+> Los eventos existentes reciben cero minutos. El crédito histórico copia
+> `extra_hours_amount` únicamente si no hay pagos `EXTENSION` para ese evento;
+> no crea pagos, comprobantes ni minutos. Un pago real sin detalle exige reconciliación.
+> `agreed_rate` es el importe total de la extensión y debe coincidir con
+> `payments.amount`. El pago vinculado pertenece al mismo evento y cotización,
+> tiene concepto `EXTENSION` y estado `VERIFIED`; esas correspondencias se validan
+> en aplicación y persistencia. Pago, extensión, reservas activas prolongadas y
+> acumulados se guardan juntos.
+> `requested_at` se obtiene del reloj del servidor y se normaliza a UTC.
+> Las FK hacia `quotes` ya existen en el baseline y se conservan.
+> El fin operativo se calcula con el horario contratado más los minutos acumulados;
+> el cronograma devuelve su hora y fecha (`end_time`, `end_date`).
+
 ---
 
 ### 2.19 Tabla: `outbox_messages`
-Cola de mensajes salientes de WhatsApp con reintentos (patrón *outbox*). Desacopla las transacciones de negocio de la disponibilidad de la API de Meta (ADR-05).
+Cola de mensajes salientes con reintentos (patrón *outbox*). Desacopla las transacciones de negocio de la disponibilidad de la pasarela de mensajería: el caso de uso encola el mensaje en su propia transacción, un despachador (worker de arq) lo entrega a Chatwoot mediante `IMessagingPort` y Chatwoot lo envía por WhatsApp (ADR-05, ADR-10). El envío y la entrega son estados separados: `status` indica si Chatwoot aceptó el mensaje y `delivery_status` indica si WhatsApp lo entregó al cliente. Ver la [especificación de la cola de mensajes salientes](../02-arquitectura/07-spec-e1-outbox-mensajeria.md).
 
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del mensaje. |
 | `recipient_phone` | `VARCHAR(20)` | NO | - | - | Teléfono de destino en formato E.164. |
-| `message_type` | `VARCHAR(30)` | NO | - | CHECK in (`TEXT`, `TEMPLATE`, `INTERACTIVE`, `DOCUMENT`) | Tipo de mensaje de WhatsApp. |
-| `payload` | `JSONB` | SÍ | `NULL` | - | Contenido estructurado del mensaje; se anula (`NULL`) tras el envío de mensajes con OTP. |
-| `status` | `VARCHAR(20)` | NO | `'PENDING'` | CHECK in (`PENDING`, `SENT`, `FAILED`) | `PENDING` en cola, `SENT` entregado a la API, `FAILED` reintentos agotados. |
+| `message_type` | `VARCHAR(30)` | NO | - | CHECK in (`TEXT`, `TEMPLATE`, `INTERACTIVE`, `DOCUMENT`) | Tipo de mensaje de WhatsApp enviado a través de la pasarela. |
+| `payload` | `JSONB` | SÍ | `NULL` | - | Contenido estructurado del mensaje. Se anula (`NULL`) tras el envío cuando `redact_after_send` es verdadero (mensajes con OTP). En los mensajes `DOCUMENT` guarda la ruta del archivo en el almacenamiento, el nombre, el tipo de contenido y el pie, no los bytes. |
+| `status` | `VARCHAR(20)` | NO | `'PENDING'` | CHECK in (`PENDING`, `SENT`, `FAILED`) | `PENDING` en cola, `SENT` aceptado por la pasarela (Chatwoot), `FAILED` reintentos agotados o error permanente. |
 | `attempts` | `INTEGER` | NO | `0` | CHECK (`attempts >= 0`) | Intentos de envío realizados. |
-| `max_attempts` | `INTEGER` | NO | `5` | CHECK (`max_attempts > 0`) | Máximo de intentos antes de marcar `FAILED`. |
-| `next_attempt_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | INDEX | Momento del próximo intento (retroceso exponencial). |
-| `last_error` | `TEXT` | SÍ | `NULL` | - | Último error devuelto por la API. |
-| `sent_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento del envío exitoso. |
+| `max_attempts` | `INTEGER` | NO | `6` | CHECK (`max_attempts > 0`) | Máximo de intentos antes de marcar `FAILED`: el primer envío más cinco reintentos (RNF-03.2). |
+| `next_attempt_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | INDEX | Momento del próximo intento. Tras un fallo sigue la espera creciente de 30 s, 2 min, 10 min, 30 min y 2 h. Mientras un despachador lo procesa, la reserva con vencimiento lo adelanta en `OUTBOX_LEASE_SECONDS`. |
+| `last_error` | `TEXT` | SÍ | `NULL` | - | Último error del envío a la pasarela, sin el contenido del mensaje. |
+| `sent_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que Chatwoot aceptó el mensaje. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de encolado. |
+| `external_message_id` | `VARCHAR(64)` | SÍ | `NULL` | UNIQUE | Identificador del mensaje en Chatwoot; permite asociar el aviso de entrega. |
+| `conversation_id` | `BIGINT` | SÍ | `NULL` | - | Conversación de Chatwoot a la que pertenece el mensaje. |
+| `delivery_status` | `VARCHAR(20)` | SÍ | `NULL` | CHECK in (`DELIVERED`, `READ`, `FAILED`) | Estado de entrega informado por WhatsApp. Nulo hasta el primer aviso; nunca retrocede. |
+| `delivery_error` | `TEXT` | SÍ | `NULL` | - | Motivo del rechazo de WhatsApp cuando `delivery_status` es `FAILED`. |
+| `delivered_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que WhatsApp entregó el mensaje. |
+| `read_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que el cliente leyó el mensaje. |
+| `redact_after_send` | `BOOLEAN` | NO | `false` | - | Si es verdadero, el `payload` se anula al marcar el mensaje como `SENT`. |
 
 *Restricciones de tabla:*
 * `INDEX(status, next_attempt_at)` para el despachador de mensajes pendientes.
+* `UNIQUE(external_message_id)`: un aviso de entrega corresponde a un único mensaje; admite varios valores nulos.
 
 ---
 
@@ -376,8 +411,8 @@ Bitácora de auditoría para trazabilidad de decisiones críticas y procesos de 
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del log. |
-| `user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`) | Usuario responsable de la acción; nulo en acciones del sistema o del cliente (por ejemplo, la firma). |
-| `action` | `VARCHAR(50)` | NO | - | CHECK in (`OVERRIDE_MOBILITY`, `OVERRIDE_TRANSIT_INTERVAL`, `APPROVE_OVERBOOKED_PAYMENT`, `REJECT_OVERBOOKED_PAYMENT`, `AUDIT_PAYMENT`, `MANUAL_CONTRACT`, `CONTRACT_SIGNED`) | Acción registrada. `CONTRACT_SIGNED` guarda en `new_values` el SHA-256 del PDF sellado, la verificación del OTP, la IP, el agente de usuario y las marcas de tiempo. |
+| `user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Usuario responsable de la acción; nulo en acciones del sistema o del cliente (por ejemplo, la firma). |
+| `action` | `VARCHAR(50)` | NO | - | CHECK in (`OVERRIDE_MOBILITY`, `OVERRIDE_TRANSIT_INTERVAL`, `APPROVE_OVERBOOKED_PAYMENT`, `REJECT_OVERBOOKED_PAYMENT`, `AUDIT_PAYMENT`, `MANUAL_CONTRACT`, `CONTRACT_SIGNED`, `SEND_CONVERSATION_MESSAGE`, `OVERRIDE_CONVERSATION_ASSIGNMENT`) | Acción registrada. `SEND_CONVERSATION_MESSAGE` identifica al encargado que escribió un mensaje enviado con el agente de servicio de Chatwoot (ADR-10). `OVERRIDE_CONVERSATION_ASSIGNMENT` registra la reasignación de una conversación por un `SUPERADMIN`. `CONTRACT_SIGNED` guarda en `new_values` el SHA-256 del PDF sellado, la verificación del OTP, la IP, el agente de usuario y las marcas de tiempo. |
 | `entity_name` | `VARCHAR(50)` | NO | - | - | Entidad modificada (`quotes`, `events`, `contracts`, `payments`, `crew_assignments`). |
 | `entity_id` | `UUID` | NO | - | INDEX (`entity_name`, `entity_id`) | UUID de la entidad en cuestión. |
 | `old_values` | `JSONB` | SÍ | `NULL` | - | Estado anterior en formato JSON. |
@@ -400,3 +435,52 @@ Bitácora de auditoría para trazabilidad de decisiones críticas y procesos de 
 *Restricciones de tabla:*
 * `UNIQUE(package_id, inventory_item_id)`
 * `INDEX(inventory_item_id)`
+
+---
+
+### 2.22 Tabla: `conversation_links`
+Vínculo entre una conversación de Chatwoot y los datos de negocio de EventPro (cliente, cotización vigente y encargado que la tomó). Es la única información de conversaciones que persiste EventPro (ADR-10).
+
+**EventPro no almacena mensajes.** Chatwoot es la fuente de verdad de los mensajes, los medios, los estados de entrega y el estado de la conversación (`pending` o `open`); EventPro los consulta por API y los recibe por webhook.
+
+| Columna | Tipo | Nulo | Default | Restricciones | Descripción |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del vínculo. |
+| `chatwoot_conversation_id` | `BIGINT` | NO | - | UNIQUE | Identificador de la conversación en Chatwoot. |
+| `client_id` | `UUID` | NO | - | FK (`clients.id`), INDEX | Cliente de la conversación (el teléfono de WhatsApp es su clave natural). |
+| `quote_id` | `UUID` | SÍ | `NULL` | FK (`quotes.id`), INDEX | Cotización vigente de la conversación, si existe. |
+| `assigned_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX parcial | Encargado que tomó la conversación; nulo mientras responde el bot o si está derivada sin asignar. |
+| `handoff_reason` | `VARCHAR(30)` | SÍ | `NULL` | CHECK in (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`) | Motivo de la última derivación a un humano; nulo si nunca fue derivada. UI: «Solicitud del cliente», «Bot no entendió», «Toma manual», «Error del bot». |
+| `handoff_summary` | `TEXT` | SÍ | `NULL` | - | Resumen generado al derivar (datos capturados y cotización vigente). |
+| `handed_off_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora de la última derivación; permite ordenar la bandeja. |
+| `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de creación del vínculo. |
+| `updated_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de la última modificación del vínculo. |
+
+*Restricciones de tabla:*
+* `UNIQUE(chatwoot_conversation_id)`
+* `INDEX(client_id)`
+* `CREATE INDEX ix_conversation_links_assigned_user ON conversation_links (assigned_user_id) WHERE assigned_user_id IS NOT NULL` para el filtro «asignadas a mí» de la bandeja.
+
+---
+
+### 2.23 Tabla: `event_financial_snapshots`
+US-21 / PC-09: una instantánea insertada en la misma transacción que el cierre a
+`SETTLED`. No ofrece edición pública; las consultas no vuelven a leer el catálogo.
+
+| Columna | Tipo | Nulo | Default | Restricciones | Descripción |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `event_id` | `UUID` | NO | - | PK, FK (`events.id`) | Una captura por evento; la PK indexa la FK. |
+| `gross_revenue` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Cobros base + crédito histórico + extensiones verificadas. |
+| `fixed_packages_cost` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Costo fijo del paquete al capturar. |
+| `fixed_extras_cost` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Costos unitarios por cantidades cotizadas. |
+| `mobility_operational_cost` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Movilidad base cotizada; cero si transporta el cliente. |
+| `recorded_at` | `TIMESTAMPTZ` | NO | - | - | Instante UTC de captura; reloj de aplicación o fecha de migración. |
+| `origin` | `VARCHAR(20)` | NO | - | CHECK in (`SETTLEMENT`, `LEGACY_BACKFILL`) | Distingue captura al cierre de reconstrucción con costos actuales. |
+| `details` | `JSONB` | NO | - | CHECK (`jsonb_typeof(details) = 'object'`) | Desglose trazable, sin datos personales. |
+
+`details` contiene `package` (`id`, `unit_cost`), `extras` (lista de `id`,
+`quantity`, `unit_cost`, `subtotal`), `mobility` (`source=QUOTE_BASE`, `amount`) y
+`revenue` (`advance_paid`, `pre_show_balance_paid`, `legacy_extra_hours_amount`,
+`verified_extension_amount`). Importes como cadenas decimales con dos posiciones.
+Los costos históricos originales no pueden recuperarse: `LEGACY_BACKFILL` usa el
+catálogo vigente, incluidos artículos inactivos referenciados, sin fabricar pagos.

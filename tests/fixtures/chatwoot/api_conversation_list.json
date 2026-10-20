@@ -1,0 +1,340 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "data": {
+      "meta": {
+        "mine_count": 1,
+        "assigned_count": 1,
+        "unassigned_count": 2,
+        "all_count": 3
+      },
+      "payload": [
+        {
+          "meta": {
+            "sender": {
+              "additional_attributes": {},
+              "availability_status": "offline",
+              "email": null,
+              "id": 3,
+              "name": "+51999333444",
+              "phone_number": "+51999333444",
+              "blocked": false,
+              "identifier": null,
+              "thumbnail": "",
+              "custom_attributes": {},
+              "created_at": 1792458145
+            },
+            "channel": "Channel::Whatsapp",
+            "hmac_verified": false
+          },
+          "id": 3,
+          "messages": [],
+          "account_id": 2,
+          "uuid": "00000000-0000-4000-8000-000000000002",
+          "additional_attributes": {},
+          "agent_last_seen_at": 0,
+          "assignee_last_seen_at": 0,
+          "can_reply": false,
+          "contact_info_request": {
+            "available": false,
+            "reason": null,
+            "delivery_mode": null
+          },
+          "contact_last_seen_at": 0,
+          "custom_attributes": {},
+          "inbox_id": 1,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "status": "open",
+          "created_at": 1792458145,
+          "updated_at": 1792458145.45504,
+          "timestamp": 1792458145,
+          "first_reply_created_at": 0,
+          "unread_count": 0,
+          "last_non_activity_message": null,
+          "last_activity_at": 1792458145,
+          "priority": null,
+          "waiting_since": 1792458145,
+          "sla_policy_id": null
+        },
+        {
+          "meta": {
+            "sender": {
+              "additional_attributes": {},
+              "availability_status": "offline",
+              "email": null,
+              "id": 2,
+              "name": "51999333444",
+              "phone_number": "+51999333444",
+              "blocked": false,
+              "identifier": null,
+              "thumbnail": "",
+              "custom_attributes": {},
+              "created_at": 1792449242
+            },
+            "channel": "Channel::Whatsapp",
+            "assignee": {
+              "id": 2,
+              "account_id": 2,
+              "availability_status": "offline",
+              "auto_offline": true,
+              "confirmed": true,
+              "email": null,
+              "provider": "email",
+              "available_name": "Agente Demo",
+              "name": "Agente Demo",
+              "role": "administrator",
+              "thumbnail": "",
+              "custom_role_id": null
+            },
+            "assignee_type": "User",
+            "hmac_verified": false
+          },
+          "id": 2,
+          "messages": [
+            {
+              "id": 8,
+              "content": "Agente Demo auto-asignado a esta conversación",
+              "account_id": 2,
+              "inbox_id": 1,
+              "conversation_id": 2,
+              "message_type": 2,
+              "created_at": 1792449252,
+              "updated_at": "2026-10-19T22:34:12.687Z",
+              "private": false,
+              "status": "sent",
+              "source_id": null,
+              "content_type": "text",
+              "content_attributes": {},
+              "sender_type": null,
+              "sender_id": null,
+              "external_source_ids": {},
+              "additional_attributes": {},
+              "processed_message_content": "Agente Demo auto-asignado a esta conversación",
+              "sentiment": {},
+              "conversation": {
+                "assignee_id": 2,
+                "unread_count": 0,
+                "last_activity_at": 1792449252,
+                "contact_inbox": {
+                  "source_id": "51999333444"
+                }
+              }
+            }
+          ],
+          "account_id": 2,
+          "uuid": "00000000-0000-4000-8000-000000000003",
+          "additional_attributes": {},
+          "agent_last_seen_at": 1792453270,
+          "assignee_last_seen_at": 1792453270,
+          "can_reply": false,
+          "contact_info_request": {
+            "available": false,
+            "reason": null,
+            "delivery_mode": null
+          },
+          "contact_last_seen_at": 0,
+          "custom_attributes": {},
+          "inbox_id": 1,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "status": "open",
+          "created_at": 1792449252,
+          "updated_at": 1792449252.7113001,
+          "timestamp": 1792449252,
+          "first_reply_created_at": 1792449252,
+          "unread_count": 0,
+          "last_non_activity_message": {
+            "id": 7,
+            "content": "Welcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API, hosted by Meta. Thank you for taking the time to test with us.",
+            "account_id": 2,
+            "inbox_id": 1,
+            "conversation_id": 2,
+            "message_type": 1,
+            "created_at": 1792449252,
+            "updated_at": "2026-10-19T22:34:13.132Z",
+            "private": false,
+            "status": "failed",
+            "source_id": null,
+            "content_type": "text",
+            "content_attributes": {
+              "external_error": "(#131030) Recipient phone number not in allowed list"
+            },
+            "sender_type": "User",
+            "sender_id": 2,
+            "external_source_ids": {},
+            "additional_attributes": {
+              "template_params": {
+                "name": "hello_world",
+                "category": "UTILITY",
+                "language": "en_US",
+                "content_mode": "rendered",
+                "format_version": "legacy",
+                "processed_params": {}
+              }
+            },
+            "processed_message_content": "Welcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API, hosted by Meta. Thank you for taking the time to test with us.",
+            "sentiment": {},
+            "conversation": {
+              "assignee_id": 2,
+              "unread_count": 0,
+              "last_activity_at": 1792449252,
+              "contact_inbox": {
+                "source_id": "51999333444"
+              }
+            },
+            "sender": {
+              "id": 2,
+              "name": "Agente Demo",
+              "available_name": "Agente Demo",
+              "avatar_url": "",
+              "type": "user",
+              "availability_status": "offline",
+              "thumbnail": ""
+            }
+          },
+          "last_activity_at": 1792449252,
+          "priority": null,
+          "waiting_since": 0,
+          "sla_policy_id": null
+        },
+        {
+          "meta": {
+            "sender": {
+              "additional_attributes": {
+                "social_profiles": {
+                  "whatsapp": "cliente.demo"
+                },
+                "social_whatsapp_user_name": "Cliente Demo"
+              },
+              "availability_status": "offline",
+              "email": null,
+              "id": 1,
+              "name": "Cliente Demo",
+              "phone_number": "+51999111222",
+              "blocked": false,
+              "identifier": null,
+              "thumbnail": "",
+              "custom_attributes": {},
+              "last_activity_at": 1792447532,
+              "created_at": 1791657993
+            },
+            "channel": "Channel::Whatsapp",
+            "hmac_verified": false
+          },
+          "id": 1,
+          "messages": [
+            {
+              "id": 6,
+              "content": "respondiendo a la prueba",
+              "account_id": 2,
+              "inbox_id": 1,
+              "conversation_id": 1,
+              "message_type": 1,
+              "created_at": 1792447562,
+              "updated_at": "2026-10-19T22:06:07.161Z",
+              "private": false,
+              "status": "read",
+              "source_id": "wamid.FAKE0002",
+              "content_type": "text",
+              "content_attributes": {},
+              "sender_type": "User",
+              "sender_id": 2,
+              "external_source_ids": {},
+              "additional_attributes": {},
+              "processed_message_content": "respondiendo a la prueba",
+              "sentiment": {},
+              "conversation": {
+                "assignee_id": null,
+                "unread_count": 0,
+                "last_activity_at": 1792447562,
+                "contact_inbox": {
+                  "source_id": "51999111222"
+                }
+              },
+              "sender": {
+                "id": 2,
+                "name": "Agente Demo",
+                "available_name": "Agente Demo",
+                "avatar_url": "",
+                "type": "user",
+                "availability_status": "offline",
+                "thumbnail": ""
+              }
+            }
+          ],
+          "account_id": 2,
+          "uuid": "00000000-0000-4000-8000-000000000004",
+          "additional_attributes": {},
+          "agent_last_seen_at": 1792447562,
+          "assignee_last_seen_at": 0,
+          "can_reply": true,
+          "contact_info_request": {
+            "available": false,
+            "reason": null,
+            "delivery_mode": null
+          },
+          "contact_last_seen_at": 0,
+          "custom_attributes": {},
+          "inbox_id": 1,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "status": "open",
+          "created_at": 1791657993,
+          "updated_at": 1792447563.0489368,
+          "timestamp": 1792447562,
+          "first_reply_created_at": 1791658147,
+          "unread_count": 0,
+          "last_non_activity_message": {
+            "id": 6,
+            "content": "respondiendo a la prueba",
+            "account_id": 2,
+            "inbox_id": 1,
+            "conversation_id": 1,
+            "message_type": 1,
+            "created_at": 1792447562,
+            "updated_at": "2026-10-19T22:06:07.161Z",
+            "private": false,
+            "status": "read",
+            "source_id": "wamid.FAKE0002",
+            "content_type": "text",
+            "content_attributes": {},
+            "sender_type": "User",
+            "sender_id": 2,
+            "external_source_ids": {},
+            "additional_attributes": {},
+            "processed_message_content": "respondiendo a la prueba",
+            "sentiment": {},
+            "conversation": {
+              "assignee_id": null,
+              "unread_count": 0,
+              "last_activity_at": 1792447562,
+              "contact_inbox": {
+                "source_id": "51999111222"
+              }
+            },
+            "sender": {
+              "id": 2,
+              "name": "Agente Demo",
+              "available_name": "Agente Demo",
+              "avatar_url": "",
+              "type": "user",
+              "availability_status": "offline",
+              "thumbnail": ""
+            }
+          },
+          "last_activity_at": 1792447562,
+          "priority": null,
+          "waiting_since": 0,
+          "sla_policy_id": null
+        }
+      ]
+    }
+  }
+}

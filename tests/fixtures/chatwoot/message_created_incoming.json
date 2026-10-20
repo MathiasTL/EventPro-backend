@@ -1,0 +1,157 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json",
+    "User-Agent": "Ruby",
+    "X-Chatwoot-Delivery": "00000000-0000-4000-8000-000000000001",
+    "X-Chatwoot-Signature": "REDACTED",
+    "X-Chatwoot-Timestamp": "1792447532"
+  },
+  "body": {
+    "account": {
+      "id": 2,
+      "name": "Cuenta Demo"
+    },
+    "additional_attributes": {},
+    "content_attributes": {},
+    "content_type": "text",
+    "content": "Prueba de la prueba",
+    "conversation": {
+      "additional_attributes": {},
+      "can_reply": true,
+      "channel": "Channel::Whatsapp",
+      "contact_inbox": {
+        "id": 1,
+        "contact_id": 1,
+        "inbox_id": 1,
+        "source_id": "51999111222",
+        "created_at": "2026-10-10T18:46:33.611Z",
+        "updated_at": "2026-10-10T18:46:33.611Z",
+        "hmac_verified": false,
+        "pubsub_token": "REDACTED"
+      },
+      "id": 1,
+      "inbox_id": 1,
+      "messages": [
+        {
+          "id": 5,
+          "content": "Prueba de la prueba",
+          "account_id": 2,
+          "inbox_id": 1,
+          "conversation_id": 1,
+          "message_type": 0,
+          "created_at": 1792447532,
+          "updated_at": "2026-10-19T22:05:32.179Z",
+          "private": false,
+          "status": "sent",
+          "source_id": "wamid.FAKE0001",
+          "content_type": "text",
+          "content_attributes": {},
+          "sender_type": "Contact",
+          "sender_id": 1,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "Prueba de la prueba",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 1,
+            "last_activity_at": 1792447532,
+            "contact_inbox": {
+              "source_id": "51999111222"
+            }
+          },
+          "sender": {
+            "additional_attributes": {
+              "social_profiles": {
+                "whatsapp": "cliente.demo"
+              },
+              "social_whatsapp_user_name": "Cliente Demo"
+            },
+            "custom_attributes": {},
+            "email": null,
+            "id": 1,
+            "identifier": null,
+            "name": "Cliente Demo",
+            "phone_number": "+51999111222",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        }
+      ],
+      "labels": [],
+      "meta": {
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.demo"
+            },
+            "social_whatsapp_user_name": "Cliente Demo"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Demo",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "assignee": null,
+        "assignee_type": null,
+        "team": null,
+        "hmac_verified": false
+      },
+      "status": "open",
+      "custom_attributes": {},
+      "snoozed_until": null,
+      "unread_count": 1,
+      "first_reply_created_at": "2026-10-10T18:49:07.858Z",
+      "priority": null,
+      "waiting_since": 0,
+      "agent_last_seen_at": 1792443294,
+      "contact_last_seen_at": 0,
+      "last_activity_at": 1792447532,
+      "timestamp": 1792447532,
+      "created_at": 1791657993,
+      "updated_at": 1792447532.19094,
+      "account": {
+        "id": 2,
+        "name": "Cuenta Demo"
+      }
+    },
+    "created_at": "2026-10-19T22:05:32.179Z",
+    "id": 5,
+    "inbox": {
+      "id": 1,
+      "name": "Bandeja WhatsApp Demo"
+    },
+    "message_type": "incoming",
+    "private": false,
+    "sender": {
+      "account": {
+        "id": 2,
+        "name": "Cuenta Demo"
+      },
+      "additional_attributes": {
+        "social_profiles": {
+          "whatsapp": "cliente.demo"
+        },
+        "social_whatsapp_user_name": "Cliente Demo"
+      },
+      "avatar": "",
+      "custom_attributes": {},
+      "email": null,
+      "id": 1,
+      "identifier": null,
+      "name": "Cliente Demo",
+      "phone_number": "+51999111222",
+      "thumbnail": "",
+      "blocked": false
+    },
+    "source_id": "wamid.FAKE0001",
+    "event": "message_created"
+  }
+}

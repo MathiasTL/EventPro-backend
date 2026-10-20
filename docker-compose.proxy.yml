@@ -1,0 +1,39 @@
+# Proxy inverso Caddy con HTTPS automatico (solo servidor; ver deploy/Caddyfile).
+# Se combina con el compose base y Chatwoot:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.chatwoot.yml -f docker-compose.proxy.yml up -d
+#
+# Requisitos: EVENTPRO_DOMAIN definido en `.env` (dominio base DuckDNS), registros DNS de
+# app./api./chat. apuntando a la IP publica del servidor y puertos 80/443 abiertos
+# (Security List de la VCN e iptables de la VM).
+
+services:
+  caddy:
+    # Imagen oficial multi-arquitectura (amd64/arm64), fijada a la version mayor 2.
+    image: caddy:2
+    container_name: eventpro_caddy
+    restart: unless-stopped
+    environment:
+      EVENTPRO_DOMAIN: ${EVENTPRO_DOMAIN:?defina EVENTPRO_DOMAIN en .env (dominio base, p. ej. eventpro-demo.duckdns.org)}
+      FRONTEND_UPSTREAM: ${FRONTEND_UPSTREAM:-frontend:3000}
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3 (QUIC)
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificados y estado de ACME: conservar para no agotar los limites de Let's Encrypt.
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - eventpro_network
+
+  # En el servidor, la API solo debe ser alcanzable a traves de Caddy (que bloquea el webhook
+  # interno de Chatwoot). Se retira la publicacion del puerto 8000 del compose base.
+  api:
+    ports: !reset []
+
+volumes:
+  caddy_data:
+  caddy_config:

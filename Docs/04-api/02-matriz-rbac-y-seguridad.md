@@ -11,7 +11,7 @@
 | **Operador de Elenco / Campo** | `OPERADOR` | Acceso móvil restringido a **sus propios eventos asignados** (los de su elenco, `crews.user_id`). Visualización de notas/observaciones, registro de llegada, cobro de saldo in situ con evidencia y extensiones de show. |
 | **Cliente / Invitado** | `CLIENTE` | No tiene cuenta ni JWT. Acceso público acotado por un token temporal criptográfico de un solo uso, entregado por WhatsApp, que solo da acceso a **su propio contrato** (visualización, OTP y firma electrónica). Sus cotizaciones y comprobantes los gestiona a través del chat de WhatsApp (bot). |
 
-> **Actores no humanos:** el **bot de WhatsApp** y las **tareas programadas** (vencimiento de cotizaciones, despacho de la cola `outbox_messages`) ejecutan casos de uso internos sin pasar por HTTP ni por esta matriz. Los endpoints HTTP equivalentes a las acciones del bot (`POST /quotes`, `POST /quotes/{id}/pay-advance`, `POST /quotes/{id}/cancel`, `POST /payments/advance`) están reservados a `ENCARGADO` y `SUPERADMIN`, para actuar en nombre del cliente.
+> **Actores no humanos:** el **bot de WhatsApp** (que opera a través de Chatwoot) y las **tareas programadas** (vencimiento de cotizaciones, despacho de la cola `outbox_messages`) ejecutan casos de uso internos sin pasar por HTTP ni por esta matriz. Los endpoints HTTP equivalentes a las acciones del bot (`POST /quotes`, `POST /quotes/{id}/pay-advance`, `POST /quotes/{id}/cancel`, `POST /payments/advance`) están reservados a `ENCARGADO` y `SUPERADMIN`, para actuar en nombre del cliente.
 
 ---
 
@@ -28,7 +28,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `Propios` | Permitido solo sobre eventos asignados al elenco del operador (`crews.user_id` = usuario autenticado, mediante `crew_assignments`); los demás eventos responden `404`. |
 | `Token` | Permitido con el token de un solo uso del enlace de firma, solo para el contrato al que pertenece el token. |
 | `Público` | Sin autenticación (acceso acotado por límites de peticiones). |
-| `Meta` | Sin JWT; autenticado por la verificación de Meta (token de verificación o firma HMAC). |
+| `Firma` | Sin JWT; autenticado por la firma HMAC del webhook de Chatwoot (acceso interno, no es un acceso de usuario). |
 
 ### 2.0 Salud del Servicio
 
@@ -51,7 +51,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `GET /users` | Sí | - | - | - | |
 | `POST /users` | Sí | - | - | - | |
 | `GET /users/{id}` | Sí | - | - | - | |
-| `PATCH /users/{id}` | Sí | - | - | - | Desactivar o cambiar contraseña revoca los refresh tokens. |
+| `PATCH /users/{id}` | Sí | - | - | - | Desactivar o cambiar contraseña revoca los refresh tokens en la misma transacción atómica del cambio. |
 | `GET /audit-logs` | Sí | Sí | - | - | Solo lectura. |
 
 ### 2.3 Catálogo Comercial y Elencos
@@ -94,12 +94,11 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `POST /quotes/{id}/cancel` | Sí | Sí | - | - | |
 | `PATCH /overrides/quotes/{id}/mobility` | Sí | Sí | - | - | Audita `OVERRIDE_MOBILITY`. |
 
-### 2.5 Webhook de WhatsApp
+### 2.5 Webhook de Chatwoot
 
 | Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE (Token) | Notas |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| `GET /webhooks/whatsapp` | Meta | Meta | Meta | Meta | Reto de verificación: valida `hub.verify_token`. No es un acceso de usuario. |
-| `POST /webhooks/whatsapp` | Meta | Meta | Meta | Meta | Valida `X-Hub-Signature-256` (HMAC-SHA256 del cuerpo crudo). No usa JWT. |
+| `POST /webhooks/chatwoot` | Firma | Firma | Firma | Firma | Valida `X-Chatwoot-Signature` (HMAC-SHA256 de `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"`) y rechaza marcas de tiempo con más de 5 minutos de diferencia. Sin `CHATWOOT_WEBHOOK_SECRET` responde siempre `401`. Deduplica por `X-Chatwoot-Delivery`, que no está firmada. No usa JWT. Solo interno: bloqueado en el proxy. |
 
 ### 2.6 Pagos y Comprobantes
 
@@ -139,11 +138,25 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `POST /events/{id}/crew-assignments` | Sí | Sí | - | - | Con override del intervalo (RF-22) audita `OVERRIDE_TRANSIT_INTERVAL`. |
 | `DELETE /events/{id}/crew-assignments/{assignment_id}` | Sí | Sí | - | - | Solo antes de `IN_PROGRESS`. |
 | `POST /events/{id}/arrive` | Sí | Sí | Propios | - | `SCHEDULED` → `AWAITING_BALANCE`. |
+| `POST /events/{id}/start` | Sí | Sí | Propios | - | US-17 parcial: saldo verificado por puerto; operador sin asignación recibe `403` antes de buscar el evento. |
 | `POST /events/{id}/check-in-and-collect` | Sí | Sí | Propios | - | Crea un pago `BALANCE` `VERIFIED` con evidencia obligatoria. |
-| `POST /events/{id}/extensions` | Sí | Sí | Propios | - | Crea un pago `EXTENSION` `VERIFIED` con evidencia obligatoria. |
-| `POST /events/{id}/settle` | Sí | Sí | Propios | - | `IN_PROGRESS` o `EXTENDED` → `SETTLED`. |
+| `POST /events/{id}/extensions` | Sí | Sí | Propios | - | US-18: pago real `EXTENSION` `VERIFIED` con fotografía; fuera de alcance responde `404` antes de cargar el evento. |
+| `POST /events/{id}/settle` | Sí | Sí | Propios | - | US-18: `IN_PROGRESS` o `EXTENDED` → `SETTLED`, con cobertura completa y extensiones consistentes; fuera de alcance responde `404`. |
 | `POST /events/{id}/cancel` | Sí | Sí | - | - | Libera inventario y anula el contrato. |
 | `PATCH /overrides/crew-assignments/{id}/transit-interval` | Sí | Sí | - | - | Audita `OVERRIDE_TRANSIT_INTERVAL`. |
+
+> **US-17 parcial:** `/start` reutiliza el Fake de asignaciones de US-16. Su
+> respuesta `403` para IDs fuera del alcance del operador es una excepción
+> explícita a la regla general de `404` del módulo. El Fake de pagos no registra
+> cobros y, por defecto, no confirma ningún saldo; el registro con fotografía
+> en `/check-in-and-collect` sigue pendiente de implementación.
+
+> **US-18:** reutiliza el puerto de asignaciones y su Fake reemplazable mientras
+> E3 integra la lectura real. Sus rutas aplican la regla general `404` para IDs
+> fuera del alcance del operador, conservando la excepción `403` de `/start`.
+> El usuario registrador procede del JWT; no puede elegirse en el formulario.
+> La auditoría y la consulta del comprobante siguen usando las rutas y permisos
+> de E5 para `ENCARGADO` y `SUPERADMIN`.
 
 ### 2.9 Analítica Financiera y BI
 
@@ -151,6 +164,20 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | `GET /reports/dashboard` | Sí | Sí | - | - | KPIs de RF-25. |
 | `GET /reports/financial/pnl` | Sí | Sí | - | - | Utilidad neta (RF-24). |
+
+### 2.10 Conversaciones (Bandeja de WhatsApp)
+
+| Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE (Token) | Notas |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| `GET /conversations` | Sí | Sí | - | - | Contiene teléfonos de clientes: acceso restringido a la gestión. |
+| `GET /conversations/{id}/messages` | Sí | Sí | - | - | Consultado a Chatwoot; `503` si no responde. |
+| `GET /conversations/{id}/attachments/{attachment_id}` | Sí | Sí | - | - | Proxy autenticado de los medios del chat; no exige que la conversación esté tomada. |
+| `POST /conversations/{id}/messages` | Sí | Sí | - | - | Solo en conversaciones tomadas por el propio usuario. Envía como el agente de servicio y audita al autor real (`SEND_CONVERSATION_MESSAGE`). |
+| `POST /conversations/{id}/takeover` | Sí | Sí | - | - | Un `ENCARGADO` no puede tomar una conversación asignada a otro usuario (`409`); un `SUPERADMIN` sí y audita `OVERRIDE_CONVERSATION_ASSIGNMENT`. |
+| `POST /conversations/{id}/release` | Sí | Sí | - | - | Solo el usuario asignado o un `SUPERADMIN`. |
+| `GET /conversations/stream` | Sí | Sí | - | - | SSE. El access token JWT viaja en el parámetro `access_token` (ver sección 4). |
+
+---
 
 ---
 
@@ -160,12 +187,12 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 1. **Access Token:**
    * Algoritmo: HMAC-SHA256 (`HS256`) o Asimétrico (`RS256`). Biblioteca: **PyJWT** (ADR-09).
    * Tiempo de vida: **60 minutos**.
-   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`.
+   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`. El claim `role` es **informativo** (se emite en el login); la autorización se resuelve con la cuenta en PostgreSQL, como describe la sección 3.2.
 2. **Refresh Token:**
    * UUID aleatorio criptográfico opaco; solo se almacena su hash en la tabla `refresh_tokens`.
    * Tiempo de vida: **7 días**.
    * **Rotación Obligatoria:** Cada uso genera un nuevo refresh token e invalida el anterior, mitigando ataques de secuestro de sesión. Presentar un token ya revocado devuelve `401`.
-   * **Cierre de sesión:** `POST /auth/logout` revoca el refresh token indicado. Desactivar un usuario o cambiar su contraseña revoca todos sus refresh tokens.
+   * **Cierre de sesión:** `POST /auth/logout` revoca el refresh token indicado. Desactivar un usuario o cambiar su contraseña revoca todos sus refresh tokens en la misma transacción que el cambio; si la revocación falla, la actualización se deshace y la API responde `500` sin efectos parciales.
 3. **Token del enlace de firma (CLIENTE):**
    * Valor criptográfico aleatorio de un solo uso, entregado por WhatsApp; solo se almacena su hash SHA-256 (`signature_token_hash`) con expiración (`signature_token_expires_at`).
    * No es un JWT y no otorga ningún rol del panel: solo permite operar el contrato al que pertenece.
@@ -173,7 +200,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 4. **Prueba de OTP (`otp_proof`):** credencial de corta duración (15 minutos), ligada a un contrato, emitida al verificar el OTP y exigida en `POST /contracts/sign/{token}`.
 
 ### 3.2 Alcance por Rol
-* **Control por endpoint:** cada ruta valida el rol del JWT contra la matriz de la sección 2 mediante una dependencia de autorización; un rol no permitido recibe `403`.
+* **Control por endpoint (autenticación fresca):** antes de evaluar la matriz de la sección 2, cada ruta protegida resuelve la cuenta del `sub` del JWT en PostgreSQL: si la cuenta no existe o está desactivada responde `401` (`invalid-credentials`) **aunque el JWT siga vigente**; con la cuenta activa se aplica el rol vigente de la base de datos, no el claim `role` del token. Un rol no permitido recibe `403`. Por eso, desactivar o degradar a un usuario surte efecto inmediato en sus access tokens: no hace falta esperar los 60 minutos de vida del JWT.
 * **Alcance del `OPERADOR`:** además del rol, las rutas marcadas `Propios` verifican que el evento tenga una asignación (`crew_assignments`) de un elenco cuyo `crews.user_id` sea el usuario autenticado. Si no, responden `404` para no revelar la existencia del evento.
 * **Alcance del `CLIENTE`:** el token del enlace identifica un único contrato; no puede listar ni consultar otros recursos.
 * **Datos sensibles:** los costos directos (`direct_cost`) y los datos personales de clientes (teléfono, DNI, RUC) no se exponen a `OPERADOR` ni a consultas públicas.
@@ -193,9 +220,25 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
    | `POST /contracts/sign/{token}/otp/verify` | Máximo 5 intentos fallidos por OTP (`otp_attempts`); al superarlos se invalida el OTP. Adicionalmente, 20 intentos por IP por hora. |
    | `GET /contracts/sign/{token}` y `GET /contracts/sign/{token}/pdf` | Máximo 30 solicitudes por minuto por IP, para dificultar la enumeración de tokens. |
 
-3. **Firma del Webhook de WhatsApp:** `POST /webhooks/whatsapp` exige la cabecera `X-Hub-Signature-256: sha256=<hex>`, el HMAC-SHA256 del cuerpo crudo calculado con el secreto de la aplicación de Meta. Se recalcula y se compara en tiempo constante antes de procesar el evento; sin firma válida responde `401` y no se encola nada. El `GET /webhooks/whatsapp` valida `hub.verify_token` contra `WHATSAPP_VERIFY_TOKEN`. El procesamiento es idempotente por el identificador de mensaje de Meta.
+3. **Firma del Webhook de Chatwoot:** `POST /webhooks/chatwoot` exige las cabeceras `X-Chatwoot-Timestamp` (marca de tiempo Unix en segundos) y `X-Chatwoot-Signature: sha256=<hex>`, el HMAC-SHA256 de `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"` calculado con `CHATWOOT_WEBHOOK_SECRET`. Se recalcula y se compara en tiempo constante antes de procesar el evento, y se rechazan las marcas de tiempo con más de 5 minutos de antigüedad (mitiga la repetición de peticiones capturadas). Sin firma válida responde `401` (`invalid-webhook-signature`), no se encola nada y se registra el intento. El endpoint es **solo interno**: el proxy inverso lo bloquea hacia internet y únicamente es accesible desde la red interna de Docker. Sin `CHATWOOT_WEBHOOK_SECRET` configurado la ruta falla cerrada: todas las peticiones reciben `401`, y en `staging` y `production` el proceso no arranca sin ese secreto. El procesamiento es idempotente por `X-Chatwoot-Delivery` (deduplicación en Redis, TTL de 7 días; sin la cabecera se usa el resumen de la firma verificada). **Limitación conocida:** esa cabecera no forma parte de la firma, así que un reenvío capturado con la cabecera alterada pasa la deduplicación dentro de la ventana de 5 minutos; el efecto es nulo hoy porque el registro del estado de entrega es idempotente y solo avanza. Los logs no incluyen el cuerpo, el secreto ni la firma recibida. La firma `X-Hub-Signature-256` de Meta y el reto de verificación de suscripción los valida ahora el propio Chatwoot en su webhook público, no EventPro; EventPro ya no expone ningún endpoint hacia Meta.
 4. **Seguridad del OTP:** código de 6 dígitos generado con un generador criptográfico, almacenado solo con hash (`otp_hash`), con vigencia de 10 minutos, intentos limitados y entrega por WhatsApp a través de `outbox_messages` (el contenido del OTP se elimina del `payload` tras el envío).
-5. **Aislamiento de Archivos Binarios:** Los comprobantes y evidencias subidos no se ejecutan ni se sirven directamente desde rutas del sistema operativo; se almacenan con extensión neutral y nombre UUID, y se descargan únicamente a través de la API con control de acceso (`GET /payments/{id}/evidence`).
+5. **Aislamiento de Archivos Binarios:** los medios del chat (adjuntos de Chatwoot) se sirven únicamente a través del proxy autenticado `GET /conversations/{id}/attachments/{attachment_id}`; las URL de Chatwoot no se exponen al navegador. Los comprobantes y evidencias subidos no se ejecutan ni se sirven directamente desde rutas del sistema operativo; se almacenan con extensión neutral y nombre UUID, y se descargan únicamente a través de la API con control de acceso (`GET /payments/{id}/evidence`).
 6. **Validación de Subidas:** máximo 5 MB por archivo; el tipo se valida por contenido (*magic bytes*, biblioteca `filetype`) y no solo por extensión ni por `Content-Type`. Las evidencias de cobro in situ admiten solo imágenes (JPEG, PNG, WebP); los comprobantes de adelanto, además, PDF.
 7. **Headers de Seguridad HTTP:** Inclusión obligatoria de `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
 8. **Auditoría:** las acciones críticas (overrides, aprobación de sobrecupo, auditoría de cobros, contratos manuales y firmas) se registran en `audit_logs`, que es de solo lectura vía API (`GET /audit-logs`).
+9. **Autenticación del stream SSE:** `GET /conversations/stream` usa el mismo access token JWT (rol `ENCARGADO` o `SUPERADMIN`) enviado en el parámetro de consulta `access_token`, porque `EventSource` no permite cabeceras personalizadas y la API no usa cookies. Es el único endpoint que acepta el token fuera de `Authorization`. Como la cadena de consulta puede quedar en registros, el proxy y la aplicación no deben registrar la consulta de esta ruta; el servidor cierra el stream al vencer el token y el cliente renueva con `POST /auth/refresh` y se reconecta. El stream es de solo lectura y no sustituye la validación de rol de los demás endpoints del módulo.
+
+
+## Flujo administrativo manual (PC-05, PR #22)
+
+| Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE | Control adicional |
+| --- | --- | --- | --- | --- | --- |
+| `POST /budgets/prepare` | Sí | Sí | - | - | Precios del servidor |
+| `GET /budgets/{budget_id}/document` | Sí | Sí | - | - | Documento privado |
+| `POST /manual-bookings` | Sí | Sí | - | - | Actor, importe exacto, idempotencia |
+| `GET /manual-bookings` | Sí | Sí | - | - | Paginación, máximo 100 |
+| `POST /manual-bookings/{quote_id}/confirm` | Sí | Sí | - | - | Registrador distinto del verificador |
+| `POST /manual-bookings/{quote_id}/refund` | Sí | Sí | - | - | Adelanto sin reserva, motivo/referencia |
+| `GET /manual-bookings/{quote_id}/contract` | Sí | Sí | - | - | Contrato emitido; sin enlace público |
+
+Autoverificación excepcional requiere SUPERADMIN y override_reason (10..500 caracteres), auditado. Sobrecupo exige motivo y no autoriza inventario inexistente. Se consulta rol/estado vigentes en BD de US-23. Tests HTTP unitarios instalan tests.auth_support.install; integración crea cuentas reales en BD efímera.

@@ -1,0 +1,21 @@
+# Override: api/worker conectan a la BD de Supabase en vez del contenedor 'db'.
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.supabase.yml up -d api worker redis
+#   docker compose -f docker-compose.yml -f docker-compose.supabase.yml run --rm api alembic upgrade head
+# DATABASE_URL se lee del .env local (debe ser la cadena de CREDENCIALES-SUPABASE.md).
+# No combinar con docker-compose.override.yml (ese apunta al db local con --reload).
+
+services:
+  api:
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on: !reset []
+
+  worker:
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on: !reset []
+
+  # El Postgres local queda disponible solo bajo perfil: no arranca por defecto.
+  db:
+    profiles: ["local-db"]

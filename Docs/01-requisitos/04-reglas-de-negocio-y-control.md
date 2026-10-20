@@ -22,11 +22,25 @@ $$\text{Saldo Pendiente} = \text{Total Cotizado} - \text{Monto Adelanto}$$
 
 ### RN-03: Cálculo de Movilidad con Margen Comercial
 1. La movilidad cubre el desplazamiento de **ida y vuelta** del personal y equipos desde la base de operaciones hasta el lugar del evento.
-2. La distancia ($D$) en kilómetros y la duración ($T$) en minutos son calculadas mediante la API de Google Maps.
-3. Se aplica un recargo comercial de seguridad del **15%**:
-$$\text{Movilidad Base} = f(D_{\text{ida+vuelta}}, T_{\text{ida+vuelta}})$$
+2. La distancia ($D$) en kilómetros y la duración ($T$) en minutos de **ida y vuelta** las calcula un estimador de rutas detrás del puerto `IRouteEstimatorPort` (Google Maps Platform u otro proveedor; el proveedor se decide en el bloque del bot).
+3. Se aplica un recargo comercial de seguridad del **15%** sobre una movilidad base que depende de la distancia y el tiempo:
+$$\text{Movilidad Base} = \max\left(D_{\text{ida+vuelta}} \times \text{tarifa}_{km} + T_{\text{ida+vuelta}} \times \text{tarifa}_{min},\ \text{monto mínimo}\right)$$
 $$\text{Costo Movilidad} = \text{Movilidad Base} \times 1.15$$
-4. **Excepción de Transporte del Cliente:** Si el cliente opta por brindar movilidad propia de ida y vuelta para el elenco, el costo de movilidad se fija en **S/. 0.00**.
+4. **Excepción de Transporte del Cliente:** Si el cliente opta por brindar movilidad propia de ida y vuelta para el elenco, el costo de movilidad se fija en **S/. 0.00**. Esta excepción prevalece sobre el estimador y sobre la contingencia por zona.
+5. **Contingencia por zona:** si el estimador de rutas falla, se aplica un monto fijo según la zona del distrito del evento (Lima Metropolitana y Callao). El monto de la zona ya es final: no se le aplica el margen del 15%. Un distrito desconocido se asigna a la **zona 3** para no cobrar de menos; el encargado puede corregirlo con el *override* de movilidad.
+6. **Valores aprobados por el negocio (2026-10-08):** la documentación original no definía la función de la movilidad base; el negocio aprobó estos valores y la asignación de distritos a zonas. Siguen siendo configurables (variables de entorno) o editables (tabla de zonas) si el negocio los cambia.
+
+| Parámetro | Variable de entorno | Valor aprobado |
+| :--- | :--- | :--- |
+| Tarifa por kilómetro | `MOBILITY_RATE_PER_KM` | S/. 1.00 |
+| Tarifa por minuto | `MOBILITY_RATE_PER_MINUTE` | S/. 0.30 |
+| Monto mínimo | `MOBILITY_MINIMUM_AMOUNT` | S/. 20.00 |
+| Margen comercial | `MOBILITY_MARGIN_PERCENT` | 15 % |
+| Monto fijo de la zona 1 | `MOBILITY_ZONE_1_AMOUNT` | S/. 25.00 |
+| Monto fijo de la zona 2 | `MOBILITY_ZONE_2_AMOUNT` | S/. 45.00 |
+| Monto fijo de la zona 3 | `MOBILITY_ZONE_3_AMOUNT` | S/. 70.00 |
+
+Especificación de diseño: [06. Núcleo de Cotización de E1](../02-arquitectura/06-spec-e1-nucleo-cotizacion.md).
 
 ---
 
@@ -61,12 +75,54 @@ $$\text{Intervalo Mínimo} = \text{Tiempo de Tránsito (Google Maps)} + \text{Ma
 * Este concepto se añade a la liquidación final antes de marcar el evento como `SETTLED` («Liquidado»).
 * Como el saldo pre-show, la extensión se registra como un pago de concepto `EXTENSION` directamente en `VERIFIED`, con evidencia obligatoria (medio de pago y fotografía), y queda sujeta a auditoría posterior del encargado.
 
+* **Contrato US-18:** `agreed_rate` es el precio total en PEN pactado por el bloque
+  solicitado; 30 minutos con `agreed_rate = 100` generan un cobro de 100 PEN.
+  Los minutos son enteros positivos; 30 y 60 son ejemplos, no valores exclusivos.
+* Cada extensión incrementa una vez `final_total_amount`, `extra_hours_amount` y
+  `extra_minutes_total`. El horario original se conserva; el fin extendido se
+  obtiene sumando los minutos acumulados al fin contratado, incluida su fecha.
+* `/settle` cierra desde `IN_PROGRESS` o `EXTENDED`, comprobando la correspondencia
+  entre extensiones y pagos `EXTENSION` `VERIFIED` y la cobertura completa del
+  total final. Los cobros base se toman provisionalmente del agregado, conforme
+  al alcance parcial de US-17. La liquidación no exige auditoría `REVIEWED`.
+* El saldo pendiente es `max(final_total_amount - advance_paid -
+  pre_show_balance_paid - extra_hours_amount, 0)`: las extensiones ya cobradas no
+  se cobran nuevamente. `SETTLED` no admite otro cierre ni nuevas extensiones.
+* La ventana `scheduled_time_window` conserva el contrato; `time_window` y su
+  alias `extended_time_window` incorporan los minutos acumulados. Cronograma,
+  concurrencia y asignaciones usan el fin operativo, incluida su fecha.
+* Una extensión se rechaza con `409` si el elenco se solapa, el inventario activo
+  no alcanza, no se conoce el intervalo aplicado del siguiente traslado o este
+  no cabe. Superar el umbral de simultaneidad requiere aprobación manual y
+  también responde `409`; US-18 no incorpora un override.
+* El cierre exige `extra_hours_amount = legacy_extra_hours_amount + extensiones
+  verificadas`, coincidencia de minutos y cobertura del total final mediante
+  cobros base, crédito histórico y extensiones verificadas. El crédito histórico
+  solo lo fija la migración en eventos sin pagos de extensión previos; un pago
+  real huérfano nunca se convierte automáticamente en crédito.
+
 ---
 
 ### RN-08: Cálculo de Utilidad Neta y Costos Fijos
 La rentabilidad del negocio se audita comparando los ingresos reales contra los costos directos fijos:
 $$\text{Utilidad Neta} = \text{Ingresos Totales Liquidados} - \left( \sum \text{Costo Fijo Paquetes} + \sum \text{Costo Fijo Extras} + \text{Costos Operativos de Movilidad} \right)$$
 * Los costos asignados a cada paquete y extra representan las tarifas fijas acordadas con el elenco freelance, DJ y armadores.
+
+**Contrato US-21:** se consideran únicamente eventos `SETTLED` por su `event_date`.
+El ingreso es `advance_paid + pre_show_balance_paid + legacy_extra_hours_amount +
+extensiones verificadas`, conservando la conciliación de US-18 y sin sumar otra
+vez `final_total_amount` ni los pagos base. El costo es un paquete más
+`SUM(quote_extras.quantity × extras.direct_cost)` y `quotes.base_mobility_amount`
+(cero si el cliente aporta transporte). Los elencos no se descuentan otra vez.
+Las extensiones de US-18 aportan ingreso, pero no tienen un costo directo adicional
+registrado ni vínculo a un extra de catálogo. Movilidad base es una aproximación
+disponible, no un gasto real conciliado.
+
+PC-09 congela estos importes y su desglose al liquidar, en la misma transacción.
+La reconstrucción histórica usa costos vigentes al migrar, marcada
+`LEGACY_BACKFILL`; no afirma recuperar tarifas originales. La consulta calcula
+utilidad y margen con `Decimal`, `ROUND_HALF_UP` y dos decimales. Las pérdidas son
+válidas; con ingreso cero el margen es `0.00`. No hay cierre programado en US-21.
 
 ---
 
@@ -77,6 +133,24 @@ $$\text{Utilidad Neta} = \text{Ingresos Totales Liquidados} - \left( \sum \text{
 4. **Revalidación al pulsar «Pagar adelanto»:** si han transcurrido más de `AVAILABILITY_RECHECK_MINUTES` minutos (por defecto `60`) desde el envío de la cotización, el bot revalida la disponibilidad antes de mostrar los datos de Yape, Plin o cuenta bancaria. Si hay cupo, muestra los datos de pago y la cotización pasa a `PAYMENT_STARTED`. Si no hay cupo, ofrece otra fecha u horario o derivar la conversación a un encargado, y no revela datos de pago.
 5. **Revalidación temprana al subir el comprobante:** si el cupo ya no está disponible, el pago ingresa en `REQUIRES_MANUAL_APPROVAL` en lugar de `PENDING_VERIFICATION` (alerta temprana, no autoritativa).
 6. **Revalidación autoritativa al validar el pago:** se ejecuta de forma atómica bajo bloqueo distribuido (Redis lock, ADR-06) antes de confirmar. Si el cupo está lleno, el encargado decide: aprobar el sobrecupo (el pago pasa a `VERIFIED`) o rechazar (el pago pasa a `REFUND_PENDING` y luego a `REFUNDED` al efectuarse la devolución).
+
+---
+
+### RN-10: Atención de Conversaciones: Bot o Encargado
+1. Toda conversación de WhatsApp tiene un solo responsable a la vez, según su `status` en el gateway de mensajería (Chatwoot, ADR-10): en `pending` responde el **bot** (modo `BOT`); en `open` atiende un **encargado** (modo `HUMAN`) y el bot **no responde**. Una conversación `resolved` se trata como modo `BOT`: si el cliente vuelve a escribir, se reabre en `pending`.
+2. La conversación pasa a `open` por tres disparadores: el cliente pide hablar con un encargado, el bot no entiende dos veces consecutivas, o un encargado la toma manualmente. Una excepción no controlada del bot también la deriva automáticamente. Cada derivación registra su motivo (`handoff_reason`, ver sección 3.5) y un resumen (`handoff_summary`).
+3. Una conversación `open` sin encargado asignado es una **derivación pendiente de toma**. Solo el encargado asignado puede escribir en ella; otro `ENCARGADO` no puede tomarla, pero un `SUPERADMIN` puede reasignarla a sí mismo, con registro en `audit_logs`.
+4. El encargado asignado, o un `SUPERADMIN`, devuelve la conversación al bot con `release`; el bot retoma las respuestas.
+5. **Las decisiones de negocio** (aprobación del adelanto, sobrecupo, rechazo de comprobante) se toman únicamente en el panel de EventPro, no desde la conversación.
+6. Chatwoot es la fuente de verdad de los mensajes; EventPro no los almacena y solo conserva el vínculo de negocio en `conversation_links`.
+
+---
+
+### RN-11: Ventana de Servicio de 24 Horas
+1. La ventana de servicio de WhatsApp está **abierta** mientras no hayan transcurrido 24 horas desde el último mensaje entrante del cliente; vence a las 24 horas de ese mensaje.
+2. Con la ventana abierta, el encargado y el bot responden con **texto libre** (o adjuntos). Con la ventana cerrada solo se pueden enviar **plantillas aprobadas**; un texto libre se rechaza (`service-window-closed`).
+3. Para contener costos (precios de Meta vigentes desde 2026-10-01) se permanece en el número de prueba y las plantillas se reservan para mensajes fuera de la ventana (por ejemplo, el OTP de firma).
+4. La bandeja indica en todo momento si la ventana está abierta y cuándo vence.
 
 ---
 
@@ -96,12 +170,13 @@ $$\text{Utilidad Neta} = \text{Ingresos Totales Liquidados} - \left( \sum \text{
 | **PC-10** | **Persistencia de Observaciones** | Estructural | Registro de cotización y contrato | Almacenamiento en campo específico visible en PDF y cronograma para evitar extravíos. |
 | **PC-11** | **Revalidación de Disponibilidad y Vencimiento de Adelanto** | Automático | Al pulsar «Pagar adelanto» (más de `AVAILABILITY_RECHECK_MINUTES`), al subir comprobante y al validar el pago; y al vencer `ADVANCE_DEADLINE_HOURS` | Revalidación con bloqueo distribuido (Redis lock) en la validación; la cotización pasa a `EXPIRED` al vencer el plazo; si no hay cupo se ofrece otro horario o derivación al encargado. |
 | **PC-12** | **Auditoría Posterior de Cobros In Situ** | Manual | Pago `BALANCE` o `EXTENSION` registrado con evidencia | El pago nace `VERIFIED` con `audit_status = UNREVIEWED`; el encargado lo marca `REVIEWED` o `FLAGGED` (con observaciones) sin bloquear la operación. |
+| **PC-13** | **Traspaso de Conversación a Encargado** | Híbrido | El cliente pide un encargado, el bot no entiende dos veces seguidas, el bot falla (`BOT_ERROR`) o un encargado toma la conversación | La conversación pasa a `open` (modo `HUMAN`) y el bot deja de responder; aviso en tiempo real en la bandeja; el encargado devuelve la conversación al bot con `release`. |
 
 ---
 
 ## 3. Máquinas de Estados
 
-El sistema maneja **cuatro ciclos de vida independientes**: cotización, pago, evento y contrato (más la auditoría posterior de los cobros in situ, un atributo del pago). Los códigos de estado son identificadores en inglés (`UPPER_SNAKE_CASE`) y se usan tal cual en el código, en las restricciones `CHECK` de la base de datos y en los *payloads* de la API. La etiqueta en español es solo para la interfaz de usuario. **Esta sección es la fuente única de verdad**: los demás documentos deben referenciarla en lugar de duplicarla.
+El sistema maneja **cuatro ciclos de vida independientes**: cotización, pago, evento y contrato (más la auditoría posterior de los cobros in situ, un atributo del pago). Las conversaciones de WhatsApp no tienen un ciclo propio en EventPro: su `status` lo gestiona Chatwoot y EventPro lo proyecta a un modo de atención (ver sección 3.5). Los códigos de estado son identificadores en inglés (`UPPER_SNAKE_CASE`) y se usan tal cual en el código, en las restricciones `CHECK` de la base de datos y en los *payloads* de la API. La etiqueta en español es solo para la interfaz de usuario. **Esta sección es la fuente única de verdad**: los demás documentos deben referenciarla en lugar de duplicarla.
 
 ### 3.1 Ciclo de Vida de la Cotización
 ```mermaid
@@ -152,14 +227,24 @@ stateDiagram-v2
 
 ### 3.3 Ciclo de Vida del Evento
 El evento se crea únicamente cuando el adelanto es validado.
+
+> **US-17 parcial — inicio desacoplado:** `/events/{id}/start` permite iniciar
+> directamente desde `SCHEDULED` o `AWAITING_BALANCE` cuando el puerto confirma
+> que adelanto + total BALANCE verificado cubren el total final. No basta con
+> el saldo almacenado en `events`, no se reciben declaraciones de pago del
+> cliente y no existe un estado `CONFIRMED`. La transición registra la hora
+> real UTC una sola vez; un reintento devuelve `409`. Llegada, cobro con
+> evidencia y auditoría de US-17 siguen pendientes.
 ```mermaid
 stateDiagram-v2
     [*] --> AWAITING_SIGNATURE: Adelanto validado, evento creado
     AWAITING_SIGNATURE --> SCHEDULED: Cliente firma el contrato
     SCHEDULED --> AWAITING_BALANCE: Personal llega al lugar del evento
+    SCHEDULED --> IN_PROGRESS: US-17 parcial, saldo verificado por puerto
     AWAITING_BALANCE --> IN_PROGRESS: Saldo y movilidad cobrados
     IN_PROGRESS --> EXTENDED: Cliente solicita tiempo adicional
-    EXTENDED --> SETTLED: Cobro de extensión registrado
+    EXTENDED --> EXTENDED: Otra extensión cobrada con evidencia
+    EXTENDED --> SETTLED: Cierre explícito con todos los cobros cubiertos
     IN_PROGRESS --> SETTLED: Show culminado sin extensiones
     AWAITING_SIGNATURE --> CANCELLED: Cancelación antes de la ejecución
     SCHEDULED --> CANCELLED: Cancelación antes de la ejecución
@@ -211,3 +296,9 @@ stateDiagram-v2
 | Contrato | `ISSUED` | Emitido, pendiente de firma | PDF compilado y enviado con enlace de firma electrónica. |
 | Contrato | `SIGNED` | Firmado | Firmado electrónicamente por el cliente (OTP verificado) y sellado con PAdES; se registra el SHA-256 del PDF sellado y los metadatos de la firma. |
 | Contrato | `VOIDED` | Anulado | Anulado por cancelación del evento antes de su ejecución u otra causa administrativa. |
+| Conversación (modo) | `BOT` | Atendida por el bot | Conversación en `pending` (o `resolved`); responde el bot. |
+| Conversación (modo) | `HUMAN` | Atendida por un encargado | Conversación en `open`; un encargado atiende y el bot no responde. Sin asignar, es una derivación pendiente de toma. |
+| Motivo de traspaso | `CLIENT_REQUEST` | Solicitud del cliente | El cliente pidió hablar con un encargado. |
+| Motivo de traspaso | `BOT_NOT_UNDERSTOOD` | Bot no entendió | El bot no entendió al cliente dos veces consecutivas. |
+| Motivo de traspaso | `MANUAL_TAKEOVER` | Toma manual | Un encargado tomó la conversación mientras la atendía el bot. |
+| Motivo de traspaso | `BOT_ERROR` | Error del bot | Excepción no controlada del bot; derivación automática. |

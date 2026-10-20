@@ -1,0 +1,890 @@
+from functools import lru_cache
+from typing import Annotated
+
+import httpx
+from arq.connections import ArqRedis
+from fastapi import Depends
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.application.ports.input.client_read_port import IFindClientsPort, IGetClientPort
+from app.application.ports.input.event_extension_port import (
+    IRegisterEventExtensionPort,
+    ISettleEventPort,
+)
+from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
+from app.application.ports.input.event_start_port import IStartEventPort
+from app.application.ports.input.financial_report_port import IGetFinancialPnlPort
+from app.application.ports.input.quote_create_port import ICreateQuotePort
+from app.application.ports.input.quote_expiry_port import IExpireDueQuotesPort
+from app.application.ports.input.quote_lifecycle_port import ICancelQuotePort, IPayAdvancePort
+from app.application.ports.input.quote_read_port import IGetQuotePort, IListQuotesPort
+from app.application.ports.output.audit_log_port import IAuditLogPort
+from app.application.ports.output.availability_port import IAvailabilityPort
+from app.application.ports.output.bot_unit_of_work_port import BotTransaction, BotUnitOfWork
+from app.application.ports.output.cache_lock_port import ICacheLockPort
+from app.application.ports.output.cache_port import ICachePort
+from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, ICrewAdminPort
+from app.application.ports.output.catalog_read_port import ICatalogReadPort
+from app.application.ports.output.client_repository_port import IClientRepositoryPort
+from app.application.ports.output.clock_port import IClockPort
+from app.application.ports.output.conversation_session_port import IConversationSessionPort
+from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
+from app.application.ports.output.document_source_port import IDocumentSourcePort
+from app.application.ports.output.event_dedup_port import IEventDedupPort
+from app.application.ports.output.gateway_event_port import IGatewayEventPort
+from app.application.ports.output.gateway_event_queue_port import IGatewayEventQueuePort
+from app.application.ports.output.language_model_port import ILanguageModelPort
+from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
+from app.application.ports.output.messaging_port import IMessagingPort
+from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
+from app.application.ports.output.payment_evidence_storage_port import IPaymentEvidenceStoragePort
+from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
+from app.application.ports.output.pre_show_payment_verification_port import (
+    IPreShowPaymentVerificationPort,
+)
+from app.application.ports.output.quote_repository_port import IQuoteRepositoryPort
+from app.application.ports.output.quote_schedule_read_port import IQuoteScheduleReadPort
+from app.application.ports.output.refresh_token_repository_port import IRefreshTokenRepositoryPort
+from app.application.ports.output.repository_health_port import IRepositoryHealthPort
+from app.application.ports.output.route_estimator_port import IRouteEstimatorPort
+from app.application.ports.output.user_repository_port import IUserRepositoryPort
+from app.application.services.audit_service import AuditService
+from app.application.use_cases.audit.list_audit_logs import ListAuditLogsUseCase
+from app.application.use_cases.auth.login import LoginUseCase
+from app.application.use_cases.auth.logout import LogoutUseCase
+from app.application.use_cases.auth.refresh import RefreshUseCase
+from app.application.use_cases.bot.agent_engine import ConversationAgent
+from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
+from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
+from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
+from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
+from app.application.use_cases.event.register_event_extension import RegisterEventExtensionUseCase
+from app.application.use_cases.event.settle_event import SettleEventUseCase
+from app.application.use_cases.event.start_event import StartEventUseCase
+from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
+from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
+from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
+from app.application.use_cases.messaging.receive_gateway_event import ReceiveGatewayEvent
+from app.application.use_cases.payment.approve_overbooked_payment import (
+    ApproveOverbookedPaymentUseCase,
+)
+from app.application.use_cases.payment.audit_payment import AuditPaymentUseCase
+from app.application.use_cases.payment.get_payment import GetPaymentUseCase
+from app.application.use_cases.payment.get_payment_evidence import GetPaymentEvidenceUseCase
+from app.application.use_cases.payment.list_payments import ListPaymentsUseCase
+from app.application.use_cases.payment.refund_payment import RefundPaymentUseCase
+from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
+from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
+from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
+from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
+from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
+from app.application.use_cases.quote.register_manual_booking import RegisterManualBookingUseCase
+from app.application.use_cases.users.create_user import CreateUserUseCase
+from app.application.use_cases.users.get_user import GetUserUseCase
+from app.application.use_cases.users.list_users import ListUsersUseCase
+from app.application.use_cases.users.update_user import UpdateUserUseCase
+from app.core.config import get_settings
+from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
+from app.domain.services.financial_engine import FinancialEngine
+from app.domain.services.inventory_availability import InventoryAvailabilityService
+from app.domain.services.travel_interval_service import TravelIntervalService
+from app.domain.value_objects.mobility import MobilityTariff
+from app.infrastructure.adapters.secondary.availability.availability_adapter import (
+    AvailabilityAdapter,
+)
+from app.infrastructure.adapters.secondary.cache.redis_cache_adapter import RedisCacheAdapter
+from app.infrastructure.adapters.secondary.cache.redis_conversation_session_adapter import (
+    RedisConversationSessionAdapter,
+)
+from app.infrastructure.adapters.secondary.cache.redis_event_dedup_adapter import (
+    RedisEventDedupAdapter,
+)
+from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
+from app.infrastructure.adapters.secondary.external_services import (
+    fake_payment_verification_adapter,
+    system_clock_adapter,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_client import (
+    ChatwootClient,
+    build_chatwoot_http_client,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_event_gateway import (  # noqa: E501
+    ChatwootEventGateway,
+)
+from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_messaging_adapter import (  # noqa: E501
+    ChatwootMessagingAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
+    FakeMessagingAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
+    FakeCancelQuote,
+    FakeCreateQuote,
+    FakeExpireDueQuotes,
+    FakeFindClients,
+    FakeGetClient,
+    FakeGetQuote,
+    FakeListQuotes,
+    FakePayAdvance,
+    FakeQuoteStore,
+)
+from app.infrastructure.adapters.secondary.external_services.fake_route_estimator_adapter import (
+    FakeRouteEstimatorAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapters import (
+    FakeCrewScheduleReadAdapter,
+    FakeQuoteScheduleReadAdapter,
+)
+from app.infrastructure.adapters.secondary.external_services.openai.openai_language_model_adapter import (  # noqa: E501
+    OpenAILanguageModelAdapter,
+)
+from app.infrastructure.adapters.secondary.mobility.tariff import build_mobility_tariff
+from app.infrastructure.adapters.secondary.persistence import (
+    SqlAlchemyAvailabilityRepository,
+    SqlAlchemyCatalogReadRepository,
+    catalog_admin_repository,
+)
+from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import (
+    SQLAlchemyAuditLogAdapter,
+)
+from app.infrastructure.adapters.secondary.persistence.database import (
+    get_catalog_write_session,
+    get_engine,
+    get_session,
+    get_sessionmaker,
+)
+from app.infrastructure.adapters.secondary.persistence.manual_booking_repository import (
+    SqlAlchemyManualBookingStore,
+)
+from app.infrastructure.adapters.secondary.persistence.refresh_token_repository import (
+    SQLAlchemyRefreshTokenRepository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories import (
+    sqlalchemy_client_repository,
+    sqlalchemy_event_repository,
+    sqlalchemy_outbox_repository,
+    sqlalchemy_payment_repository,
+    sqlalchemy_quote_repository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
+    SqlAlchemyFinancialRepository,
+)
+from app.infrastructure.adapters.secondary.persistence.sqlalchemy_bot_unit_of_work import (
+    SqlAlchemyBotUnitOfWork,
+)
+from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
+    SQLAlchemyHealthAdapter,
+)
+from app.infrastructure.adapters.secondary.persistence.user_repository import (
+    SQLAlchemyUserRepository,
+)
+from app.infrastructure.adapters.secondary.queue.arq_gateway_event_queue import (
+    ArqGatewayEventQueue,
+)
+from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
+from app.infrastructure.adapters.secondary.storage.document_source_adapter import (
+    StorageDocumentSource,
+)
+from app.infrastructure.adapters.secondary.storage.local_evidence_storage import (
+    LocalEvidenceStorage,
+)
+from app.infrastructure.adapters.secondary.storage.postgres_booking_documents import (
+    PostgresBookingDocuments,
+)
+
+
+@lru_cache
+def get_redis_client() -> Redis:
+    settings = get_settings()
+    return Redis(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+    )
+
+
+@lru_cache
+def get_repository_health_port() -> IRepositoryHealthPort:
+    return SQLAlchemyHealthAdapter(get_engine())
+
+
+@lru_cache
+def get_cache_port() -> ICachePort:
+    return RedisCacheAdapter(get_redis_client())
+
+
+@lru_cache
+def get_user_repository() -> IUserRepositoryPort:
+    return SQLAlchemyUserRepository(get_sessionmaker())
+
+
+@lru_cache
+def get_refresh_token_repository() -> IRefreshTokenRepositoryPort:
+    return SQLAlchemyRefreshTokenRepository(get_sessionmaker())
+
+
+@lru_cache
+def get_login_use_case() -> LoginUseCase:
+    settings = get_settings()
+    return LoginUseCase(
+        get_user_repository(),
+        get_refresh_token_repository(),
+        secret_key=settings.secret_key,
+        access_expire_minutes=settings.access_token_expire_minutes,
+        refresh_expire_days=settings.refresh_token_expire_days,
+    )
+
+
+@lru_cache
+def get_refresh_use_case() -> RefreshUseCase:
+    settings = get_settings()
+    return RefreshUseCase(
+        get_user_repository(),
+        get_refresh_token_repository(),
+        secret_key=settings.secret_key,
+        access_expire_minutes=settings.access_token_expire_minutes,
+        refresh_expire_days=settings.refresh_token_expire_days,
+    )
+
+
+@lru_cache
+def get_logout_use_case() -> LogoutUseCase:
+    return LogoutUseCase(get_refresh_token_repository())
+
+
+@lru_cache
+def get_list_users_use_case() -> ListUsersUseCase:
+    return ListUsersUseCase(get_user_repository())
+
+
+@lru_cache
+def get_create_user_use_case() -> CreateUserUseCase:
+    return CreateUserUseCase(get_user_repository())
+
+
+@lru_cache
+def get_get_user_use_case() -> GetUserUseCase:
+    return GetUserUseCase(get_user_repository())
+
+
+@lru_cache
+def get_update_user_use_case() -> UpdateUserUseCase:
+    return UpdateUserUseCase(get_user_repository())
+
+
+@lru_cache
+def get_audit_log_port() -> IAuditLogPort:
+    return SQLAlchemyAuditLogAdapter(get_sessionmaker())
+
+
+@lru_cache
+def get_audit_service() -> AuditService:
+    return AuditService(get_audit_log_port())
+
+
+@lru_cache
+def get_list_audit_logs_use_case() -> ListAuditLogsUseCase:
+    return ListAuditLogsUseCase(get_audit_log_port())
+
+
+@lru_cache
+def get_quote_schedule_read_port() -> IQuoteScheduleReadPort:
+    return FakeQuoteScheduleReadAdapter()
+
+
+@lru_cache
+def get_crew_schedule_read_port() -> ICrewScheduleReadPort:
+    return FakeCrewScheduleReadAdapter()
+
+
+@lru_cache
+def get_pre_show_payment_verification_port() -> IPreShowPaymentVerificationPort:
+    return fake_payment_verification_adapter.FakePreShowPaymentVerificationAdapter()
+
+
+@lru_cache
+def get_clock_port() -> IClockPort:
+    return system_clock_adapter.SystemClockAdapter()
+
+
+@lru_cache
+def get_mobility_tariff() -> MobilityTariff:
+    return build_mobility_tariff(get_settings())
+
+
+@lru_cache
+def get_financial_engine() -> FinancialEngine:
+    return FinancialEngine(
+        tariff=get_mobility_tariff(), advance_percent=get_settings().advance_percent
+    )
+
+
+@lru_cache
+def get_route_estimator() -> IRouteEstimatorPort:
+    # Adaptador real (Google u otro) se decide en el bloque del bot; el dominio no cambia.
+    return FakeRouteEstimatorAdapter()
+
+
+@lru_cache
+def get_messaging_port() -> IMessagingPort:
+    """Chatwoot cuando ``CHATWOOT_BASE_URL`` está definida; si no, el adaptador simulado.
+
+    El simulado es un singleton del proceso cuyo historial en memoria crece sin límite; solo se
+    usa en desarrollo y pruebas, porque staging y producción exigen Chatwoot (ver ``Settings``).
+    """
+
+    settings = get_settings()
+    if settings.chatwoot_enabled and settings.chatwoot_inbox_id is not None:
+        client = _chatwoot_client()
+        if client is not None:
+            return ChatwootMessagingAdapter(
+                client,
+                inbox_id=settings.chatwoot_inbox_id,
+                template_language=settings.chatwoot_template_language,
+                template_category=settings.chatwoot_template_category,
+            )
+    return FakeMessagingAdapter(
+        clock=get_clock_port(), log_messages=settings.app_env == "development"
+    )
+
+
+@lru_cache
+def get_chatwoot_http_client() -> httpx.AsyncClient:
+    """Cliente HTTP compartido de la cuenta de Chatwoot; lo cierra ``shutdown_infrastructure``."""
+
+    settings = get_settings()
+    if not settings.chatwoot_enabled or settings.chatwoot_account_id is None:
+        raise RuntimeError("Chatwoot no está configurado: falta CHATWOOT_BASE_URL")
+    return build_chatwoot_http_client(
+        base_url=settings.chatwoot_base_url,
+        account_id=settings.chatwoot_account_id,
+        timeout_seconds=settings.chatwoot_timeout_seconds,
+        connect_timeout_seconds=settings.chatwoot_connect_timeout_seconds,
+    )
+
+
+@lru_cache
+def _chatwoot_client() -> ChatwootClient | None:
+    """Cliente de la API de Chatwoot, o ``None`` si el entorno no lo configura."""
+
+    settings = get_settings()
+    if not settings.chatwoot_enabled:
+        return None
+    return ChatwootClient(
+        get_chatwoot_http_client(),
+        bot_token=settings.chatwoot_bot_token.get_secret_value(),
+        agent_token=settings.chatwoot_agent_token.get_secret_value(),
+    )
+
+
+@lru_cache
+def get_gateway_event_port() -> IGatewayEventPort:
+    return ChatwootEventGateway(_chatwoot_client())
+
+
+@lru_cache
+def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
+    return ProcessGatewayEvent(
+        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
+        gateway=get_gateway_event_port(),
+        incoming_handler=get_handle_incoming_message_use_case(),
+    )
+
+
+@lru_cache
+def get_arq_pool() -> ArqRedis:
+    """Pool de arq de la API para encolar trabajos; lo cierra ``shutdown_infrastructure``.
+
+    Se construye con ``ArqRedis`` y no con ``create_pool``: este no abre ninguna conexión, así que
+    la API arranca con Redis caído (``/health`` lo reporta) y las pruebas con ``ASGITransport``,
+    que no ejecutan el lifespan, también lo tienen.
+    """
+
+    settings = get_settings()
+    return ArqRedis(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+    )
+
+
+@lru_cache
+def get_event_dedup_port() -> IEventDedupPort:
+    return RedisEventDedupAdapter(get_redis_client())
+
+
+@lru_cache
+def get_gateway_event_queue_port() -> IGatewayEventQueuePort:
+    return ArqGatewayEventQueue(get_arq_pool())
+
+
+@lru_cache
+def get_receive_gateway_event_use_case() -> ReceiveGatewayEvent:
+    return ReceiveGatewayEvent(get_event_dedup_port(), get_gateway_event_queue_port())
+
+
+@lru_cache
+def get_document_source_port() -> IDocumentSourcePort:
+    return StorageDocumentSource(get_sessionmaker())
+
+
+def get_outbox_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IOutboxRepositoryPort:
+    return sqlalchemy_outbox_repository.SqlAlchemyOutboxRepository(session)
+
+
+def get_enqueue_message_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EnqueueMessage:
+    """Encola sobre la sesión del llamador: el mensaje y la operación de negocio van juntos."""
+
+    return EnqueueMessage(
+        get_outbox_repository(session),
+        get_clock_port(),
+        max_attempts=get_settings().outbox_max_attempts,
+    )
+
+
+@lru_cache
+def get_dispatch_due_messages_use_case() -> DispatchDueMessages:
+    settings = get_settings()
+    return DispatchDueMessages(
+        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
+        messaging=get_messaging_port(),
+        documents=get_document_source_port(),
+        clock=get_clock_port(),
+        batch_size=settings.outbox_batch_size,
+        lease_seconds=settings.outbox_lease_seconds,
+    )
+
+
+def get_quote_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IQuoteRepositoryPort:
+    return sqlalchemy_quote_repository.SqlAlchemyQuoteRepository(session)
+
+
+def get_client_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IClientRepositoryPort:
+    return sqlalchemy_client_repository.SqlAlchemyClientRepository(session)
+
+
+def get_start_event_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    payments: Annotated[
+        IPreShowPaymentVerificationPort, Depends(get_pre_show_payment_verification_port)
+    ],
+    crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+    clock: Annotated[IClockPort, Depends(get_clock_port)],
+) -> IStartEventPort:
+    return StartEventUseCase(
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session), payments, crews, clock
+    )
+
+
+def get_event_schedule_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    quotes: Annotated[IQuoteScheduleReadPort, Depends(get_quote_schedule_read_port)],
+    crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+) -> IGetEventSchedulePort:
+    return GetEventScheduleUseCase(
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session), quotes, crews
+    )
+
+
+@lru_cache
+def get_extension_evidence_storage() -> IPaymentEvidenceStoragePort:
+    return LocalEvidenceStorage(allowed_mime={"image/jpeg", "image/png", "image/webp"})
+
+
+def get_register_event_extension_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    storage: Annotated[IPaymentEvidenceStoragePort, Depends(get_extension_evidence_storage)],
+    crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+    clock: Annotated[IClockPort, Depends(get_clock_port)],
+) -> IRegisterEventExtensionPort:
+    return RegisterEventExtensionUseCase(
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+        storage,
+        crews,
+        clock,
+        simultaneous_threshold=get_settings().simultaneous_shows_threshold,
+    )
+
+
+def get_settle_event_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    crews: Annotated[ICrewScheduleReadPort, Depends(get_crew_schedule_read_port)],
+    clock: Annotated[IClockPort, Depends(get_clock_port)],
+) -> ISettleEventPort:
+    return SettleEventUseCase(
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session), crews, clock
+    )
+
+
+def get_financial_pnl_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IGetFinancialPnlPort:
+    return GetFinancialPnlUseCase(SqlAlchemyFinancialRepository(session))
+
+
+@lru_cache
+def get_evidence_storage() -> LocalEvidenceStorage:
+    return LocalEvidenceStorage()
+
+
+def get_payment_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IPaymentRepositoryPort:
+    return sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session)
+
+
+def get_register_advance_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RegisterAdvancePaymentUseCase:
+    return RegisterAdvancePaymentUseCase(get_payment_repository(session))
+
+
+def get_verify_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VerifyPaymentUseCase:
+    return VerifyPaymentUseCase(get_payment_repository(session))
+
+
+def get_audit_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AuditPaymentUseCase:
+    return AuditPaymentUseCase(get_payment_repository(session), get_audit_service())
+
+
+def get_refund_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RefundPaymentUseCase:
+    return RefundPaymentUseCase(get_payment_repository(session))
+
+
+def get_list_payments_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ListPaymentsUseCase:
+    return ListPaymentsUseCase(get_payment_repository(session))
+
+
+def get_get_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GetPaymentUseCase:
+    return GetPaymentUseCase(get_payment_repository(session))
+
+
+def get_get_payment_evidence_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GetPaymentEvidenceUseCase:
+    return GetPaymentEvidenceUseCase(
+        get_payment_repository(session), PostgresBookingDocuments(session, purpose="receipts")
+    )
+
+
+def get_availability_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IAvailabilityPort:
+    settings = get_settings()
+    return AvailabilityAdapter(
+        repository=SqlAlchemyAvailabilityRepository(session),
+        lock=RedisLockAdapter(get_redis_client()),
+        concurrency_evaluator=ConcurrencyEvaluator(settings.simultaneous_shows_threshold),
+        inventory_availability=InventoryAvailabilityService(),
+        travel_interval_service=TravelIntervalService(settings.transit_rest_buffer_minutes),
+    )
+
+
+def get_catalog_read_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ICatalogReadPort:
+    return SqlAlchemyCatalogReadRepository(session)
+
+
+def get_catalog_admin_port(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> ICatalogAdminPort:
+    return catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session)
+
+
+def get_crew_admin_port(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> ICrewAdminPort:
+    return catalog_admin_repository.SqlAlchemyCrewAdminRepository(session)
+
+
+def get_manage_catalog_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> ManageCatalogUseCase:
+    return ManageCatalogUseCase(catalog_admin_repository.SqlAlchemyCatalogAdminRepository(session))
+
+
+def get_manage_crews_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> ManageCrewsUseCase:
+    return ManageCrewsUseCase(
+        catalog_admin_repository.SqlAlchemyCrewAdminRepository(session), get_user_repository()
+    )
+
+
+def get_approve_overbooked_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ApproveOverbookedPaymentUseCase:
+    return ApproveOverbookedPaymentUseCase(
+        get_payment_repository(session),
+        get_audit_service(),
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+    )
+
+
+def clear_application_caches() -> None:
+    """Suelta repositorios, servicios y casos de uso (sujetos al engine/loop activos)."""
+    get_user_repository.cache_clear()
+    get_refresh_token_repository.cache_clear()
+    get_login_use_case.cache_clear()
+    get_refresh_use_case.cache_clear()
+    get_logout_use_case.cache_clear()
+    get_list_users_use_case.cache_clear()
+    get_create_user_use_case.cache_clear()
+    get_get_user_use_case.cache_clear()
+    get_update_user_use_case.cache_clear()
+    get_audit_log_port.cache_clear()
+    get_audit_service.cache_clear()
+    get_list_audit_logs_use_case.cache_clear()
+    get_evidence_storage.cache_clear()
+    get_extension_evidence_storage.cache_clear()
+    get_quote_schedule_read_port.cache_clear()
+    get_crew_schedule_read_port.cache_clear()
+    get_pre_show_payment_verification_port.cache_clear()
+    get_clock_port.cache_clear()
+    get_mobility_tariff.cache_clear()
+    get_financial_engine.cache_clear()
+    get_route_estimator.cache_clear()
+    get_messaging_port.cache_clear()
+    get_document_source_port.cache_clear()
+    get_dispatch_due_messages_use_case.cache_clear()
+    get_chatwoot_http_client.cache_clear()
+    _chatwoot_client.cache_clear()
+    get_gateway_event_port.cache_clear()
+    get_process_gateway_event_use_case.cache_clear()
+    get_conversation_session_port.cache_clear()
+    get_bot_lock.cache_clear()
+    get_bot_unit_of_work.cache_clear()
+    get_language_model_port.cache_clear()
+    get_conversation_agent.cache_clear()
+    get_handle_incoming_message_use_case.cache_clear()
+    get_arq_pool.cache_clear()
+    get_event_dedup_port.cache_clear()
+    get_gateway_event_queue_port.cache_clear()
+    get_receive_gateway_event_use_case.cache_clear()
+
+
+async def shutdown_infrastructure() -> None:
+    if get_engine.cache_info().currsize:
+        await get_engine().dispose()
+    get_engine.cache_clear()
+    get_sessionmaker.cache_clear()
+    if get_redis_client.cache_info().currsize:
+        await get_redis_client().aclose()
+    get_redis_client.cache_clear()
+    get_repository_health_port.cache_clear()
+    get_cache_port.cache_clear()
+    if get_chatwoot_http_client.cache_info().currsize:
+        await get_chatwoot_http_client().aclose()
+    if get_arq_pool.cache_info().currsize:
+        await get_arq_pool().aclose()
+    clear_application_caches()
+
+
+def get_manual_booking_store(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IManualBookingStore:
+    return SqlAlchemyManualBookingStore(session)
+
+
+def get_booking_documents(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IBookingDocuments:
+    return PostgresBookingDocuments(session)
+
+
+def get_booking_receipts(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IBookingDocuments:
+    return PostgresBookingDocuments(session, purpose="receipts")
+
+
+def get_budget_documents(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IBookingDocuments:
+    return PostgresBookingDocuments(session, purpose="budgets")
+
+
+def get_prepare_budget_use_case(
+    catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
+) -> PrepareBudgetUseCase:
+    return PrepareBudgetUseCase(catalog, availability, get_settings().advance_percent)
+
+
+def get_confirm_manual_booking_use_case(
+    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
+    catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
+    documents: Annotated[IBookingDocuments, Depends(get_booking_documents)],
+) -> ConfirmManualBookingUseCase:
+    return ConfirmManualBookingUseCase(store, catalog, availability, documents, contract_pdf)
+
+
+def get_register_manual_booking_use_case(
+    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
+    budget: Annotated[PrepareBudgetUseCase, Depends(get_prepare_budget_use_case)],
+    receipts: Annotated[IBookingDocuments, Depends(get_booking_receipts)],
+) -> RegisterManualBookingUseCase:
+    return RegisterManualBookingUseCase(store, budget, receipts)
+
+
+def get_refund_manual_booking_use_case(
+    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
+) -> RefundManualBookingUseCase:
+    return RefundManualBookingUseCase(store)
+
+
+# Contrato de casos de uso de cotización de E1 (spec 08, sección 2.7). Cada proveedor devuelve
+# hoy el fake de su puerto sobre un almacén compartido; el responsable de la pieza real cambia
+# solo la línea de su proveedor. Los bloques están separados por responsable para que esos
+# cambios no choquen en el mismo fragmento del archivo.
+
+
+@lru_cache
+def get_fake_quote_store() -> FakeQuoteStore:
+    return FakeQuoteStore()
+
+
+# --- E1 contrato: cotizacion (Brenis) ---
+
+
+@lru_cache
+def get_create_quote_use_case() -> ICreateQuotePort:
+    return FakeCreateQuote(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_quote_use_case() -> IGetQuotePort:
+    return FakeGetQuote(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_list_quotes_use_case() -> IListQuotesPort:
+    return FakeListQuotes(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_expire_due_quotes_use_case() -> IExpireDueQuotesPort:
+    return FakeExpireDueQuotes(get_fake_quote_store(), clock=get_clock_port())
+
+
+# --- E1 contrato: cotizacion (Christian) ---
+
+
+@lru_cache
+def get_pay_advance_use_case() -> IPayAdvancePort:
+    return FakePayAdvance(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_cancel_quote_use_case() -> ICancelQuotePort:
+    return FakeCancelQuote(get_fake_quote_store(), clock=get_clock_port())
+
+
+# --- E1 contrato: cotizacion (Nicolas) ---
+
+
+@lru_cache
+def get_find_clients_use_case() -> IFindClientsPort:
+    return FakeFindClients(get_fake_quote_store(), clock=get_clock_port())
+
+
+@lru_cache
+def get_client_use_case() -> IGetClientPort:
+    return FakeGetClient(get_fake_quote_store(), clock=get_clock_port())
+
+
+# --- E1 bot de WhatsApp (Mathias) ---
+
+
+@lru_cache
+def get_conversation_session_port() -> IConversationSessionPort:
+    return RedisConversationSessionAdapter(get_redis_client())
+
+
+@lru_cache
+def get_bot_lock() -> ICacheLockPort:
+    return RedisLockAdapter(get_redis_client())
+
+
+def build_bot_transaction(session: AsyncSession) -> BotTransaction:
+    """Casos de uso del bot sobre la sesión de un turno (spec 08, sección 6, pregunta 5).
+
+    ``CreateQuote`` y ``PayAdvance`` salen de los proveedores de arriba, hoy fakes sin sesión.
+    Cuando un responsable entregue su caso de uso real, cambia solo su línea aquí y en el
+    proveedor, y le pasa ``session`` para que comparta la transacción con ``EnqueueMessage``.
+    """
+
+    return BotTransaction(
+        create_quote=get_create_quote_use_case(),
+        pay_advance=get_pay_advance_use_case(),
+        enqueue_message=get_enqueue_message_use_case(session),
+        catalog=get_catalog_read_port(session),
+    )
+
+
+@lru_cache
+def get_bot_unit_of_work() -> BotUnitOfWork:
+    return SqlAlchemyBotUnitOfWork(get_sessionmaker(), build_bot_transaction)
+
+
+@lru_cache
+def get_language_model_port() -> ILanguageModelPort:
+    """Modelo de lenguaje del agente; solo se construye con ``OPENAI_API_KEY`` definida."""
+
+    settings = get_settings()
+    if settings.openai_api_key is None or not settings.openai_enabled:
+        raise RuntimeError("OPENAI_API_KEY no está definida: el agente no está disponible.")
+    return OpenAILanguageModelAdapter(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.openai_model,
+        timeout_seconds=settings.openai_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_conversation_agent() -> ConversationAgent | None:
+    """Agente conversacional con OpenAI, o ``None`` (motor de menús) sin clave configurada."""
+
+    if not get_settings().openai_enabled:
+        return None
+    return ConversationAgent(
+        unit_of_work=get_bot_unit_of_work(),
+        model=get_language_model_port(),
+        clock=get_clock_port(),
+    )
+
+
+@lru_cache
+def get_handle_incoming_message_use_case() -> HandleIncomingMessage:
+    return HandleIncomingMessage(
+        agent=get_conversation_agent(),
+        unit_of_work=get_bot_unit_of_work(),
+        sessions=get_conversation_session_port(),
+        messaging=get_messaging_port(),
+        clock=get_clock_port(),
+        lock=get_bot_lock(),
+    )

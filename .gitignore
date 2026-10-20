@@ -48,3 +48,9 @@ Thumbs.db
 
 # Seguimiento local de tareas (ODD)
 odd/
+
+# Configuracion local de Chatwoot (secretos)
+chatwoot.env
+
+# Credenciales de la BD de Supabase (se comparten fuera de git)
+CREDENCIALES-SUPABASE.md

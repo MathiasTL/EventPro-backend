@@ -38,12 +38,37 @@ A continuación se detalla cada una de las variables requeridas por el sistema:
 * `REDIS_PASSWORD`: Contraseña de autenticación de Redis (opcional en desarrollo).
 * `REDIS_DB`: Índice de la base de datos Redis (`0`).
 
-### 2.4 Integración con Meta WhatsApp Cloud API
-* `WHATSAPP_API_URL`: URL base de Graph API de Meta (`https://graph.facebook.com/v20.0`).
-* `WHATSAPP_PHONE_NUMBER_ID`: Identificador del número de teléfono registrado en WhatsApp Business.
-* `WHATSAPP_ACCESS_TOKEN`: Token de acceso permanente o de sistema generado en Meta for Developers.
-* `WHATSAPP_VERIFY_TOKEN`: Token secreto configurado para el handshake del Webhook (`GET /webhooks/whatsapp`).
-* `WHATSAPP_APP_SECRET`: Secreto de la aplicación de Meta con el que se valida la cabecera `X-Hub-Signature-256` (HMAC-SHA256) de `POST /webhooks/whatsapp`. Obligatorio en `staging` y `production`.
+### 2.4 Integración con Chatwoot (gateway de mensajería)
+EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como gateway oculto de WhatsApp (ver [Especificación del gateway, sección 5](../02-arquitectura/05-spec-chatwoot-gateway.md#5-configuración) y ADR-10). Estas variables sustituyen a las antiguas `WHATSAPP_*`:
+* `CHATWOOT_BASE_URL`: URL interna de Chatwoot dentro de la red de Docker (`http://chatwoot-rails:3000`). Nunca se expone en internet. **`FORCE_SSL` debe ser `false` en `chatwoot.env`:** con `true`, Rails responde 301 a HTTPS a toda petición HTTP y el cliente (`follow_redirects=False`) falla en cada llamada. El tráfico público sigue siendo HTTPS porque Caddy termina TLS.
+* `CHATWOOT_ACCOUNT_ID`: Identificador de la cuenta de Chatwoot.
+* `CHATWOOT_INBOX_ID`: Identificador de la bandeja de WhatsApp.
+* `CHATWOOT_BOT_TOKEN`: Token del Agent Bot; el adaptador lo usa para crear mensajes (`send_text`, `send_interactive_list`, `send_template`, `send_attachment`).
+* `CHATWOOT_AGENT_TOKEN`: Token del agente de servicio; el adaptador lo usa para buscar o crear contactos, resolver conversaciones, leer `can_reply`, listar y cambiar el estado de una conversación (`toggle_status`) y consultar el estado de un mensaje.
+* `CHATWOOT_WEBHOOK_SECRET`: Secreto con el que se valida la firma (`X-Chatwoot-Signature`) del webhook de cuenta en `POST /webhooks/chatwoot`. Obligatorio en `staging` y `production`. Sin él, el webhook responde siempre `401`.
+* `CHATWOOT_TIMEOUT_SECONDS` (por defecto `10`) y `CHATWOOT_CONNECT_TIMEOUT_SECONDS` (por defecto `3`): esperas del cliente HTTP. Un envío encadena hasta cuatro llamadas, por lo que `4 x CHATWOOT_TIMEOUT_SECONDS` debe ser menor que el tiempo máximo de un ciclo del worker (55 s).
+* `CHATWOOT_TEMPLATE_LANGUAGE` (por defecto `es`) y `CHATWOOT_TEMPLATE_CATEGORY` (por defecto `UTILITY`): idioma y categoría con que se envían las plantillas aprobadas.
+
+**Autenticación:** el adaptador envía el token en la cabecera `api_access_token`. Chatwoot v4.18.0 no acepta `Authorization: Bearer`.
+
+**Selección del adaptador y validación al arrancar** (el error nombra solo las variables faltantes, nunca sus valores; los tokens y el secreto se enmascaran en los logs):
+
+| Entorno | `CHATWOOT_BASE_URL` | Efecto |
+| :--- | :--- | :--- |
+| `development` y `test` | Sin definir | Adaptador de mensajería falso; el resto de `CHATWOOT_*` es opcional. |
+| Cualquiera | Definida | Adaptador real; exige `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_INBOX_ID`, `CHATWOOT_BOT_TOKEN` y `CHATWOOT_AGENT_TOKEN`. |
+| `staging` y `production` | Obligatoria | El proceso no arranca si falta alguna de las seis variables (`CHATWOOT_BASE_URL`, cuenta, bandeja, ambos tokens y `CHATWOOT_WEBHOOK_SECRET`). |
+
+Las variables en blanco (`CHATWOOT_ACCOUNT_ID=`) se leen como no definidas. La URL base no lleva `/` final y debe comenzar con `http://` o `https://`. El worker registra la advertencia `worker_using_fake_messaging` solo cuando usa el adaptador falso.
+
+> [!IMPORTANT]
+> Las credenciales de Meta (identificador del número, ID de la cuenta de WhatsApp Business y token) **ya no forman parte de `.env`**: se configuran dentro de Chatwoot al crear la bandeja de WhatsApp Cloud. Debe usarse el token permanente de un *system user* de Meta; el token temporal del número de prueba expira (aproximadamente 24 h) y no debe usarse. Los tokens de Chatwoot no expiran.
+
+### 2.4.1 Configuración de Chatwoot (`chatwoot.env`) y del proxy
+* `chatwoot.env`: archivo propio de los contenedores de Chatwoot (`SECRET_KEY_BASE`, `FRONTEND_URL`, `POSTGRES_*`, `REDIS_*`, almacenamiento). Se crea a partir de [`chatwoot.env.example`](../../chatwoot.env.example), lo cargan solo los servicios de `docker-compose.chatwoot.yml` y **nunca** se versiona.
+* `EVENTPRO_DOMAIN`: dominio base (DuckDNS) del proxy Caddy de `docker-compose.proxy.yml`, por ejemplo `eventpro-demo.duckdns.org`. Caddy publica `app.`, `api.` y `chat.` sobre ese dominio. Solo se define en el servidor.
+* `FRONTEND_UPSTREAM` (opcional): `host:puerto` del frontend detrás del proxy (por defecto `frontend:3000`).
+* `CHATWOOT_LOCAL_PORT` (opcional): puerto local de la administración de Chatwoot (por defecto `3001`, solo en `127.0.0.1`).
 
 ### 2.5 Integración con Google Maps Platform
 * `GOOGLE_MAPS_API_KEY`: Clave de API de Google Cloud con permisos para Directions API y Distance Matrix API.
@@ -55,8 +80,18 @@ A continuación se detalla cada una de las variables requeridas por el sistema:
 * `ADVANCE_DEADLINE_HOURS`: Horas de vigencia de la cotización para recibir el comprobante del adelanto, contadas desde su envío; al vencer, la cotización pasa a `EXPIRED` (por defecto `24`).
 * `AVAILABILITY_RECHECK_MINUTES`: Minutos transcurridos desde el envío de la cotización a partir de los cuales el bot revalida la disponibilidad antes de mostrar los datos de Yape, Plin o cuenta bancaria (por defecto `60`).
 * `MOBILITY_MARGIN_PERCENT`: Margen comercial porcentual sobre el costo base de traslado (por defecto `15`).
+* `MOBILITY_RATE_PER_KM`: Tarifa en soles por kilómetro de ida y vuelta para la movilidad base (por defecto `1.00`).
+* `MOBILITY_RATE_PER_MINUTE`: Tarifa en soles por minuto de traslado de ida y vuelta (por defecto `0.30`).
+* `MOBILITY_MINIMUM_AMOUNT`: Monto mínimo de la movilidad base, antes del margen (por defecto `20.00`).
+* `MOBILITY_ZONE_1_AMOUNT`, `MOBILITY_ZONE_2_AMOUNT`, `MOBILITY_ZONE_3_AMOUNT`: Montos fijos finales (sin margen) de la contingencia por zona cuando el estimador de rutas falla (por defecto `25.00`, `45.00` y `70.00`). Un distrito desconocido se asigna a la zona 3. La tabla de distritos por zona vive en `app/infrastructure/adapters/secondary/mobility/district_zones.py`.
+* Los valores de movilidad y la asignación de distritos a zonas fueron **aprobados por el negocio el 2026-10-08** (RN-03).
+* Nota de despliegue: en producción debe fijarse `APP_ENV` con un valor distinto de `development`. El adaptador de mensajería falso (solo desarrollo y pruebas) registra el contenido de los mensajes (incluidos los códigos OTP) cuando `APP_ENV=development`, que es el valor por defecto.
 * `ADVANCE_PERCENT`: Porcentaje del adelanto sobre servicios base (por defecto `10`).
 * `TRANSIT_REST_BUFFER_MINUTES`: Minutos mínimos de margen para descanso y desarme entre shows sucesivos (por defecto `30`).
+* `OUTBOX_BATCH_SIZE`: Mensajes que el worker reserva en cada ciclo de despacho de la cola de mensajes salientes (por defecto `20`).
+* `OUTBOX_LEASE_SECONDS`: Vencimiento de la reserva de un mensaje; debe superar el tiempo máximo de un ciclo de despacho (por defecto `60`). Si el worker termina antes de guardar el resultado, el mensaje se envía de nuevo al vencer la reserva (entrega al menos una vez).
+* `OUTBOX_MAX_ATTEMPTS`: Intentos por mensaje: el primer envío más cinco reintentos, con espera de 30 s, 2 min, 10 min, 30 min y 2 h (por defecto `6`).
+* Nota de despliegue: el servicio `worker` despacha la cola cada 5 segundos con `ChatwootMessagingAdapter` cuando `CHATWOOT_BASE_URL` está definida (obligatorio en `staging` y `production`, sección 2.4). Sin ella, en desarrollo, usa el adaptador falso y los mensajes pasan a `SENT` sin llegar a WhatsApp.
 
 ### 2.7 Repositorio de Archivos y Documentos
 * `STORAGE_BACKEND`: Tipo de almacenamiento (`local` o `s3`).
@@ -91,5 +126,33 @@ Variables leídas únicamente por el comando de arranque `python -m app.infrastr
 
 * `.env.example` se versiona con valores de ejemplo seguros; `.env` (copia local) **nunca** se versiona.
 * Docker Compose carga `.env` mediante `env_file` en los servicios `api` y `worker`, y sobrescribe solo lo que depende de la red interna (`POSTGRES_HOST=db`, `REDIS_HOST=redis`, `DATABASE_URL`, `LOCAL_STORAGE_PATH`, `SIGNATURE_PKCS12_PATH`).
+* `chatwoot.env` (secretos de Chatwoot) se ignora por git igual que `.env`; `chatwoot.env.example` es la plantilla versionada. Ver sección 2.4.1.
+* `CREDENCIALES-SUPABASE.md` (credenciales de la BD compartida en Supabase) se ignora por git y se distribuye por un canal privado; ver sección 4.
 * El certificado `.p12` reside en `secrets/` (ignorado por git, junto con `*.p12` y `*.pfx`). Para generar uno autofirmado de desarrollo, ver el [README](../../README.md#inicio-rápido).
-* En producción, los secretos (`SECRET_KEY`, `POSTGRES_PASSWORD`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_APP_SECRET`, `SIGNATURE_PKCS12_PASSWORD`, `PAYMENT_*`) se inyectan desde el gestor de secretos de la plataforma de despliegue, no desde un archivo en el repositorio.
+* En producción, los secretos (`SECRET_KEY`, `POSTGRES_PASSWORD`, `CHATWOOT_BOT_TOKEN`, `CHATWOOT_AGENT_TOKEN`, `CHATWOOT_WEBHOOK_SECRET`, `SIGNATURE_PKCS12_PASSWORD`, `PAYMENT_*`) se inyectan desde el gestor de secretos de la plataforma de despliegue, no desde un archivo en el repositorio.
+
+---
+
+## 4. Base de datos compartida (Supabase)
+
+El equipo comparte una única base de datos **Supabase** (PostgreSQL gestionado) para desarrollo. Las credenciales completas (cadena `DATABASE_URL`, usuario, contraseña y arranque del `SUPERADMIN`) viven en `CREDENCIALES-SUPABASE.md`, archivo **ignorado por git** y distribuido por privado.
+
+Para conectarse (una vez por desarrollador):
+
+1. Copiar `.env.example` a `.env` y reemplazar `DATABASE_URL` por la cadena de `CREDENCIALES-SUPABASE.md`.
+2. Verificar: tras desplegar US-21, `alembic current` debe responder `0005_event_financial_snapshots (head)`. Una base todavía en `0002` requiere aplicar en orden `0003_manual_booking_documents`, `0004_outbox_delivery_tracking` y `0005_event_financial_snapshots` mediante el flujo manual de `develop`.
+
+Dos formas de ejecutar la app contra esa BD:
+
+* **venv local** (recomendada): `uvicorn app.main:app --reload`; el `.env` ya apunta a Supabase.
+* **Docker**: `docker-compose.yml` fuerza `DATABASE_URL` hacia el contenedor `db` local, así que existe el override `docker-compose.supabase.yml`, que usa la URL del `.env` y no levanta el Postgres local:
+  ```powershell
+  docker compose -f docker-compose.yml -f docker-compose.supabase.yml up -d api worker redis
+  ```
+
+Reglas del entorno compartido:
+
+* Las migraciones se aplican **solo con Alembic** desde `develop` (`alembic upgrade head`), nunca con DDL manual.
+* En GitHub Actions existe el job `db-migrate` (disparo manual con *workflow_dispatch*) que ejecuta `alembic upgrade head` con el secret `SUPABASE_DATABASE_URL`, registrado por el líder según `CREDENCIALES-SUPABASE.md`.
+* Los tests de integración **no** usan esta BD (usan contenedores locales); no usarla como base de pruebas destructivas.
+* Al rotar la contraseña en Supabase hay que actualizar `CREDENCIALES-SUPABASE.md`, el secret de GitHub y los `.env` locales.

@@ -1,0 +1,58 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "meta": {
+      "count": 1,
+      "current_page": 1,
+      "has_more": false
+    },
+    "payload": [
+      {
+        "additional_attributes": {
+          "social_profiles": {
+            "whatsapp": "cliente.demo"
+          },
+          "social_whatsapp_user_name": "Cliente Demo"
+        },
+        "availability_status": "offline",
+        "email": null,
+        "id": 1,
+        "name": "Cliente Demo",
+        "phone_number": "+51999111222",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "last_activity_at": 1792447532,
+        "created_at": 1791657993,
+        "contact_inboxes": [
+          {
+            "source_id": "51999111222",
+            "inbox": {
+              "id": 1,
+              "avatar_url": "",
+              "channel_id": 1,
+              "name": "Bandeja WhatsApp Demo",
+              "channel_type": "Channel::Whatsapp",
+              "provider": "whatsapp_cloud"
+            }
+          },
+          {
+            "source_id": "fake_source_0001",
+            "inbox": {
+              "id": 1,
+              "avatar_url": "",
+              "channel_id": 1,
+              "name": "Bandeja WhatsApp Demo",
+              "channel_type": "Channel::Whatsapp",
+              "provider": "whatsapp_cloud"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
