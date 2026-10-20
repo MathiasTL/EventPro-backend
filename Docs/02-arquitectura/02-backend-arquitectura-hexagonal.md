@@ -120,7 +120,7 @@ app/
 │   │   │   │   ├── chatwoot_signature.py # Verificación pura de la firma HMAC y la ventana de tiempo
 │   │   │   │   └── chatwoot_webhook.py   # Receptor del webhook de cuenta de Chatwoot (solo red interna)
 │   │   │   └── jobs/                     # Tareas programadas y reintentos (arq, respaldado en Redis)
-│   │   │       └── worker.py             # WorkerSettings: despacho de outbox_messages cada 5 s y trabajo process_gateway_event (avisos de entrega); pendientes: vencimiento de cotizaciones, reconciliación con Chatwoot, reportes
+│   │   │       └── worker.py             # WorkerSettings: despacho de outbox_messages cada 5 s y trabajo process_gateway_event (avisos de entrega); pendientes: vencimiento de cotizaciones y reconciliación con Chatwoot
 │   │   │
 │   │   └── secondary/                    # Adaptadores de Salida (Driven Adapters)
 │   │       ├── persistence/              # Base de Datos Relacional (PostgreSQL)

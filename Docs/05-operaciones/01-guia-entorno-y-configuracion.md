@@ -40,7 +40,7 @@ A continuación se detalla cada una de las variables requeridas por el sistema:
 
 ### 2.4 Integración con Chatwoot (gateway de mensajería)
 EventPro no habla directamente con Meta: se conecta a Chatwoot, que actúa como gateway oculto de WhatsApp (ver [Especificación del gateway, sección 5](../02-arquitectura/05-spec-chatwoot-gateway.md#5-configuración) y ADR-10). Estas variables sustituyen a las antiguas `WHATSAPP_*`:
-* `CHATWOOT_BASE_URL`: URL interna de Chatwoot dentro de la red de Docker (`http://chatwoot-rails:3000`). Nunca se expone en internet.
+* `CHATWOOT_BASE_URL`: URL interna de Chatwoot dentro de la red de Docker (`http://chatwoot-rails:3000`). Nunca se expone en internet. **`FORCE_SSL` debe ser `false` en `chatwoot.env`:** con `true`, Rails responde 301 a HTTPS a toda petición HTTP y el cliente (`follow_redirects=False`) falla en cada llamada. El tráfico público sigue siendo HTTPS porque Caddy termina TLS.
 * `CHATWOOT_ACCOUNT_ID`: Identificador de la cuenta de Chatwoot.
 * `CHATWOOT_INBOX_ID`: Identificador de la bandeja de WhatsApp.
 * `CHATWOOT_BOT_TOKEN`: Token del Agent Bot; el adaptador lo usa para crear mensajes (`send_text`, `send_interactive_list`, `send_template`, `send_attachment`).

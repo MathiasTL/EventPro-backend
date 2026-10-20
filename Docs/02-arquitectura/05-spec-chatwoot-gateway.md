@@ -2,7 +2,7 @@
 
 * **Estado:** Propuesto (pendiente de revisión).
 * **Fecha:** 2026-10-03.
-* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). La bandeja, el bot y el SSE siguen pendientes. Los payloads se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19, tarea 7.1 del cambio); la excepción son los adjuntos, que no se capturaron.
+* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). La bandeja, el bot y el SSE siguen pendientes. Los payloads se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19, tarea 7.1 del cambio); la excepción son los adjuntos, que no se capturaron. La prueba de extremo a extremo con el número de prueba de Meta pasó el 2026-10-19 (tarea 7.3): `EnqueueMessage` (TEXT) → *worker* → Chatwoot (token del bot) → WhatsApp → webhook de cuenta `message_updated` firmado → API → fila del *outbox* con `status=SENT`, `delivery_status=READ`, `delivered_at` y `read_at`.
 * **Decisión asociada:** ADR-10 (por registrar en [`04-adr-decisiones-arquitectura.md`](04-adr-decisiones-arquitectura.md)); reemplaza la parte de WhatsApp de ADR-05. La parte de Google Maps de ADR-05 sigue vigente.
 
 ---
@@ -90,7 +90,7 @@ No se duplican mensajes en la base de datos de EventPro.
 
 ### 3.2 Identidades en Chatwoot (invisibles)
 
-* **Agent Bot** asignado a la bandeja de WhatsApp: hace que las conversaciones nuevas nazcan en `pending` y firma los mensajes del bot. Se debe verificar en la implementación que funcione sin `outgoing_url`.
+* **Agent Bot** asignado a la bandeja de WhatsApp: hace que las conversaciones nuevas nazcan en `pending` y firma los mensajes del bot. Funciona sin `outgoing_url` (verificado el 2026-10-19); el panel de Chatwoot 4.18 exige esa URL, por lo que el bot se crea desde la consola de Rails.
 * **Agente de servicio único:** su token envía los mensajes que escriben los encargados desde EventPro. El autor real queda registrado en `audit_logs` de EventPro.
 
 Token por operación del adaptador (cabecera `api_access_token`):
@@ -268,7 +268,7 @@ No se levanta Chatwoot completo en CI (cuatro contenedores, ~4 GB); las fixtures
 
 **Variable obligatoria de Chatwoot:** `SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true` (en `chatwoot.env`). Chatwoot 4.18 envía los webhooks de cuenta a través de SafeFetch/`ssrf_filter` y descarta toda URL que resuelva a una IP no pública; sin esta variable el webhook interno `http://api:8000/api/v1/webhooks/chatwoot` nunca llega. Contrapartida: se desactiva la protección SSRF para todas las peticiones de SafeFetch; es aceptable porque el panel de administración no es público. Además, la URL del webhook debe tener un host con punto y sin guion bajo para pasar la validación del panel (los receptores de prueba deben respetarlo).
 
-1. El Agent Bot funciona asignado a la bandeja sin `outgoing_url`.
+1. *(Resuelto el 2026-10-19, tarea 7.3)* El Agent Bot funciona asignado a la bandeja sin `outgoing_url`: los mensajes enviados con su token llegaron a WhatsApp. El panel exige la URL, así que se crea desde la consola de Rails.
 2. Una conversación resuelta se reabre en `pending` cuando el cliente vuelve a escribir.
 3. Chatwoot acepta conectar el canal oficial con las credenciales del número de prueba.
 4. La cuenta de prueba de Meta permite crear plantillas propias (OTP de autenticación).
