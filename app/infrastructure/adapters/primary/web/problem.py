@@ -6,7 +6,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.domain.exceptions.quote_exceptions import InvalidQuoteStateError, QuoteExpiredError
+from app.domain.exceptions.quote_exceptions import (
+    AvailabilityConflictError,
+    AvailabilityRejectedError,
+    ClientNotFoundError,
+    InvalidQuoteStateError,
+    QuoteExpiredError,
+    QuoteNotFoundError,
+    SimultaneousThresholdExceededError,
+)
+from app.domain.exceptions.resource_exceptions import ValidationError
 
 ERROR_TYPE_BASE = "https://errors.eventpro.pe/"
 
@@ -58,9 +67,46 @@ class ProblemError(Exception):
         return self.detail
 
 
-def quote_error_to_problem(exc: InvalidQuoteStateError | QuoteExpiredError) -> ProblemError:
-    """``invalid-quote-state`` se traduce a 409 y ``quote-expired`` a 410."""
+QuoteContractError = (
+    AvailabilityConflictError
+    | SimultaneousThresholdExceededError
+    | QuoteExpiredError
+    | InvalidQuoteStateError
+    | QuoteNotFoundError
+    | ClientNotFoundError
+    | ValidationError
+)
 
+_AVAILABILITY_TITLE = "Sin disponibilidad para la fecha y el horario"
+
+
+def quote_error_to_problem(exc: QuoteContractError) -> ProblemError:
+    """Traduce los errores del contrato de cotización a su problema HTTP.
+
+    Disponibilidad y estado inválido: 409; vencida: 410; cotización o cliente inexistente:
+    404 (``not-found``); validación: 422. Los errores de disponibilidad añaden las
+    extensiones ``alternatives`` y ``handoff_available``.
+    """
+
+    if isinstance(exc, AvailabilityRejectedError):
+        return ProblemError(
+            409,
+            exc.code,
+            _AVAILABILITY_TITLE,
+            str(exc),
+            alternatives=[
+                {
+                    "event_date": alternative.event_date.isoformat(),
+                    "event_time": alternative.event_time.isoformat(),
+                }
+                for alternative in exc.alternatives
+            ],
+            handoff_available=exc.handoff_available,
+        )
+    if isinstance(exc, QuoteNotFoundError | ClientNotFoundError):
+        return ProblemError(404, "not-found", _STATUS_TITLES[404], str(exc))
+    if isinstance(exc, ValidationError):
+        return ProblemError(422, exc.code, _STATUS_TITLES[422], str(exc))
     status = 410 if isinstance(exc, QuoteExpiredError) else 409
     return ProblemError(status, exc.code, _STATUS_TITLES[status], str(exc))
 
