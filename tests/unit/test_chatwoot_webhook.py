@@ -112,7 +112,7 @@ async def test_a_valid_signed_request_is_acknowledged_and_enqueued_without_autho
 
 
 async def test_the_raw_bytes_reach_the_queue_unmodified(harness: Harness) -> None:
-    odd = b'{ "event" :"message_updated",\n  "id":4821 }'
+    odd = b'{ "event" :"message_updated",\n  "id":6 }'
 
     response = await post(harness.app, odd, signed_headers(odd))
 
@@ -169,7 +169,12 @@ def _rejections() -> list[tuple[str, bytes, dict[str, str], str]]:
             {**good, "X-Chatwoot-Signature": sign(BODY, stamp(), secret="otro")},
             "mismatch",
         ),
-        ("altered-body", BODY.replace(b"4821", b"4822"), good, "mismatch"),
+        (
+            "altered-body",
+            BODY.replace(b'"event":"message_updated"', b'"event":"message_created"'),
+            good,
+            "mismatch",
+        ),
         ("pretty-body", pretty, good, "mismatch"),
         (
             "bad-timestamp",
@@ -223,7 +228,7 @@ async def test_the_rejection_response_and_log_leak_neither_the_secret_nor_the_si
 
     assert response.status_code == 401
     assert logs
-    for leaked in (SECRET, headers["X-Chatwoot-Signature"], "4821"):
+    for leaked in (SECRET, headers["X-Chatwoot-Signature"], "wamid.FAKE0002"):
         assert leaked not in response.text
         assert leaked not in repr(logs)
 

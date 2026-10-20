@@ -31,10 +31,11 @@ from ._support import run_migrations
 
 pytestmark = pytest.mark.integration
 
-EXTERNAL_ID = "4821"
-RECEIVED_AT = datetime(2026, 10, 12, 14, 5, tzinfo=UTC)
+EXTERNAL_ID = "6"
+CONVERSATION_ID = 1
+RECEIVED_AT = datetime(2026, 10, 19, 22, 10, tzinfo=UTC)
 # Hora de actualización que trae el fixture ``message_updated_delivered``.
-DELIVERED_AT = datetime(2026, 10, 12, 14, 1, tzinfo=UTC)
+DELIVERED_AT = datetime(2026, 10, 19, 22, 6, 6, 836000, tzinfo=UTC)
 
 
 def _body(name: str) -> bytes:
@@ -70,7 +71,7 @@ def _use_case(transaction: SqlAlchemyOutboxTransaction | object) -> ProcessGatew
 
 def _sent_message() -> OutboxMessage:
     message = make_message()
-    message.mark_sent(external_message_id=EXTERNAL_ID, conversation_id=57, now=NOW)
+    message.mark_sent(external_message_id=EXTERNAL_ID, conversation_id=CONVERSATION_ID, now=NOW)
     return message
 
 

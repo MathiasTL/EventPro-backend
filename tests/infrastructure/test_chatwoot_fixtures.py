@@ -1,4 +1,4 @@
-"""Guarda de saneamiento de los fixtures de Chatwoot (solo datos inventados)."""
+"""Guarda de saneamiento de los fixtures de Chatwoot (capturas reales ya saneadas)."""
 
 from typing import Any
 
@@ -54,7 +54,7 @@ def test_fixture_is_scrubbed_and_has_the_expected_envelope(name: str) -> None:
     document = load_fixture(name)
 
     assert set(document) == {"provisional", "headers", "body"}
-    assert document["provisional"] is True
+    assert document["provisional"] is False
     assert scrub_violations(document) == []
 
 

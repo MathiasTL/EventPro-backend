@@ -1,64 +1,210 @@
 {
-  "provisional": true,
+  "provisional": false,
   "headers": {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json; charset=utf-8"
   },
   "body": {
     "meta": {
-      "has_messages": true
+      "labels": [],
+      "additional_attributes": {},
+      "contact": {
+        "additional_attributes": {
+          "social_profiles": {
+            "whatsapp": "cliente.demo"
+          },
+          "social_whatsapp_user_name": "Cliente Demo"
+        },
+        "custom_attributes": {},
+        "email": null,
+        "id": 1,
+        "identifier": null,
+        "name": "Cliente Demo",
+        "phone_number": "+51999111222",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "agent_last_seen_at": "2026-10-19T22:06:02.927Z",
+      "assignee_last_seen_at": null
     },
     "payload": [
       {
-        "id": 4821,
-        "conversation_id": 57,
-        "message_type": 1,
-        "private": false,
-        "content": "Hola",
-        "created_at": 1791813600,
-        "attachments": []
-      },
-      {
-        "id": 4822,
-        "conversation_id": 57,
+        "id": 1,
+        "content": "Hola, info",
+        "inbox_id": 1,
+        "conversation_id": 1,
         "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791657993,
         "private": false,
-        "content": "Gracias",
-        "created_at": 1791813610,
-        "attachments": []
+        "source_id": "wamid.FAKE0003",
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.demo"
+            },
+            "social_whatsapp_user_name": "Cliente Demo"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Demo",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
       },
       {
-        "id": 4823,
-        "conversation_id": 57,
-        "message_type": 2,
-        "private": false,
-        "content": "La conversacion paso a pendiente",
-        "created_at": 1791813620,
-        "attachments": []
-      },
-      {
-        "id": 4824,
-        "conversation_id": 57,
+        "id": 2,
+        "content": "Hola, si claro",
+        "inbox_id": 1,
+        "conversation_id": 1,
         "message_type": 1,
-        "private": true,
-        "content": "Nota interna del equipo",
-        "created_at": 1791813630,
-        "attachments": []
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1791658147,
+        "private": false,
+        "source_id": "wamid.FAKE0004",
+        "sender": {
+          "id": 2,
+          "name": "Agente Demo",
+          "available_name": "Agente Demo",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
       },
       {
-        "id": 4825,
-        "conversation_id": 57,
-        "message_type": 1,
+        "id": 3,
+        "content": "Prueba",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1792443037,
         "private": false,
-        "content": "Tu cotizacion",
-        "created_at": 1791813640,
-        "attachments": [
-          {
-            "id": 9,
-            "file_type": "file",
-            "file_size": 1024,
-            "data_url": "https://files.example.org/storage/cotizacion%20final.pdf"
-          }
-        ]
+        "source_id": "wamid.FAKE0005",
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.demo"
+            },
+            "social_whatsapp_user_name": "Cliente Demo"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Demo",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 4,
+        "content": "prueba 2",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1792443293,
+        "private": false,
+        "source_id": "wamid.FAKE0006",
+        "sender": {
+          "id": 2,
+          "name": "Agente Demo",
+          "available_name": "Agente Demo",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 5,
+        "content": "Prueba de la prueba",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1792447532,
+        "private": false,
+        "source_id": "wamid.FAKE0001",
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.demo"
+            },
+            "social_whatsapp_user_name": "Cliente Demo"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Demo",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 6,
+        "content": "respondiendo a la prueba",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1792447562,
+        "private": false,
+        "source_id": "wamid.FAKE0002",
+        "sender": {
+          "id": 2,
+          "name": "Agente Demo",
+          "available_name": "Agente Demo",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 9,
+        "content": "captura api",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1792458145,
+        "private": false,
+        "source_id": null,
+        "sender": {
+          "id": 2,
+          "name": "Agente Demo",
+          "available_name": "Agente Demo",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
       }
     ]
   }

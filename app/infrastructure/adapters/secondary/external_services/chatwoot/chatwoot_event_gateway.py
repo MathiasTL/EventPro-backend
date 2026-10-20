@@ -107,14 +107,15 @@ def _delivery_notice(body: Mapping[str, Any]) -> DeliveryNotice:
     message_id = _int_or_none(body.get(cw.ID_KEY))
     if message_id is None:
         raise ValidationError("El aviso de entrega no trae el identificador del mensaje")
-    status_in_payload = body.get(cw.STATUS_KEY) is not None
+    # El estado y la hora del mensaje solo viajan en su copia incrustada en la conversación.
+    embedded = cw.embedded_message(body) or {}
     return DeliveryNotice(
         external_message_id=str(message_id),
         conversation_id=_conversation_id(body),
-        status=cw.delivery_status_from(body.get(cw.STATUS_KEY)),
-        error=cw.external_error(body),
-        updated_at=cw.event_time(body.get(cw.UPDATED_AT_KEY)),
-        status_in_payload=status_in_payload,
+        status=cw.delivery_status_from(embedded.get(cw.STATUS_KEY)),
+        error=cw.external_error(body) or cw.external_error(embedded),
+        updated_at=cw.event_time(embedded.get(cw.UPDATED_AT_KEY)),
+        status_in_payload=embedded.get(cw.STATUS_KEY) is not None,
     )
 
 

@@ -383,20 +383,18 @@ class FakeChatwootServer:
 
     @staticmethod
     def _list_item_json(message: FakeMessage) -> dict[str, Any]:
-        attachments = (
-            [{cw.DATA_URL_KEY: message.attachment_url}]
-            if message.attachment_url is not None
-            else []
-        )
-        return {
+        item = {
             cw.ID_KEY: message.id,
             cw.CONVERSATION_ID_KEY: message.conversation_id,
             cw.MESSAGE_TYPE_KEY: message.message_type,
             cw.PRIVATE_KEY: message.private,
             cw.CONTENT_KEY: message.content,
             cw.CREATED_AT_KEY: message.created_at,
-            cw.ATTACHMENTS_KEY: attachments,
         }
+        # Como en las capturas reales: sin adjuntos no hay clave `attachments`.
+        if message.attachment_url is not None:
+            item[cw.ATTACHMENTS_KEY] = [{cw.DATA_URL_KEY: message.attachment_url}]
+        return item
 
     @staticmethod
     def _message_json(message: FakeMessage) -> dict[str, Any]:

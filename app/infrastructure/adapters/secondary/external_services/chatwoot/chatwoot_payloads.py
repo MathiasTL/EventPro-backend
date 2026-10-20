@@ -1,7 +1,8 @@
 """Formato de intercambio con Chatwoot: constructores de peticiones y lectores de respuestas.
 
-Todos los nombres de campo de Chatwoot son constantes de este módulo. Varios no están confirmados
-con capturas reales (ver `tests/fixtures/chatwoot/README.md`): corregirlos es un cambio local aquí.
+Todos los nombres de campo de Chatwoot son constantes de este módulo. Las formas de las respuestas
+y de los webhooks están contrastadas con capturas reales de Chatwoot v4.18.0 (ver
+`tests/fixtures/chatwoot/README.md`); la excepción son los adjuntos, que no se capturaron.
 Las funciones son puras; los fallos de forma se informan como `MessagingUnavailableError` con un
 texto fijo que nombra la clave ausente y nunca el contenido recibido.
 """
@@ -47,7 +48,8 @@ MESSAGES_KEY = "messages"
 META_KEY = "meta"
 SENDER_KEY = "sender"
 LAST_ACTIVITY_AT_KEY = "last_activity_at"
-# Webhooks: nombre del evento, hora de actualización, conversación y motivo de un envío fallido.
+# Webhooks: nombre del evento, hora de actualización (del mensaje incrustado), conversación y
+# motivo de un envío fallido.
 EVENT_KEY = "event"
 UPDATED_AT_KEY = "updated_at"
 CONVERSATION_KEY = "conversation"
@@ -433,6 +435,25 @@ def delivery_status_from(value: Any) -> DeliveryStatus | None:
     """Estado de entrega que se registra, o `None` para `sent` y cualquier valor desconocido."""
 
     return _DELIVERY_STATUSES.get(value) if isinstance(value, str) else None
+
+
+def embedded_message(body: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Mensaje del evento tal como Chatwoot lo incrusta en `conversation.messages`.
+
+    En los webhooks de mensaje el cuerpo no trae `status` ni la hora de actualización del mensaje:
+    solo los lleva la copia incrustada en la conversación. Se busca por id, no por posición, y si
+    no está no se confía en ninguna otra entrada.
+    """
+
+    message_id = body.get(ID_KEY)
+    conversation = body.get(CONVERSATION_KEY)
+    messages = conversation.get(MESSAGES_KEY) if isinstance(conversation, Mapping) else None
+    if isinstance(message_id, bool) or not isinstance(messages, list):
+        return None
+    for message in messages:
+        if isinstance(message, Mapping) and message.get(ID_KEY) == message_id:
+            return message
+    return None
 
 
 def external_error(message: Mapping[str, Any]) -> str | None:

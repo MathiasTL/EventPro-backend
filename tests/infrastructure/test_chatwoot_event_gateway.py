@@ -3,7 +3,7 @@
 import copy
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -29,7 +29,10 @@ from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_e
 from tests.chatwoot_fixture_support import load_fixture
 from tests.infrastructure.chatwoot_support import AGENT_TOKEN, BASE_URL, BOT_TOKEN, ERROR_BODY
 
-UPDATED_AT = datetime(2026, 10, 12, 14, 1, tzinfo=UTC)
+DELIVERED_AT = datetime(2026, 10, 19, 22, 6, 6, 836000, tzinfo=UTC)
+READ_AT = datetime(2026, 10, 19, 22, 6, 7, 161000, tzinfo=UTC)
+FAILED_AT = datetime(2026, 10, 19, 22, 34, 13, 132000, tzinfo=UTC)
+REAL_ERROR = "(#131030) Recipient phone number not in allowed list"
 MESSAGES_PATH = "/api/v1/accounts/1/conversations/57/messages"
 
 
@@ -37,6 +40,13 @@ def _body(name: str) -> dict[str, Any]:
     body = load_fixture(name)["body"]
     assert isinstance(body, dict)
     return copy.deepcopy(body)
+
+
+def _embedded(body: dict[str, Any]) -> dict[str, Any]:
+    """Mensaje que Chatwoot incrusta en `conversation.messages`: ahí viven estado y hora."""
+
+    embedded: dict[str, Any] = body["conversation"]["messages"][0]
+    return embedded
 
 
 def _raw(body: Any) -> bytes:
@@ -53,8 +63,8 @@ def _parse(body: Any) -> Any:
 @pytest.mark.parametrize(
     ("fixture", "status", "updated_at"),
     [
-        ("message_updated_delivered", DeliveryStatus.DELIVERED, UPDATED_AT),
-        ("message_updated_read", DeliveryStatus.READ, UPDATED_AT + timedelta(minutes=1)),
+        ("message_updated_delivered", DeliveryStatus.DELIVERED, DELIVERED_AT),
+        ("message_updated_read", DeliveryStatus.READ, READ_AT),
     ],
 )
 def test_a_delivered_or_read_update_becomes_a_delivery_notice(
@@ -63,8 +73,8 @@ def test_a_delivered_or_read_update_becomes_a_delivery_notice(
     event = _parse(_body(fixture))
 
     assert event == DeliveryNotice(
-        external_message_id="4821",
-        conversation_id=57,
+        external_message_id="6",
+        conversation_id=1,
         status=status,
         error=None,
         updated_at=updated_at,
@@ -76,11 +86,11 @@ def test_a_failed_update_carries_the_external_error_text() -> None:
     event = _parse(_body("message_updated_failed"))
 
     assert event == DeliveryNotice(
-        external_message_id="4821",
-        conversation_id=57,
+        external_message_id="7",
+        conversation_id=2,
         status=DeliveryStatus.FAILED,
-        error="message_outside_messaging_window",
-        updated_at=UPDATED_AT,
+        error=REAL_ERROR,
+        updated_at=FAILED_AT,
         status_in_payload=True,
     )
 
@@ -93,43 +103,88 @@ def test_a_sent_update_has_a_status_in_the_payload_that_is_not_recordable() -> N
     assert event.status_in_payload is True
 
 
+def test_the_message_status_is_not_read_from_the_top_level_of_the_body() -> None:
+    # Capturas reales: el cuerpo no trae `status`; vive en `conversation.messages[0].status`.
+    body = _body("message_updated_sent")
+    assert "status" not in body
+    body["status"] = "read"
+
+    event = _parse(body)
+
+    assert isinstance(event, DeliveryNotice)
+    assert event.status is None
+
+
 def test_an_update_without_status_asks_for_a_lookup_and_keeps_the_error_text() -> None:
     body = _body("message_updated_failed")
-    del body["status"]
+    del _embedded(body)["status"]
 
     event = _parse(body)
 
     assert isinstance(event, DeliveryNotice)
     assert (event.status, event.status_in_payload) == (None, False)
-    assert event.error == "message_outside_messaging_window"
+    assert event.error == REAL_ERROR
+
+
+def test_an_update_whose_embedded_message_is_another_one_is_not_trusted() -> None:
+    body = _body("message_updated_delivered")
+    _embedded(body)["id"] = 99
+
+    event = _parse(body)
+
+    assert isinstance(event, DeliveryNotice)
+    assert (event.status, event.status_in_payload, event.updated_at) == (None, False, None)
+
+
+def test_the_embedded_message_is_found_by_id_among_several() -> None:
+    body = _body("message_updated_delivered")
+    body["conversation"]["messages"].insert(0, {"id": 99, "status": "read"})
+
+    event = _parse(body)
+
+    assert isinstance(event, DeliveryNotice)
+    assert event.status is DeliveryStatus.DELIVERED
+
+
+def test_the_error_text_falls_back_to_the_embedded_message() -> None:
+    body = _body("message_updated_failed")
+    del body["content_attributes"]
+
+    event = _parse(body)
+
+    assert isinstance(event, DeliveryNotice)
+    assert event.error == REAL_ERROR
 
 
 def test_an_update_without_update_time_leaves_it_empty() -> None:
     body = _body("message_updated_delivered")
-    del body["updated_at"]
+    del _embedded(body)["updated_at"]
 
     assert _parse(body).updated_at is None
 
 
 def test_an_update_time_that_cannot_be_read_is_left_empty() -> None:
     body = _body("message_updated_delivered")
-    body["updated_at"] = "ayer por la tarde"
+    _embedded(body)["updated_at"] = "ayer por la tarde"
 
     assert _parse(body).updated_at is None
 
 
 def test_an_update_time_with_an_offset_is_converted_to_utc() -> None:
     body = _body("message_updated_delivered")
-    body["updated_at"] = "2026-10-12T09:01:00-05:00"
+    _embedded(body)["updated_at"] = "2026-10-19T17:06:06.836-05:00"
 
-    assert _parse(body).updated_at == UPDATED_AT
+    assert _parse(body).updated_at == DELIVERED_AT
 
 
 def test_an_update_without_conversation_has_no_conversation_id() -> None:
     body = _body("message_updated_delivered")
     del body["conversation"]
 
-    assert _parse(body).conversation_id is None
+    event = _parse(body)
+
+    assert event.conversation_id is None
+    assert (event.status, event.status_in_payload) == (None, False)
 
 
 @pytest.mark.parametrize("message_type", ["outgoing", 1])
@@ -152,8 +207,8 @@ def test_an_update_of_an_incoming_message_is_not_a_delivery_notice(
     assert _parse(body) == UnhandledGatewayEvent(
         kind="message_updated",
         direction=MessageDirection.INCOMING,
-        conversation_id=57,
-        external_message_id="4821",
+        conversation_id=1,
+        external_message_id="6",
     )
 
 
@@ -164,8 +219,8 @@ def test_an_update_of_a_private_note_is_not_a_delivery_notice() -> None:
     assert _parse(body) == UnhandledGatewayEvent(
         kind="message_updated",
         direction=MessageDirection.OUTGOING,
-        conversation_id=57,
-        external_message_id="4821",
+        conversation_id=1,
+        external_message_id="6",
     )
 
 
@@ -176,8 +231,8 @@ def test_an_incoming_created_message_is_unhandled() -> None:
     assert _parse(_body("message_created_incoming")) == UnhandledGatewayEvent(
         kind="message_created",
         direction=MessageDirection.INCOMING,
-        conversation_id=57,
-        external_message_id="4830",
+        conversation_id=1,
+        external_message_id="5",
     )
 
 
@@ -185,8 +240,8 @@ def test_an_outgoing_created_message_is_unhandled() -> None:
     assert _parse(_body("message_created_outgoing")) == UnhandledGatewayEvent(
         kind="message_created",
         direction=MessageDirection.OUTGOING,
-        conversation_id=57,
-        external_message_id="4821",
+        conversation_id=1,
+        external_message_id="6",
     )
 
 

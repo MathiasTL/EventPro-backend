@@ -1,26 +1,55 @@
 {
-  "provisional": true,
+  "provisional": false,
   "headers": {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json; charset=utf-8"
   },
   "body": {
-    "id": 57,
-    "account_id": 1,
-    "inbox_id": 2,
-    "status": "pending",
-    "can_reply": true,
-    "contact_inbox": {
-      "source_id": "51999111222"
-    },
-    "messages": [],
     "meta": {
       "sender": {
-        "id": 11,
-        "name": "Cliente Demo",
-        "phone_number": "+51999111222"
-      }
+        "additional_attributes": {},
+        "availability_status": "offline",
+        "email": null,
+        "id": 3,
+        "name": "+51999333444",
+        "phone_number": "+51999333444",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "created_at": 1792458145
+      },
+      "channel": "Channel::Whatsapp",
+      "hmac_verified": false
     },
-    "created_at": 1791813600,
-    "last_activity_at": 1791813600
+    "id": 3,
+    "messages": [],
+    "account_id": 2,
+    "uuid": "00000000-0000-4000-8000-000000000001",
+    "additional_attributes": {},
+    "agent_last_seen_at": 0,
+    "assignee_last_seen_at": 0,
+    "can_reply": false,
+    "contact_info_request": {
+      "available": false,
+      "reason": null,
+      "delivery_mode": null
+    },
+    "contact_last_seen_at": 0,
+    "custom_attributes": {},
+    "inbox_id": 1,
+    "labels": [],
+    "muted": false,
+    "snoozed_until": null,
+    "status": "open",
+    "created_at": 1792458145,
+    "updated_at": 1792458145.4550402,
+    "timestamp": 1792458145,
+    "first_reply_created_at": 0,
+    "unread_count": 0,
+    "last_non_activity_message": null,
+    "last_activity_at": 1792458145,
+    "priority": null,
+    "waiting_since": 1792458145,
+    "sla_policy_id": null
   }
 }

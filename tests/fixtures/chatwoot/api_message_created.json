@@ -1,25 +1,28 @@
 {
-  "provisional": true,
+  "provisional": false,
   "headers": {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json; charset=utf-8"
   },
   "body": {
-    "id": 4821,
-    "account_id": 1,
-    "inbox_id": 2,
-    "conversation_id": 57,
-    "content": "Hola, tu cotizacion esta lista",
-    "content_type": "text",
-    "content_attributes": {},
+    "id": 9,
+    "content": "captura api",
+    "inbox_id": 1,
+    "conversation_id": 1,
     "message_type": 1,
-    "private": false,
+    "content_type": "text",
     "status": "sent",
+    "content_attributes": {},
+    "created_at": 1792458145,
+    "private": false,
     "source_id": null,
-    "created_at": 1791813600,
     "sender": {
-      "id": 3,
-      "name": "Bot EventPro",
-      "type": "agent_bot"
+      "id": 2,
+      "name": "Agente Demo",
+      "available_name": "Agente Demo",
+      "avatar_url": "",
+      "type": "user",
+      "availability_status": "offline",
+      "thumbnail": ""
     }
   }
 }

@@ -132,11 +132,22 @@ def test_decode_direction(raw: Any, expected: MessageDirection | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_find_contact_id_picks_the_exact_phone_among_several_results() -> None:
+def test_find_contact_id_reads_the_real_search_response() -> None:
     body = _body("api_contact_search")
 
-    assert find_contact_id(body, PHONE) == 11
-    assert find_contact_id(body, OTHER_PHONE) == 12
+    assert find_contact_id(body, PHONE) == 1
+    assert find_contact_id(body, OTHER_PHONE) is None
+
+
+def test_find_contact_id_picks_the_exact_phone_among_several_results() -> None:
+    body = _body("api_contact_search")
+    contact = body["payload"][0]
+    decoy = {**contact, "id": 12, "phone_number": "+519991112223"}
+    other = {**contact, "id": 13, "phone_number": "+51999333444"}
+    body["payload"] = [decoy, other, contact]
+
+    assert find_contact_id(body, PHONE) == 1
+    assert find_contact_id(body, OTHER_PHONE) == 13
 
 
 def test_find_contact_id_rejects_a_superstring_match() -> None:
@@ -175,7 +186,7 @@ def test_find_contact_id_rejects_entries_that_are_not_objects() -> None:
 
 
 def test_parse_contact_id_reads_the_created_contact() -> None:
-    assert parse_contact_id(_body("api_contact_created")) == 11
+    assert parse_contact_id(_body("api_contact_created")) == 3
 
 
 def test_parse_contact_id_fails_when_the_contact_is_missing() -> None:
@@ -203,7 +214,7 @@ def test_conversation_request_carries_only_inbox_and_contact() -> None:
 
 def test_parse_conversation_ref_reads_id_and_can_reply() -> None:
     assert parse_conversation_ref(_body("api_conversation_created")) == ConversationRef(
-        conversation_id=57, can_reply=True
+        conversation_id=3, can_reply=False
     )
 
 
@@ -220,7 +231,7 @@ def test_parse_conversation_ref_requires_the_id() -> None:
 def test_conversation_items_reads_the_nested_payload() -> None:
     items = conversation_items(_body("api_conversation_list"))
 
-    assert [item["id"] for item in items] == [57, 58, 59, 60]
+    assert [item["id"] for item in items] == [3, 2, 1]
 
 
 def test_conversation_items_requires_the_payload_list() -> None:
@@ -228,35 +239,57 @@ def test_conversation_items_requires_the_payload_list() -> None:
         conversation_items({"data": {}})
 
 
-def test_summary_of_a_pending_conversation_maps_to_bot() -> None:
-    item = conversation_items(_body("api_conversation_list"))[0]
+def test_summary_of_an_open_conversation_maps_to_human_with_an_open_window() -> None:
+    item = conversation_items(_body("api_conversation_list"))[2]
 
     assert parse_conversation_summary(item) == ConversationSummary(
-        conversation_id=57,
+        conversation_id=1,
         phone=PHONE,
-        status=ConversationStatus.BOT,
+        status=ConversationStatus.HUMAN,
         service_window_open=True,
-        last_message_at=instant(T0_EPOCH + 100, 4831),
+        last_message_at=instant(1_792_447_562, 6),
     )
 
 
-def test_summary_of_an_open_conversation_maps_to_human_with_a_closed_window() -> None:
+def test_summary_of_a_pending_conversation_maps_to_bot() -> None:
+    item = {**conversation_items(_body("api_conversation_list"))[2], "status": "pending"}
+
+    summary = parse_conversation_summary(item)
+
+    assert summary is not None
+    assert summary.status is ConversationStatus.BOT
+
+
+def test_summary_with_a_closed_window_uses_the_embedded_message_time() -> None:
     item = conversation_items(_body("api_conversation_list"))[1]
 
     summary = parse_conversation_summary(item)
 
     assert summary is not None
-    assert summary.status is ConversationStatus.HUMAN
     assert summary.phone == OTHER_PHONE
     assert summary.service_window_open is False
-    assert summary.last_message_at == instant(T0_EPOCH + 50, 4825)
+    assert summary.last_message_at == instant(1_792_449_252, 8)
+
+
+def test_summary_of_a_conversation_without_messages_uses_its_last_activity() -> None:
+    # Una conversación recién creada llega con `messages: []`.
+    item = conversation_items(_body("api_conversation_list"))[0]
+    assert item["messages"] == []
+
+    summary = parse_conversation_summary(item)
+
+    assert summary is not None
+    assert summary.last_message_at == instant(1_792_458_145, 0)
 
 
 def test_summary_skips_resolved_conversations_and_missing_phones() -> None:
-    items = conversation_items(_body("api_conversation_list"))
+    item = conversation_items(_body("api_conversation_list"))[2]
+    resolved = {**item, "status": "resolved"}
+    sender = {**item["meta"]["sender"], "phone_number": None}
+    no_phone = {**item, "meta": {**item["meta"], "sender": sender}}
 
-    assert parse_conversation_summary(items[2]) is None
-    assert parse_conversation_summary(items[3]) is None
+    assert parse_conversation_summary(resolved) is None
+    assert parse_conversation_summary(no_phone) is None
 
 
 def test_summary_falls_back_to_last_activity_when_there_is_no_embedded_message() -> None:
@@ -387,22 +420,22 @@ def test_attachment_files_use_the_multipart_field_of_attachments() -> None:
 
 def test_receipt_from_the_created_message_response() -> None:
     assert parse_message_receipt(_body("api_message_created")) == MessageReceipt(
-        message_id="4821", conversation_id=57, sent_at=instant(T0_EPOCH, 4821)
+        message_id="9", conversation_id=1, sent_at=instant(1_792_458_145, 9)
     )
 
 
 def test_receipt_accepts_an_iso_created_at() -> None:
-    body = {**_body("api_message_created"), "created_at": "2026-10-12T14:00:00.000Z"}
+    body = {**_body("api_message_created"), "created_at": "2026-10-20T01:02:25.000Z"}
 
-    assert parse_message_receipt(body).sent_at == instant(T0_EPOCH, 4821)
+    assert parse_message_receipt(body).sent_at == instant(1_792_458_145, 9)
 
 
 def test_receipt_never_uses_the_wamid_and_fits_the_column() -> None:
-    body = {**_body("api_message_created"), "source_id": "wamid.FAKEMESSAGEID0001"}
+    body = {**_body("api_message_created"), "source_id": "wamid.FAKE0001"}
 
     receipt = parse_message_receipt(body)
 
-    assert receipt.message_id == "4821"
+    assert receipt.message_id == "9"
     assert len(receipt.message_id) <= 64
 
 
@@ -416,11 +449,13 @@ def test_receipt_requires_id_conversation_and_creation_time(missing: str) -> Non
 
 def test_message_items_reads_the_payload_list() -> None:
     assert [item["id"] for item in message_items(_body("api_message_list"))] == [
-        4821,
-        4822,
-        4823,
-        4824,
-        4825,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        9,
     ]
 
 
@@ -429,36 +464,52 @@ def test_message_items_requires_the_payload_list() -> None:
         message_items({"meta": {}})
 
 
-def test_listed_outgoing_and_incoming_messages() -> None:
+def test_listed_incoming_and_outgoing_messages() -> None:
     items = message_items(_body("api_message_list"))
 
     assert parse_conversation_message(items[0]) == ConversationMessage(
-        message_id="4821",
-        conversation_id=57,
-        direction=MessageDirection.OUTGOING,
-        body="Hola",
-        sent_at=instant(T0_EPOCH, 4821),
+        message_id="1",
+        conversation_id=1,
+        direction=MessageDirection.INCOMING,
+        body="Hola, info",
+        sent_at=instant(1_791_657_993, 1),
         attachment_filename=None,
     )
-    incoming = parse_conversation_message(items[1])
-    assert incoming is not None
-    assert incoming.direction is MessageDirection.INCOMING
-    assert incoming.body == "Gracias"
+    outgoing = parse_conversation_message(items[1])
+    assert outgoing is not None
+    assert outgoing.direction is MessageDirection.OUTGOING
+    assert outgoing.body == "Hola, si claro"
+
+
+def test_listed_message_without_attachments_omits_the_key() -> None:
+    # Capturas reales: sin adjuntos, Chatwoot no incluye `attachments` en el mensaje.
+    item = message_items(_body("api_message_list"))[0]
+
+    assert "attachments" not in item
+    message = parse_conversation_message(item)
+    assert message is not None
+    assert message.attachment_filename is None
 
 
 def test_listed_activity_and_private_messages_are_excluded() -> None:
-    items = message_items(_body("api_message_list"))
+    item = message_items(_body("api_message_list"))[0]
 
-    assert parse_conversation_message(items[2]) is None
-    assert parse_conversation_message(items[3]) is None
+    assert parse_conversation_message({**item, "message_type": 2}) is None
+    assert parse_conversation_message({**item, "private": True}) is None
 
 
 def test_listed_attachment_exposes_the_decoded_file_name() -> None:
-    message = parse_conversation_message(message_items(_body("api_message_list"))[4])
+    # La forma de los adjuntos no se capturó: sigue el código de Chatwoot (`data_url`).
+    item = {
+        **message_items(_body("api_message_list"))[1],
+        "attachments": [{"data_url": "https://files.example.org/storage/cotizacion%20final.pdf"}],
+    }
+
+    message = parse_conversation_message(item)
 
     assert message is not None
     assert message.attachment_filename == "cotizacion final.pdf"
-    assert message.body == "Tu cotizacion"
+    assert message.body == "Hola, si claro"
 
 
 def test_listed_message_accepts_the_string_direction_and_a_missing_body() -> None:
