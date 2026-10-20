@@ -608,9 +608,9 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
 
 #### `POST /webhooks/chatwoot`
 * **Descripción:** Receptor de los eventos de cuenta de Chatwoot: mensajes entrantes del cliente (texto, clics de botones e imágenes de comprobantes de pago), mensajes nuevos, cambios de estado de la conversación y actualizaciones de entrega.
-* **Seguridad:** Sin JWT; autenticado por firma. Cada petición debe incluir las cabeceras `X-Chatwoot-Timestamp` (marca de tiempo Unix, en segundos) y `X-Chatwoot-Signature: sha256=<hex>`, donde `<hex>` es el HMAC-SHA256 de la cadena `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"` (bytes exactos, sin reserializar) calculado con el secreto `CHATWOOT_WEBHOOK_SECRET`. El backend recalcula el HMAC y lo compara en tiempo constante antes de procesar nada, y rechaza las peticiones cuya marca de tiempo tenga más de 5 minutos de antigüedad. Si alguna cabecera falta, la firma no coincide o la marca de tiempo está vencida, responde `401` (`invalid-webhook-signature`), no encola el evento y registra el intento.
+* **Seguridad:** Sin JWT; autenticado por firma. Cada petición debe incluir las cabeceras `X-Chatwoot-Timestamp` (marca de tiempo Unix, en segundos) y `X-Chatwoot-Signature: sha256=<hex>`, donde `<hex>` es el HMAC-SHA256 de la cadena `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"` (bytes exactos, sin reserializar) calculado con el secreto `CHATWOOT_WEBHOOK_SECRET`. El backend recalcula el HMAC y lo compara en tiempo constante antes de procesar nada, y rechaza las peticiones cuya marca de tiempo difiera más de 5 minutos de la hora del servidor (en cualquier sentido). Si alguna cabecera falta, la marca de tiempo no es numérica, la firma no coincide o la marca de tiempo está fuera de la ventana, o si `CHATWOOT_WEBHOOK_SECRET` no está configurado (falla cerrada), responde `401` (`invalid-webhook-signature`), no encola el evento y registra el intento sin cuerpo ni firma. Chatwoot solo firma los webhooks creados con un secreto. La cabecera `X-Chatwoot-Delivery` (identificador de la entrega) **no forma parte de la firma**.
 * **Exposición:** solo interna. El proxy inverso bloquea esta ruta hacia internet y únicamente es accesible desde la red interna de Docker (`http://api:8000/api/v1/webhooks/chatwoot`).
-* **Request Body:** Payload estándar del webhook de cuenta de Chatwoot. Ejemplo recortado para `message_created`:
+* **Request Body:** Payload estándar del webhook de cuenta de Chatwoot (forma contrastada con capturas reales de Chatwoot v4.18.0; el ejemplo está recortado y simplificado). Ejemplo recortado para `message_created`:
   ```json
   {
     "event": "message_created",
@@ -623,9 +623,10 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
   }
   ```
 * **Response `200 OK`:** `{"status": "EVENT_RECEIVED"}` (procesamiento asíncrono en menos de 1.5 s; el evento se encola en arq).
-* **Idempotencia:** el evento se procesa una sola vez por identificador de mensaje o evento de Chatwoot (deduplicación en Redis, TTL de 7 días); un reenvío responde `200` sin reprocesar.
-* **Enrutamiento del worker:** un mensaje entrante (`message_created`, `incoming`) en una conversación `pending` lo procesa el bot; cualquier otro evento (mensajes nuevos, cambios de estado, actualizaciones de entrega) se publica a la web de EventPro por el stream SSE (`GET /conversations/stream`).
-* **Errores:** `401` (`invalid-webhook-signature`).
+* **Idempotencia:** la entrega se procesa una sola vez por el valor de `X-Chatwoot-Delivery` (deduplicación en Redis, TTL de 7 días); un reenvío responde `200` sin reprocesar. Si la cabecera falta, el identificador es el resumen de la firma ya verificada y el evento no se rechaza ni se descarta. Dos entregas con cuerpos idénticos e identificadores distintos se procesan ambas.
+* **Enrutamiento del worker (estado actual):** el trabajo `process_gateway_event` procesa solo los avisos de entrega (`message_updated` de un mensaje saliente): aplica `delivered`, `read` o `failed` al mensaje de la cola de salida (`delivery_status`, `delivery_error`). En Chatwoot v4.18.0 el `status` de ese evento viaja en `conversation.messages[]` (no en el nivel superior); si falta, el worker lo consulta a la API. El motivo del fallo está en `content_attributes.external_error`. Cualquier otro evento (mensajes entrantes, ecos de mensajes salientes, cambios de estado de conversación) se reconoce y solo se registra, sin cambiar datos. Los comprobantes entrantes, el bot y la publicación por el stream SSE (`GET /conversations/stream`) llegan con sus bloques.
+* **Limitación:** Chatwoot no reintenta los webhooks de cuenta; un aviso emitido mientras la API no responde se pierde y `delivery_status` queda nulo hasta que exista el job de reconciliación.
+* **Errores:** `401` (`invalid-webhook-signature`), `503` (`event-queue-unavailable`: la deduplicación o el encolado fallaron; la clave se libera para que un reenvío pueda procesarse).
 
 ---
 
@@ -1453,7 +1454,8 @@ Todos los errores usan `Content-Type: application/problem+json` con los campos `
 | `not-found` | `404` | El recurso no existe o está fuera del alcance del rol (por ejemplo, un evento no asignado a un `OPERADOR`). |
 | `duplicate-resource` | `409` | Violación de unicidad (correo, teléfono, nombre de catálogo, elenco ya asignado). |
 | `rate-limit-exceeded` | `429` | Se superó el límite de peticiones del endpoint (login, cotización, OTP, enlace de firma). |
-| `invalid-webhook-signature` | `401` | Falta la cabecera `X-Chatwoot-Signature` o `X-Chatwoot-Timestamp` del webhook de Chatwoot, su HMAC no coincide o la marca de tiempo tiene más de 5 minutos de antigüedad. |
+| `invalid-webhook-signature` | `401` | Falta la cabecera `X-Chatwoot-Signature` o `X-Chatwoot-Timestamp` del webhook de Chatwoot, su HMAC no coincide, la marca de tiempo difiere más de 5 minutos de la hora del servidor o `CHATWOOT_WEBHOOK_SECRET` no está configurado. |
+| `event-queue-unavailable` | `503` | El webhook de Chatwoot era válido pero no se pudo deduplicar o encolar el evento (Redis no disponible). |
 | `invalid-advance-amount` | `400` | El adelanto no es exactamente el 10% del subtotal de servicios. |
 | `availability-conflict` | `409` | No hay cupo (artistas o inventario) para la fecha y el horario solicitados (RF-09). Puede incluir `alternatives` y `handoff_available`. |
 | `simultaneous-threshold-exceeded` | `409` | Se superaría `SIMULTANEOUS_SHOWS_THRESHOLD` shows simultáneos (RN-04); requiere aprobación manual de un encargado. |

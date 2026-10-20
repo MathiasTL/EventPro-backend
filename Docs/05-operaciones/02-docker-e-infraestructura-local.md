@@ -162,14 +162,37 @@ Con `ENABLE_ACCOUNT_SIGNUP=false` no existe registro público. En una instalaci�
    * Si el asistente no muestra el token de verificación, se consulta en la configuración de la bandeja (*Settings → Inboxes → bandeja de WhatsApp → Configuration*).
    * Comprobación: enviar un mensaje de WhatsApp al número de prueba desde un destinatario registrado; debe aparecer como conversación en Chatwoot, y la respuesta enviada desde Chatwoot debe llegar al teléfono.
 4. Anotar el identificador de la bandeja (`CHATWOOT_INBOX_ID`).
+5. **Activar `lock_to_single_conversation`** en la configuración de la bandeja (*Settings → Inboxes → bandeja de WhatsApp → Settings*). Es un paso de operación obligatorio: `ChatwootMessagingAdapter` no reutiliza conversaciones por su cuenta y depende de esta opción para que los envíos al mismo teléfono usen una sola conversación. Sin ella, cada envío podría abrir una conversación nueva.
 
 `FRONTEND_URL` en `chatwoot.env` debe ser la URL pública (túnel o `chat.<EVENTPRO_DOMAIN>`), porque Meta descarga los medios salientes desde esa dirección. El número de prueba solo admite 5 destinatarios registrados.
 
 ### 5.4 Agent Bot y webhook de cuenta
 
-1. **Agent Bot:** crearlo (*Settings → Integrations → Bots*, o desde la consola de superadministrador según la versión), asignarlo a la bandeja de WhatsApp y guardar su token en `CHATWOOT_BOT_TOKEN`. Verificar si funciona sin `outgoing_url` (pendiente 1 de la especificación).
-2. **Webhook de cuenta:** *Settings → Integrations → Webhooks → Add*, con URL `http://api:8000/api/v1/webhooks/chatwoot` (red interna de Docker) y los eventos de mensajes y de conversación. Guardar el secreto del webhook en `CHATWOOT_WEBHOOK_SECRET`.
-3. **Agente de servicio:** crear un agente dedicado (por ejemplo `eventpro-service`), y guardar su token de acceso (*Profile Settings → Access Token*) en `CHATWOOT_AGENT_TOKEN`.
+> **`FORCE_SSL=false` es obligatorio en `chatwoot.env`.** Con `true`, Rails responde 301 a HTTPS a toda petición HTTP, y el cliente del backend (`chatwoot_client.py`, `follow_redirects=False`) llama a `CHATWOOT_BASE_URL=http://chatwoot-rails:3000` dentro de Docker, así que toda llamada falla. El tráfico público sigue siendo HTTPS porque Caddy termina TLS, y Rails nunca se expone directamente (verificado el 2026-10-19 en Chatwoot v4.18.0).
+
+El panel de Chatwoot v4.18 no sirve para crear ninguno de los dos recursos siguientes (*Settings → Bots* exige una URL de salida y el formulario de webhooks rechaza hosts sin punto), así que se crean desde la consola de Rails con un único *script* idempotente (verificado el 2026-10-19/20). Ajuste el identificador de la cuenta (`Account.find(2)`) al valor de `CHATWOOT_ACCOUNT_ID` de la sección 5.2.
+
+```bash
+cat > /tmp/cw_setup.rb <<'EOF'
+account = Account.find(2)
+bot = AgentBot.find_or_create_by!(account_id: account.id, name: "EventPro Bot")
+hook = Webhook.find_or_create_by!(account_id: account.id, url: "http://api:8000/api/v1/webhooks/chatwoot") do |w|
+  w.subscriptions = %w[message_created message_updated]
+end
+STDERR.puts "bot_id=#{bot.id} bot_url=#{bot.outgoing_url.inspect} hook_id=#{hook.id} hook_secret=#{hook.secret.present?} subs=#{hook.subscriptions.inspect}"
+puts "CHATWOOT_BOT_TOKEN=#{bot.access_token.token}"
+puts "CHATWOOT_WEBHOOK_SECRET=#{hook.secret}"
+EOF
+docker cp /tmp/cw_setup.rb eventpro_chatwoot_rails:/tmp/cw_setup.rb
+docker exec eventpro_chatwoot_rails bundle exec rails runner /tmp/cw_setup.rb 2>/tmp/cw_setup.err | grep '^CHATWOOT_' >> .env
+```
+
+Los secretos se escriben directamente en `.env` y no se imprimen; el diagnóstico (sin secretos) queda en `/tmp/cw_setup.err`. Si el `.env` ya contiene esas variables, elimine las líneas anteriores para evitar duplicados.
+
+1. **Agent Bot:** el *script* lo crea **sin `outgoing_url`**. Aunque el panel exige una URL de salida, un bot sin ella funciona: los mensajes enviados con su token llegaron a WhatsApp (resuelve el pendiente 1 de la especificación). Luego, en el panel: *Settings → Inboxes → bandeja de WhatsApp → Bot Configuration*, asignar el bot y activar *Lock to single conversation*. Su token queda en `CHATWOOT_BOT_TOKEN`.
+2. **Webhook de cuenta:** el *script* lo crea con URL `http://api:8000/api/v1/webhooks/chatwoot` (red interna de Docker), que el panel rechaza porque su validación exige un host con punto y sin guion bajo. Se suscribe a `message_created` y `message_updated`; `message_updated` es el evento que entrega los avisos de entrega (`delivered`, `read`, `failed`) y el único que EventPro procesa hoy. Chatwoot genera el secreto automáticamente y el *script* lo escribe en `CHATWOOT_WEBHOOK_SECRET` (obligatorio en `staging` y `production`); sin firma válida EventPro responde `401`. Para que Chatwoot entregue a una IP privada se requiere `SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true` (ya documentado en `chatwoot.env.example`).
+   * Chatwoot **no reintenta** los webhooks de cuenta y espera la respuesta como máximo 5 s: un aviso emitido mientras la API está caída se pierde y el `delivery_status` de ese mensaje queda nulo (limitación documentada; el job de reconciliación pertenece al bloque del bot).
+3. **Agente de servicio:** crear un agente dedicado (por ejemplo `eventpro-service`), y guardar su token de acceso (*Profile Settings → Access Token*) en `CHATWOOT_AGENT_TOKEN`. EventPro envía cada token en la cabecera `api_access_token` (no `Authorization: Bearer`).
 
 Con esto se completa el bloque `CHATWOOT_*` del `.env` de EventPro (ver [guía de entorno, sección 2.4](01-guia-entorno-y-configuracion.md)).
 
@@ -225,7 +248,7 @@ El proyecto es académico: el servidor debe costar US$0. Pasos:
 6. **Dominio DuckDNS:** crear el dominio y apuntarlo a la IP pública de la VM. DuckDNS resuelve los subdominios de segundo nivel (`app.`, `api.` y `chat.`) hacia la misma IP del dominio (comprobado en el despliegue del 2026-10-10), por lo que no hace falta un registro por subdominio. Comprobación: `dig +short chat.<EVENTPRO_DOMAIN>` debe devolver la IP de la VM.
 7. **Configuración y arranque:**
    1. Clonar el repositorio en `/opt/eventpro` (rama `develop`; los archivos de despliegue no existen en `main`).
-   2. Crear `chatwoot.env` a partir de `chatwoot.env.example`, con los tres secretos generados, `FRONTEND_URL=https://chat.<EVENTPRO_DOMAIN>` y `FORCE_SSL=true`.
+   2. Crear `chatwoot.env` a partir de `chatwoot.env.example`, con los tres secretos generados, `FRONTEND_URL=https://chat.<EVENTPRO_DOMAIN>` y `FORCE_SSL=false` (ver la nota de la sección 5.4: con `true` el backend no puede llamar a Chatwoot).
    3. Crear `.env` con `EVENTPRO_DOMAIN=<dominio>` y el resto de la configuración de EventPro. El archivo debe existir aunque solo se levante Chatwoot, porque Compose lo exige para cargar `docker-compose.yml`.
    4. Ejecutar la preparación de la sección 5.1.
    5. Levantar con la combinación de servidor (sección 4). Caddy obtiene los certificados al primer arranque.
@@ -239,18 +262,11 @@ El proyecto es académico: el servidor debe costar US$0. Pasos:
    * El 404 en la raíz de `chat.` es correcto: Caddy solo publica el webhook de WhatsApp y los medios. Lo relevante es que responda por HTTPS con un certificado válido.
    * `app.` y `api.` responden 502 hasta que el frontend y el backend estén desplegados. Los errores que aparecen en el registro de Caddy por esas rutas son esperables.
    * No ejecutar `docker compose config` sin `--services` en una terminal compartida o grabada: imprime los valores de `chatwoot.env`, incluidos los secretos.
-8. **Administración de Chatwoot:** `chat.<EVENTPRO_DOMAIN>` solo publica el webhook de WhatsApp y los medios salientes, y el panel se alcanza por un túnel SSH. Con `FORCE_SSL=true`, Chatwoot redirige a HTTPS cualquier petición HTTP (`http://127.0.0.1:3001` responde 301), de modo que un túnel directo al puerto 3001 no sirve. Se usa un Caddy auxiliar que solo escucha en el *loopback* de la VM y entrega HTTPS a Chatwoot:
+8. **Administración de Chatwoot:** `chat.<EVENTPRO_DOMAIN>` solo publica el webhook de WhatsApp y los medios salientes, y el panel se alcanza por un túnel SSH al puerto local de la VM. Con `FORCE_SSL=false` no hay redirección a HTTPS, por lo que el túnel directo funciona:
    ```bash
-   # En la VM (una sola vez; el contenedor queda en ejecución)
-   docker run -d --name cw_admin --restart unless-stopped \
-     --network eventpro_eventpro_network \
-     -p 127.0.0.1:3443:3443 \
-     caddy:2 caddy reverse-proxy --from localhost:3443 --to chatwoot-rails:3000
-
-   # En el equipo del administrador
-   ssh -L 3443:127.0.0.1:3443 <usuario>@<ip-del-servidor>
+   ssh -L 3001:127.0.0.1:3001 <usuario>@<ip-del-servidor>
    ```
-   Con el túnel abierto, abrir `https://localhost:3443`. El navegador advierte que el certificado no es de confianza porque lo emite la autoridad interna de ese Caddy auxiliar; se acepta la advertencia. El puerto 3443 no se publica hacia internet.
+   Con el túnel abierto, abrir `http://localhost:3001`. El puerto 3001 de la VM solo escucha en `127.0.0.1` y no se publica hacia internet.
 9. **Respaldos diarios de ambas bases (se conservan los últimos 7):** programar con `cron` un script que ejecute `pg_dump` de EventPro (`db`) y de Chatwoot (`chatwoot-db`):
    ```bash
    #!/usr/bin/env bash

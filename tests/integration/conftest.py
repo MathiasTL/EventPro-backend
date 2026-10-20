@@ -66,7 +66,7 @@ def _reset_rate_limit() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 async def _dispose_infrastructure() -> AsyncIterator[None]:
-    """Libera engine y cliente Redis en el mismo loop del test (asyncpg/redis son loop-affine)."""
+    """Libera engine y clientes (Redis, arq, Chatwoot) en el mismo loop del test (loop-affine)."""
     yield
     from app.infrastructure.adapters.secondary.persistence.database import (
         get_engine,
@@ -74,7 +74,9 @@ async def _dispose_infrastructure() -> AsyncIterator[None]:
     )
     from app.infrastructure.di.containers import (
         clear_application_caches,
+        get_arq_pool,
         get_cache_port,
+        get_chatwoot_http_client,
         get_redis_client,
         get_repository_health_port,
     )
@@ -83,6 +85,10 @@ async def _dispose_infrastructure() -> AsyncIterator[None]:
         await get_engine().dispose()
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
+    if get_chatwoot_http_client.cache_info().currsize:
+        await get_chatwoot_http_client().aclose()
+    if get_arq_pool.cache_info().currsize:
+        await get_arq_pool().aclose()
     clear_application_caches()
     if get_redis_client.cache_info().currsize:
         await get_redis_client().aclose()
