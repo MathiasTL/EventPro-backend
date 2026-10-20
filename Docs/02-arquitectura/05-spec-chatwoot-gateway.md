@@ -2,7 +2,7 @@
 
 * **Estado:** Propuesto (pendiente de revisión).
 * **Fecha:** 2026-10-03.
-* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). La bandeja, el bot y el SSE siguen pendientes. Los payloads se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19, tarea 7.1 del cambio); la excepción son los adjuntos, que no se capturaron. La prueba de extremo a extremo con el número de prueba de Meta pasó el 2026-10-19 (tarea 7.3): `EnqueueMessage` (TEXT) → *worker* → Chatwoot (token del bot) → WhatsApp → webhook de cuenta `message_updated` firmado → API → fila del *outbox* con `status=SENT`, `delivery_status=READ`, `delivered_at` y `read_at`.
+* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). El bot de WhatsApp ya existe (`app/application/use_cases/bot/`, [spec 08](08-spec-e1-contrato-cotizacion.md)); la bandeja, la persistencia del traspaso y el SSE siguen pendientes y se especifican en el [documento 09](09-spec-e1-bandeja-conversaciones.md). Los payloads se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19, tarea 7.1 del cambio); la excepción son los adjuntos, que no se capturaron. La prueba de extremo a extremo con el número de prueba de Meta pasó el 2026-10-19 (tarea 7.3): `EnqueueMessage` (TEXT) → *worker* → Chatwoot (token del bot) → WhatsApp → webhook de cuenta `message_updated` firmado → API → fila del *outbox* con `status=SENT`, `delivery_status=READ`, `delivered_at` y `read_at`.
 * **Decisión asociada:** ADR-10 (por registrar en [`04-adr-decisiones-arquitectura.md`](04-adr-decisiones-arquitectura.md)); reemplaza la parte de WhatsApp de ADR-05. La parte de Google Maps de ADR-05 sigue vigente.
 
 ---
@@ -91,7 +91,7 @@ No se duplican mensajes en la base de datos de EventPro.
 ### 3.2 Identidades en Chatwoot (invisibles)
 
 * **Agent Bot** asignado a la bandeja de WhatsApp: hace que las conversaciones nuevas nazcan en `pending` y firma los mensajes del bot. Funciona sin `outgoing_url` (verificado el 2026-10-19); el panel de Chatwoot 4.18 exige esa URL, por lo que el bot se crea desde la consola de Rails.
-* **Agente de servicio único:** su token envía los mensajes que escriben los encargados desde EventPro. El autor real queda registrado en `audit_logs` de EventPro.
+* **Agente de servicio único:** su token resuelve contactos y conversaciones y cambia el estado. Los mensajes, tanto los del bot como los que escriben los encargados desde EventPro, se crean con el token del bot (tabla siguiente); por eso Chatwoot no los distingue. El autor real queda en `audit_logs` y en `outbox_messages.author_user_id` (ver [documento 09](09-spec-e1-bandeja-conversaciones.md), sección 4.3).
 
 Token por operación del adaptador (cabecera `api_access_token`):
 
@@ -112,11 +112,12 @@ Los tokens no aparecen en logs ni en mensajes de error. Los logs omiten el conte
 2. Descarta duplicados por `X-Chatwoot-Delivery` (Redis, TTL de 7 días, clave `eventpro:chatwoot:webhook:{id}`). Si la cabecera falta, usa como identificador el resumen de la firma ya verificada y registra `chatwoot_webhook_delivery_id_missing`. **`X-Chatwoot-Delivery` no forma parte de la firma:** un reenvío con esa cabecera alterada pasa la deduplicación dentro de la ventana de 5 minutos; el efecto es nulo hoy porque `RecordDeliveryStatus` es idempotente y la ruta es interna.
 3. Encola el evento en arq con una espera de 2 s (para que el despachador alcance a confirmar `SENT`) y responde `200 {"status": "EVENT_RECEIVED"}` sin esperar al procesamiento. Si la deduplicación o el encolado fallan responde `503` (`event-queue-unavailable`) y libera la clave para que un reenvío manual pueda procesarse.
 
-El worker (`process_gateway_event`) enruta. En esta etapa solo se procesan los **avisos de entrega**:
+El worker (`process_gateway_event`) enruta. En esta etapa se procesan los **avisos de entrega** y los **mensajes entrantes** (que van al bot):
 
 * **Aviso de entrega (`message_updated` de un mensaje saliente):** se aplica a `RecordDeliveryStatus` (ver el documento 07, §5). El `status` y la hora de actualización del mensaje no están en el nivel superior del cuerpo: viajan en la copia incrustada `conversation.messages[]` (la entrada con el mismo `id`). Si esa copia no trae `status`, el worker lo consulta a la API.
-* **Cualquier otro evento** (mensajes entrantes, ecos de mensajes salientes, `conversation_*`, notas privadas, eventos desconocidos): solo se registra (nombre del evento e identificadores, nunca contenido, teléfonos ni URL de adjuntos) y se reconoce sin cambiar datos.
-* **Pendiente (bot y bandeja):** el procesamiento del mensaje entrante en `pending` por el bot (estado conversacional en Redis por `conversation_id`; un comprobante adjunto ejecuta RF-11) y la publicación por SSE a la web llegan con sus propios bloques.
+* **Cualquier otro evento** (ecos de mensajes salientes, `conversation_*`, notas privadas, eventos desconocidos): solo se registra (nombre del evento e identificadores, nunca contenido, teléfonos ni URL de adjuntos) y se reconoce sin cambiar datos.
+* **Mensaje entrante en `pending`:** se entrega al bot (`HandleIncomingMessage`, estado conversacional en Redis por `conversation_id`). Con la conversación en `open`, el bot no responde.
+* **Pendiente (bandeja):** el procesamiento de un comprobante adjunto (RF-11), la persistencia del traspaso en `conversation_links` y la publicación por SSE a la web se especifican en el [documento 09](09-spec-e1-bandeja-conversaciones.md).
 
 El endpoint **no se expone a internet**: el proxy lo bloquea y solo es accesible por la red interna de Docker.
 
