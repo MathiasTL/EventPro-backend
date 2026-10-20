@@ -13,12 +13,14 @@ from structlog.testing import capture_logs
 from app.application.dtos.gateway_event_dto import (
     DeliveryNotice,
     DeliveryReport,
+    IncomingClientMessage,
     UnhandledGatewayEvent,
 )
-from app.application.dtos.messaging_dto import MessageDirection
+from app.application.dtos.messaging_dto import ConversationStatus, MessageDirection
 from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
 from app.domain.exceptions.resource_exceptions import ValidationError
 from app.domain.value_objects.outbox import DeliveryStatus
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_client import (
     TOKEN_HEADER,
     ChatwootClient,
@@ -227,13 +229,71 @@ def test_an_update_of_a_private_note_is_not_a_delivery_notice() -> None:
 # --- parse_event: el resto de los eventos -------------------------------------------------
 
 
-def test_an_incoming_created_message_is_unhandled() -> None:
-    assert _parse(_body("message_created_incoming")) == UnhandledGatewayEvent(
-        kind="message_created",
-        direction=MessageDirection.INCOMING,
-        conversation_id=1,
+def test_an_incoming_created_message_becomes_a_client_message() -> None:
+    assert _parse(_body("message_created_incoming")) == IncomingClientMessage(
         external_message_id="5",
+        conversation_id=1,
+        conversation_status=ConversationStatus.HUMAN,
+        sender_phone=PhoneNumber("+51999111222"),
+        content="Prueba de la prueba",
+        is_private=False,
     )
+
+
+def test_a_pending_conversation_is_reported_as_attended_by_the_bot() -> None:
+    body = _body("message_created_incoming")
+    body["conversation"]["status"] = "pending"
+
+    event = _parse(body)
+
+    assert isinstance(event, IncomingClientMessage)
+    assert event.conversation_status is ConversationStatus.BOT
+
+
+def test_a_private_incoming_message_keeps_its_private_flag() -> None:
+    body = _body("message_created_incoming")
+    body["private"] = True
+
+    event = _parse(body)
+
+    assert isinstance(event, IncomingClientMessage)
+    assert event.is_private is True
+
+
+def test_an_incoming_message_without_text_has_empty_content() -> None:
+    body = _body("message_created_incoming")
+    body["content"] = None
+
+    event = _parse(body)
+
+    assert isinstance(event, IncomingClientMessage)
+    assert event.content == ""
+
+
+def test_the_sender_phone_falls_back_to_the_conversation_meta() -> None:
+    body = _body("message_created_incoming")
+    del body["sender"]
+
+    event = _parse(body)
+
+    assert isinstance(event, IncomingClientMessage)
+    assert event.sender_phone == PhoneNumber("+51999111222")
+
+
+@pytest.mark.parametrize("missing", ["id", "sender", "conversation_status", "conversation_id"])
+def test_an_incoming_message_without_the_minimum_data_stays_unhandled(missing: str) -> None:
+    body = _body("message_created_incoming")
+    if missing == "id":
+        del body["id"]
+    elif missing == "sender":
+        del body["sender"]
+        del body["conversation"]["meta"]
+    elif missing == "conversation_status":
+        body["conversation"]["status"] = "resolved"
+    else:
+        del body["conversation"]["id"]
+
+    assert isinstance(_parse(body), UnhandledGatewayEvent)
 
 
 def test_an_outgoing_created_message_is_unhandled() -> None:

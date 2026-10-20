@@ -5,10 +5,12 @@ logs llevan identificadores y estados, nunca contenido de mensajes, nombres ni t
 """
 
 from datetime import UTC, datetime
+from typing import Protocol
 
 from app.application.dtos.gateway_event_dto import (
     DeliveryNotice,
     GatewayEventOutcome,
+    IncomingClientMessage,
     UnhandledGatewayEvent,
 )
 from app.application.ports.output.gateway_event_port import IGatewayEventPort
@@ -20,14 +22,29 @@ from app.domain.exceptions.resource_exceptions import ValidationError
 from app.domain.value_objects.outbox import DeliveryStatus
 
 
+class IIncomingMessageHandler(Protocol):
+    """Quien responde los mensajes de los clientes (el bot); ``APPLIED`` si respondió."""
+
+    async def execute(self, message: IncomingClientMessage) -> GatewayEventOutcome: ...
+
+
 class ProcessGatewayEvent:
-    """Interpreta un evento y, si es un aviso de entrega, lo registra en su propia transacción."""
+    """Interpreta un evento: registra los avisos de entrega y entrega los mensajes al bot.
+
+    Un aviso de entrega se registra en su propia transacción. Un mensaje de cliente se pasa a
+    ``incoming_handler``; sin él (bot apagado) solo se registra en el log.
+    """
 
     def __init__(
-        self, *, transaction: OutboxTransactionFactory, gateway: IGatewayEventPort
+        self,
+        *,
+        transaction: OutboxTransactionFactory,
+        gateway: IGatewayEventPort,
+        incoming_handler: IIncomingMessageHandler | None = None,
     ) -> None:
         self._transaction = transaction
         self._gateway = gateway
+        self._incoming_handler = incoming_handler
 
     async def execute(
         self, *, raw_body: bytes, received_at: datetime, last_attempt: bool = False
@@ -55,6 +72,11 @@ class ProcessGatewayEvent:
                 external_message_id=event.external_message_id,
             )
             return GatewayEventOutcome.UNHANDLED
+        if isinstance(event, IncomingClientMessage):
+            if self._incoming_handler is None:
+                log.info("client_message_unhandled", conversation_id=event.conversation_id)
+                return GatewayEventOutcome.UNHANDLED
+            return await self._incoming_handler.execute(event)
         return await self._process_notice(event, received_at, last_attempt=last_attempt)
 
     async def _process_notice(
