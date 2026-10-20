@@ -124,7 +124,7 @@
 * **Estado:** Aceptado.
 * **Fecha:** 2026-09-30.
 * **Contexto:**
-  El sistema requiere trabajo fuera del ciclo petición-respuesta: vencimiento de cotizaciones (cada minuto, RN-09), despacho y reintentos de `outbox_messages` hacia el gateway de mensajería (ADR-10), reconciliación de mensajes entrantes, y reportes semanales y mensuales. Ejecutarlo dentro del proceso de la API (`BackgroundTasks` o un planificador embebido) lo pierde al reiniciar y se duplica al escalar a varias instancias. Redis ya forma parte de la infraestructura (ADR-06).
+  El sistema requiere trabajo fuera del ciclo petición-respuesta: vencimiento de cotizaciones (cada minuto, RN-09), despacho y reintentos de `outbox_messages` hacia el gateway de mensajería (ADR-10) y reconciliación de mensajes entrantes. US-21 consolida los reportes semanales y mensuales al consultar y no requiere tarea programada. Ejecutar las tareas diferidas dentro del proceso de la API (`BackgroundTasks` o un planificador embebido) las pierde al reiniciar y las duplica al escalar a varias instancias. Redis ya forma parte de la infraestructura (ADR-06).
 * **Decisión:**
   Usar **arq** (cola de tareas asíncrona respaldada en Redis) como ejecutor de tareas. Un servicio `worker` independiente, con la misma imagen que la API, ejecuta `arq app.infrastructure.adapters.primary.jobs.worker.WorkerSettings`. Las tareas son adaptadores primarios que solo invocan casos de uso; no contienen lógica de negocio. Las tareas periódicas usan `cron_jobs` de arq y los reintentos de la cola outbox usan el mecanismo de reintento con *backoff* de arq.
 * **Alternativas consideradas:**

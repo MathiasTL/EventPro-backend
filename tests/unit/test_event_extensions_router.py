@@ -54,7 +54,7 @@ def setup(tmp_path):
         RegisterEventExtensionUseCase(repo, storage, crews, FixedClock())
     )
     app.dependency_overrides[containers.get_settle_event_use_case] = lambda: SettleEventUseCase(
-        repo, crews
+        repo, crews, FixedClock()
     )
     yield app, event, repo, storage
     app.dependency_overrides.clear()
@@ -132,7 +132,7 @@ async def test_operator_outside_scope_returns_404_before_load(setup, existing):
         RegisterEventExtensionUseCase(repo, storage, crews, FixedClock())
     )
     app.dependency_overrides[containers.get_settle_event_use_case] = lambda: SettleEventUseCase(
-        repo, crews
+        repo, crews, FixedClock()
     )
     event_id = event.id if existing else uuid4()
     assert (await extension(app, event_id, headers=auth(Role.OPERADOR))).status_code == 404

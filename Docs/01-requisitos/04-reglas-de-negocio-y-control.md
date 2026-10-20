@@ -108,6 +108,22 @@ La rentabilidad del negocio se audita comparando los ingresos reales contra los 
 $$\text{Utilidad Neta} = \text{Ingresos Totales Liquidados} - \left( \sum \text{Costo Fijo Paquetes} + \sum \text{Costo Fijo Extras} + \text{Costos Operativos de Movilidad} \right)$$
 * Los costos asignados a cada paquete y extra representan las tarifas fijas acordadas con el elenco freelance, DJ y armadores.
 
+**Contrato US-21:** se consideran únicamente eventos `SETTLED` por su `event_date`.
+El ingreso es `advance_paid + pre_show_balance_paid + legacy_extra_hours_amount +
+extensiones verificadas`, conservando la conciliación de US-18 y sin sumar otra
+vez `final_total_amount` ni los pagos base. El costo es un paquete más
+`SUM(quote_extras.quantity × extras.direct_cost)` y `quotes.base_mobility_amount`
+(cero si el cliente aporta transporte). Los elencos no se descuentan otra vez.
+Las extensiones de US-18 aportan ingreso, pero no tienen un costo directo adicional
+registrado ni vínculo a un extra de catálogo. Movilidad base es una aproximación
+disponible, no un gasto real conciliado.
+
+PC-09 congela estos importes y su desglose al liquidar, en la misma transacción.
+La reconstrucción histórica usa costos vigentes al migrar, marcada
+`LEGACY_BACKFILL`; no afirma recuperar tarifas originales. La consulta calcula
+utilidad y margen con `Decimal`, `ROUND_HALF_UP` y dos decimales. Las pérdidas son
+válidas; con ingreso cero el margen es `0.00`. No hay cierre programado en US-21.
+
 ---
 
 ### RN-09: Plazo del Adelanto, Vigencia de la Cotización y Revalidación de Disponibilidad

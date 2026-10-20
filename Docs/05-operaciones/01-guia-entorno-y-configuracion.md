@@ -140,7 +140,7 @@ El equipo comparte una única base de datos **Supabase** (PostgreSQL gestionado)
 Para conectarse (una vez por desarrollador):
 
 1. Copiar `.env.example` a `.env` y reemplazar `DATABASE_URL` por la cadena de `CREDENCIALES-SUPABASE.md`.
-2. Verificar: `alembic current` debe responder `0002_event_extensions (head)`.
+2. Verificar: tras desplegar US-21, `alembic current` debe responder `0005_event_financial_snapshots (head)`. Una base todavía en `0002` requiere aplicar en orden `0003_manual_booking_documents`, `0004_outbox_delivery_tracking` y `0005_event_financial_snapshots` mediante el flujo manual de `develop`.
 
 Dos formas de ejecutar la app contra esa BD:
 

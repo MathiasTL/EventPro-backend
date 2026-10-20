@@ -5,7 +5,7 @@
 ## 1. Convenciones y Estándares de Base de Datos
 * **Motor:** PostgreSQL 16+.
 * **Claves Primarias (PK):** `UUIDv4` (`gen_random_uuid()`).
-* **Valores Monetarios:** `NUMERIC(10,2)` estricto para prevenir pérdidas de precisión decimal.
+* **Valores Monetarios:** `NUMERIC(10,2)` para importes operativos; `NUMERIC(18,2)` para instantáneas financieras que suman cobros y costos por evento. Los reportes se agregan con precisión decimal y admiten totales mayores que un importe operativo individual.
 * **Marcas Temporales:** `TIMESTAMPTZ` en UTC (`CURRENT_TIMESTAMP`).
 * **Nomenclatura:** `snake_case` para nombres de tablas y columnas; nombres en plural para tablas (`quotes`, `events`, `contracts`).
 * **Códigos de enumeración:** valores en inglés `UPPER_SNAKE_CASE`, implementados como `VARCHAR` con restricción `CHECK` (no como tipo `ENUM` nativo, para facilitar migraciones). Las etiquetas en español son solo de interfaz (ver [RN, sección 3.5](../01-requisitos/04-reglas-de-negocio-y-control.md#35-tabla-de-mapeo-código-etiqueta-de-interfaz-y-significado)).
@@ -460,3 +460,27 @@ Vínculo entre una conversación de Chatwoot y los datos de negocio de EventPro 
 * `UNIQUE(chatwoot_conversation_id)`
 * `INDEX(client_id)`
 * `CREATE INDEX ix_conversation_links_assigned_user ON conversation_links (assigned_user_id) WHERE assigned_user_id IS NOT NULL` para el filtro «asignadas a mí» de la bandeja.
+
+---
+
+### 2.23 Tabla: `event_financial_snapshots`
+US-21 / PC-09: una instantánea insertada en la misma transacción que el cierre a
+`SETTLED`. No ofrece edición pública; las consultas no vuelven a leer el catálogo.
+
+| Columna | Tipo | Nulo | Default | Restricciones | Descripción |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `event_id` | `UUID` | NO | - | PK, FK (`events.id`) | Una captura por evento; la PK indexa la FK. |
+| `gross_revenue` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Cobros base + crédito histórico + extensiones verificadas. |
+| `fixed_packages_cost` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Costo fijo del paquete al capturar. |
+| `fixed_extras_cost` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Costos unitarios por cantidades cotizadas. |
+| `mobility_operational_cost` | `NUMERIC(18,2)` | NO | - | CHECK (`>= 0`, distinto de `NaN`) | Movilidad base cotizada; cero si transporta el cliente. |
+| `recorded_at` | `TIMESTAMPTZ` | NO | - | - | Instante UTC de captura; reloj de aplicación o fecha de migración. |
+| `origin` | `VARCHAR(20)` | NO | - | CHECK in (`SETTLEMENT`, `LEGACY_BACKFILL`) | Distingue captura al cierre de reconstrucción con costos actuales. |
+| `details` | `JSONB` | NO | - | CHECK (`jsonb_typeof(details) = 'object'`) | Desglose trazable, sin datos personales. |
+
+`details` contiene `package` (`id`, `unit_cost`), `extras` (lista de `id`,
+`quantity`, `unit_cost`, `subtotal`), `mobility` (`source=QUOTE_BASE`, `amount`) y
+`revenue` (`advance_paid`, `pre_show_balance_paid`, `legacy_extra_hours_amount`,
+`verified_extension_amount`). Importes como cadenas decimales con dos posiciones.
+Los costos históricos originales no pueden recuperarse: `LEGACY_BACKFILL` usa el
+catálogo vigente, incluidos artículos inactivos referenciados, sin fabricar pagos.

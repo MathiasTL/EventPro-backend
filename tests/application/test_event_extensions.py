@@ -52,7 +52,7 @@ async def test_extension_creates_real_verified_payment_and_settles(role):
     assert payment.verified_at is payment.verified_by_user_id is None
     assert payment.quote_id == event.quote_id
     assert payment.created_at == extension.requested_at == STARTED_AT
-    closed = await SettleEventUseCase(repo, crews).execute(event.id, actor)
+    closed = await SettleEventUseCase(repo, crews, FixedClock()).execute(event.id, actor)
     assert closed.status is EventStatus.SETTLED
     assert repo.events[event.id].final_total_amount == Money(Decimal("1180.50"))
 
@@ -66,7 +66,7 @@ async def test_operator_outside_scope_is_not_found_before_load_or_storage():
             extension_input(event.id), actor
         )
     with pytest.raises(ResourceNotFoundError):
-        await SettleEventUseCase(repo, crews).execute(event.id, actor)
+        await SettleEventUseCase(repo, crews, FixedClock()).execute(event.id, actor)
     assert repo.loads == storage.paths == repo.saves == []
 
 
@@ -88,7 +88,7 @@ async def test_invalid_state_compensates_storage_without_payment_reads(status):
             extension_input(event.id), actor
         )
     with pytest.raises(InvalidEventStateError):
-        await SettleEventUseCase(repo, crews).execute(event.id, actor)
+        await SettleEventUseCase(repo, crews, FixedClock()).execute(event.id, actor)
     assert storage.deleted == storage.paths
     assert repo.saves == repo.total_reads == []
 
@@ -130,11 +130,11 @@ async def test_settle_uses_saved_base_amounts_but_requires_complete_coverage():
     event, actor, repo, _, crews = setup()
     repo.events[event.id].pre_show_balance_paid = Money.zero()
     with pytest.raises(BalancePendingError):
-        await SettleEventUseCase(repo, crews).execute(event.id, actor)
+        await SettleEventUseCase(repo, crews, FixedClock()).execute(event.id, actor)
     assert repo.saves == []
     repo.events[event.id].pre_show_balance_paid = Money(Decimal("980.50"))
     assert (
-        await SettleEventUseCase(repo, crews).execute(event.id, actor)
+        await SettleEventUseCase(repo, crews, FixedClock()).execute(event.id, actor)
     ).status is EventStatus.SETTLED
 
 
