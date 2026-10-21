@@ -309,6 +309,16 @@ Cada responsable trabaja en **una sola rama** desde `develop`; los commits van e
 
 ### 3.4 Nicolas — clientes
 
+El backend dispone de `FindClientsUseCase`, `GetClientUseCase` y los dos endpoints de
+lectura con repositorio SQL real. Los proveedores de DI usan la sesión de la petición;
+no se cachean sesiones ni se confirma la transacción desde los casos de uso. No añade
+migraciones ni modifica la interfaz de entrada, los DTO o las suites compartidas.
+`tests/integration/test_real_client_use_cases.py` instancia `FindClientsContract` y
+`GetClientContract` contra PostgreSQL temporal y añade escenarios de permisos,
+normalización de formatos antiguos, búsqueda literal y lectura sin commit. La ejecución
+de estas pruebas queda pendiente del desarrollador/CI; el frontend de clientes es una
+entrega separada de este ajuste backend.
+
 | Aspecto | Detalle |
 | :--- | :--- |
 | Alcance | `FindClients` y `GetClient` reales; routers; frontend. |

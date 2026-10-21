@@ -412,6 +412,14 @@ Los clientes se crean o actualizan automáticamente al generar una cotización (
 * **Descripción:** Lista paginada de clientes, con búsqueda por teléfono o nombre.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Query Params:** `q=carlos` o `phone=+51999888777`, `page`, `page_size`.
+* **Implementación:** consulta PostgreSQL mediante `FindClients` real. `q` busca fragmentos
+  literales de nombre (sin distinguir mayúsculas) o teléfono; `%` y `_` no actúan como
+  comodines. `phone` usa `PhoneNumber`, admite formato local, internacional y separadores,
+  y reconoce los formatos antiguos almacenados sin modificarlos. Al combinar `q` y `phone`
+  se aplican ambos filtros. El teléfono de salida se normaliza a E.164.
+* **Paginación:** `page >= 1`, `1 <= page_size <= 100` (20 por defecto), con `total` antes
+  de paginar. Orden descendente por creación e ID para evitar empates entre páginas.
+* **Errores:** 401 sin sesión, 403 para `OPERADOR`, 422 para teléfono o paginación inválidos.
 * **Response `200 OK`:**
   ```json
   {
@@ -433,6 +441,11 @@ Los clientes se crean o actualizan automáticamente al generar una cotización (
 
 #### `GET /clients/{id}`
 * **Descripción:** Detalle del cliente con el resumen de sus cotizaciones.
+  Usa `GetClient` real; el historial se lee de `quotes`, ordenado por fecha del evento e ID
+  descendentes. Incluye todos los estados y devuelve `quotes: []` si no hay historial.
+  Un cliente inexistente devuelve 404; un identificador mal formado, 422. Los importes
+  `Decimal` se serializan como cadenas para conservar precisión. No hay altas ni cambios
+  de datos mediante estos endpoints.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Response `200 OK`:**
   ```json

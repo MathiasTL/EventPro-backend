@@ -58,6 +58,8 @@ from app.application.use_cases.auth.refresh import RefreshUseCase
 from app.application.use_cases.bot.agent_engine import ConversationAgent
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
+from app.application.use_cases.clients.find_clients import FindClientsUseCase
+from app.application.use_cases.clients.get_client import GetClientUseCase
 from app.application.use_cases.contract.create_manual_contract import CreateManualContract
 from app.application.use_cases.contract.manage_contracts import ManageContracts
 from app.application.use_cases.contract.sign_contract import SignContract
@@ -129,8 +131,6 @@ from app.infrastructure.adapters.secondary.external_services.fake_messaging_adap
 )
 from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
     FakeCancelQuote,
-    FakeFindClients,
-    FakeGetClient,
     FakePayAdvance,
     FakeQuoteStore,
 )
@@ -849,8 +849,7 @@ def get_refund_manual_booking_use_case(
 
 
 # Contrato de casos de uso de cotización de E1 (spec 08, sección 2.7). Cada proveedor devuelve
-# hoy el fake de su puerto sobre un almacén compartido; el responsable de la pieza real cambia
-# solo la línea de su proveedor. Los bloques están separados por responsable para que esos
+# la implementación de su puerto. Los bloques están separados por responsable para que esos
 # cambios no choquen en el mismo fragmento del archivo.
 
 
@@ -924,14 +923,16 @@ def get_cancel_quote_use_case() -> ICancelQuotePort:
 # --- E1 contrato: cotizacion (Nicolas) ---
 
 
-@lru_cache
-def get_find_clients_use_case() -> IFindClientsPort:
-    return FakeFindClients(get_fake_quote_store(), clock=get_clock_port())
+def get_find_clients_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IFindClientsPort:
+    return FindClientsUseCase(get_client_repository(session))
 
 
-@lru_cache
-def get_client_use_case() -> IGetClientPort:
-    return FakeGetClient(get_fake_quote_store(), clock=get_clock_port())
+def get_client_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IGetClientPort:
+    return GetClientUseCase(get_client_repository(session))
 
 
 # --- E1 bot de WhatsApp (Mathias) ---
