@@ -109,3 +109,21 @@ async def test_invalid_proof_never_calls_seal():
         await service.sign(token, "invalid", b"png", "Cliente", ip="127.0.0.1", user_agent="")
     assert exc.value.status == 401
     seal.seal.assert_not_awaited()
+
+
+async def test_verified_otp_expiring_before_signing_rejects_valid_proof():
+    service, _, repo, _, outbox, seal, clock, token, issued = await signing()
+    await service.request_otp(token)
+    proof = await service.verify_otp(token, otp_code(outbox))
+    before = outbox.add.await_count
+    clock.now += timedelta(minutes=10)
+    with pytest.raises(SignatureError) as error:
+        await service.sign(
+            token, proof["otp_proof"], b"png", "Cliente", ip="127.0.0.1", user_agent=""
+        )
+    assert error.value.status == 410 and error.value.code == "otp-expired"
+    seal.seal.assert_not_awaited()
+    assert outbox.add.await_count == before
+    assert (await repo.get(issued.id)).status is ContractStatus.ISSUED
+    assert (await repo.get(issued.id)).signature_token_hash is not None
+    assert repo.data.event_status == "AWAITING_SIGNATURE"

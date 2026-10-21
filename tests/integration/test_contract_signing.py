@@ -11,10 +11,12 @@ import pytest
 from sqlalchemy import text
 
 from app.application.use_cases.contract.sign_contract import SignatureError
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.adapters.secondary.signature.pades_signature_adapter import (
     PadesSignatureAdapter,
 )
 from app.infrastructure.adapters.secondary.storage.contract_pdf import ReportLabContractPdf
+from app.infrastructure.adapters.secondary.storage.document_pdf import render_document
 from tests.unit.test_pades_signature import signature_png
 
 from .test_manual_booking_flow import PNG
@@ -257,13 +259,29 @@ async def test_signing_failure_rolls_back_and_parallel_retry_signs_once(scenario
         )
 
     async def seal(self, pdf, image, name):
-        return pdf, False
+        return render_document("Documento sellado de prueba", ["Firma confirmada"]), False
 
     monkeypatch.setattr(PadesSignatureAdapter, "seal", seal)
     responses = await asyncio.gather(
         *[client.post(f"/api/v1/contracts/sign/{token}", json=payload) for _ in range(2)]
     )
     assert sorted(result.status_code for result in responses) == [200, 404]
+    current = await client.get(f"/api/v1/contracts/{key}/pdf", headers=headers["ENCARGADO"])
+    legacy_download = await client.get(
+        f"/api/v1/manual-bookings/{created.json()['quote_id']}/contract",
+        headers=headers["ENCARGADO"],
+    )
+    assert current.status_code == legacy_download.status_code == 200
+    assert current.content == base64.b64decode(legacy_download.json()["pdf_base64"])
+    async with factory() as session:
+        original = await session.scalar(
+            text(
+                "SELECT d.content FROM booking_documents d JOIN contracts c "
+                "ON c.pdf_storage_path=d.path WHERE c.id=:id"
+            ),
+            {"id": UUID(key)},
+        )
+    assert current.content != bytes(original)
     async with factory() as session:
         assert (
             await session.scalar(
@@ -291,4 +309,93 @@ async def test_signing_failure_rolls_back_and_parallel_retry_signs_once(scenario
                 {"name": f"{created.json()['contract_number']}-signed.pdf"},
             )
             == 1
+        )
+
+
+@pytest.mark.parametrize("explicit_clear", [False, True])
+async def test_existing_client_omitted_identity_is_preserved_and_explicit_changes_audited(
+    scenario, explicit_clear
+):
+    client, factory, legacy, headers, users = scenario
+    client_id = uuid4()
+    phone = PhoneNumber.parse(legacy["phone"]).value
+    async with factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO clients(id,phone,full_name,dni,ruc) "
+                "VALUES (:id,:phone,'Nombre anterior','12345678','20123456789')"
+            ),
+            {"id": client_id, "phone": phone},
+        )
+        await session.commit()
+    payload = manual_payload(legacy, issue_contract=False)
+    payload["client"] = {"phone": phone, "full_name": "Nombre actualizado"}
+    if explicit_clear:
+        payload["client"]["dni"] = None
+    result = await create(client, payload, headers["ENCARGADO"])
+    assert result.status_code == 201, result.text
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text("SELECT full_name,dni,ruc FROM clients WHERE id=:id"), {"id": client_id}
+            )
+        ).one()
+        assert row == ("Nombre actualizado", None if explicit_clear else "12345678", "20123456789")
+        audit = (
+            await session.execute(
+                text(
+                    "SELECT user_id,old_values,new_values FROM audit_logs "
+                    "WHERE entity_name='clients' AND entity_id=:id AND action='MANUAL_CONTRACT'"
+                ),
+                {"id": client_id},
+            )
+        ).one()
+        assert audit.user_id == users["ENCARGADO"]
+        assert audit.old_values["full_name"] == "Nombre anterior"
+        assert audit.new_values["full_name"] == "Nombre actualizado"
+        assert "ruc" not in audit.new_values
+        assert ("dni" in audit.new_values) is explicit_clear
+
+
+async def test_pdf_is_prepared_before_global_availability_lock(scenario, monkeypatch):
+    client, factory, legacy, headers, _ = scenario
+    render = ReportLabContractPdf.render
+    calls = 0
+
+    async def inspect_lock(renderer, contract, data):
+        nonlocal calls
+        calls += 1
+        async with factory() as session:
+            assert not await session.scalar(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' "
+                    "AND classid=0 AND objid=180018 AND granted)"
+                )
+            )
+        return await render(renderer, contract, data)
+
+    monkeypatch.setattr(ReportLabContractPdf, "render", inspect_lock)
+    payload = manual_payload(
+        legacy,
+        client_observations="  Nota literal\n\nCon espacios finales  ",
+        custom_clauses="  Cláusula literal\n  Segunda línea  ",
+    )
+    result = await create(client, payload, headers["ENCARGADO"])
+    assert result.status_code == 201, result.text
+    assert calls == 1
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT q.observations,e.client_observations,c.custom_clauses FROM quotes q "
+                    "JOIN events e ON e.quote_id=q.id JOIN contracts c ON c.event_id=e.id "
+                    "WHERE c.id=:id"
+                ),
+                {"id": UUID(result.json()["contract_id"])},
+            )
+        ).one()
+        assert row == (
+            payload["client_observations"],
+            payload["client_observations"],
+            payload["custom_clauses"],
         )

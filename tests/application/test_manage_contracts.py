@@ -157,3 +157,12 @@ async def test_failed_render_or_queue_does_not_silently_succeed():
     with pytest.raises(RuntimeError):
         await service.issue_for_event(repo.data.event_id)
     assert not repo.contracts
+
+
+async def test_scheduled_event_without_contract_is_rejected_before_issuing():
+    service, repo, documents, outbox, pdf = setup_contracts(contract_data(event_status="SCHEDULED"))
+    with pytest.raises(InvalidContractStateError):
+        await service.issue_for_event(repo.data.event_id)
+    assert repo.contracts == {} and documents.files == {}
+    pdf.render.assert_not_awaited()
+    outbox.add.assert_not_awaited()
