@@ -1,7 +1,8 @@
 """Dobles y un cliente simulado para probar el bot de WhatsApp sin infraestructura."""
 
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from copy import deepcopy
 from decimal import Decimal
 from typing import Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -13,12 +14,16 @@ from app.application.dtos.catalog_dto import (
     ThemeDTO,
 )
 from app.application.dtos.gateway_event_dto import GatewayEventOutcome, IncomingClientMessage
-from app.application.dtos.messaging_dto import ConversationStatus
+from app.application.dtos.messaging_dto import ConversationStatus, ConversationSummary
 from app.application.ports.output.bot_unit_of_work_port import BotTransaction
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
+from app.application.ports.output.conversation_link_repository_port import (
+    IConversationLinkRepositoryPort,
+)
 from app.application.ports.output.language_model_port import ILanguageModelPort
 from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.use_cases.bot.agent_engine import ConversationAgent
+from app.application.use_cases.bot.bot_handoff import BotHandoffRecorder
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -26,11 +31,16 @@ from app.domain.value_objects.service_category import ServiceCategory
 from app.infrastructure.adapters.secondary.cache.in_memory_conversation_session_adapter import (
     InMemoryConversationSessionAdapter,
 )
+from app.infrastructure.adapters.secondary.events.in_memory_conversation_event_publisher import (
+    InMemoryConversationEventPublisher,
+)
 from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
     FakeCreateQuote,
     FakePayAdvance,
     FakeQuoteStore,
 )
+from tests.application.conversation_link_support import InMemoryConversationLinkRepository
+from tests.application.inbox_read_support import FakeInboxLookup
 from tests.application.outbox_support import FixedClock, InMemoryOutboxStore
 
 CONVERSATION_ID = 7
@@ -124,12 +134,52 @@ class RecordingMessaging:
         self.statuses: list[tuple[int, ConversationStatus]] = []
         self.fail = fail
 
+    async def get_conversation(self, conversation_id: int) -> ConversationSummary:
+        return ConversationSummary(
+            conversation_id=conversation_id,
+            phone=PHONE,
+            status=ConversationStatus.BOT,
+            service_window_open=True,
+            last_message_at=None,
+            contact_name="Ana",
+        )
+
     async def set_conversation_status(
         self, conversation_id: int, status: ConversationStatus
     ) -> None:
         if self.fail:
             raise RuntimeError("gateway caido")
         self.statuses.append((conversation_id, status))
+
+
+class _LinkUnitOfWork:
+    """Unidad de trabajo de vínculos en memoria: confirma al salir sin error y descarta si falla."""
+
+    def __init__(self, repository: InMemoryConversationLinkRepository) -> None:
+        self.repository = repository
+        self.fail = False
+        # Un encargado que toma justo antes de que el bot libere el asignado viejo.
+        self.racing_assignee: UUID | None = None
+
+    def __call__(self) -> AbstractAsyncContextManager[IConversationLinkRepositoryPort]:
+        return self._open()
+
+    @asynccontextmanager
+    async def _open(self) -> AsyncIterator[IConversationLinkRepositoryPort]:
+        if self.fail:
+            raise RuntimeError("base caida")
+        working = InMemoryConversationLinkRepository()
+        working.links = deepcopy(self.repository.links)
+        real_release = working.release
+
+        async def release(conversation_id: int, expected_assignee: UUID) -> bool:
+            if self.racing_assignee is not None:
+                working.links[conversation_id].assigned_user_id = self.racing_assignee
+            return await real_release(conversation_id, expected_assignee)
+
+        working.release = release  # type: ignore[method-assign]
+        yield working
+        self.repository.links = working.links
 
 
 class FakeLock:
@@ -167,6 +217,11 @@ class BotHarness:
         self.messaging = RecordingMessaging()
         self.clock = FixedClock()
         self.create_quote_override: Any = None
+        self.links = InMemoryConversationLinkRepository()
+        self.link_uow = _LinkUnitOfWork(self.links)
+        # Transacciones propias de la derivación: se pueden romper sin afectar el turno.
+        self.handoff_link_uow = _LinkUnitOfWork(self.links)
+        self.publisher = InMemoryConversationEventPublisher()
         self._counter = 0
         self.use_case = HandleIncomingMessage(
             unit_of_work=self._unit_of_work,
@@ -174,6 +229,13 @@ class BotHarness:
             messaging=cast("IMessagingPort", self.messaging),
             clock=self.clock,
             lock=lock,
+            handoffs=BotHandoffRecorder(
+                links=self.handoff_link_uow,
+                lookup=FakeInboxLookup(),
+                messaging=cast("IMessagingPort", self.messaging),
+                publisher=self.publisher,
+                clock=self.clock,
+            ),
             agent=ConversationAgent(
                 unit_of_work=self._unit_of_work,
                 model=model,
@@ -186,12 +248,16 @@ class BotHarness:
 
     @asynccontextmanager
     async def _unit_of_work(self) -> AsyncIterator[BotTransaction]:
-        async with self.outbox.transaction() as repository:
+        async with (
+            self.outbox.transaction() as repository,
+            self.link_uow() as links,
+        ):
             yield BotTransaction(
                 create_quote=self.create_quote_override or self.create_quote,
                 pay_advance=self.pay_advance,
                 enqueue_message=EnqueueMessage(repository, self.clock),
                 catalog=self.catalog,
+                conversation_links=links,
             )
 
     @property

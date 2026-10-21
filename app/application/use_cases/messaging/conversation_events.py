@@ -175,6 +175,27 @@ def conversation_view_event(view: ConversationView) -> ConversationEvent:
     )
 
 
+def handoff_requested_event(
+    *, link: ConversationLink, client_name: str | None, phone: str | None
+) -> ConversationEvent:
+    """``handoff.requested``: el bot dejó la conversación a un encargado (spec 09, 6.2)."""
+
+    return ConversationEvent(
+        event=ConversationEventType.HANDOFF_REQUESTED,
+        data={
+            "chatwoot_conversation_id": link.chatwoot_conversation_id,
+            "handoff_reason": link.handoff_reason.value if link.handoff_reason else None,
+            "handoff_summary": link.handoff_summary,
+            "client": {
+                "id": str(link.client_id) if link.client_id else None,
+                "name": client_name,
+                "phone": phone,
+            },
+            "handed_off_at": _iso(link.handed_off_at) if link.handed_off_at else None,
+        },
+    )
+
+
 def _delivery_status(
     direction: MessageDirection, details: MessageDetails, outbox: OutboxMessage | None
 ) -> DeliveryStatus | None:

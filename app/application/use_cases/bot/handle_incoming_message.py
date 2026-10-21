@@ -30,6 +30,13 @@ from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.use_cases.bot import bot_messages as texts
 from app.application.use_cases.bot.agent_engine import ConversationAgent
 from app.application.use_cases.bot.agent_session import AgentSession
+from app.application.use_cases.bot.bot_handoff import (
+    BotHandoffRecorder,
+    agent_summary,
+    link_created_quote,
+    menu_summary,
+    stored_session_summary,
+)
 from app.application.use_cases.bot.bot_input import (
     NO_WORDS,
     SKIP_WORDS,
@@ -106,6 +113,7 @@ class HandleIncomingMessage:
         clock: IClockPort,
         lock: ICacheLockPort | None = None,
         agent: ConversationAgent | None = None,
+        handoffs: BotHandoffRecorder | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._sessions = sessions
@@ -113,6 +121,7 @@ class HandleIncomingMessage:
         self._clock = clock
         self._lock = lock
         self._agent = agent
+        self._handoffs = handoffs
 
     async def execute(self, message: IncomingClientMessage) -> GatewayEventOutcome:
         """``APPLIED`` si el bot respondió; ``IGNORED`` si no le tocaba o ya lo había hecho."""
@@ -146,7 +155,12 @@ class HandleIncomingMessage:
         text = message.content.strip()
         normalized = normalize(text)
         if asks_for_a_person(normalized):
-            await self._handoff(message, texts.HANDOFF_REQUESTED, reason="requested")
+            await self._handoff(
+                message,
+                texts.HANDOFF_REQUESTED,
+                reason="requested",
+                summary=stored_session_summary(stored),
+            )
             return GatewayEventOutcome.APPLIED
         session = BotSession.from_dict(stored) if stored is not None else None
         # Una conversación que cayó al motor de menús sigue en él hasta que termine o el
@@ -187,10 +201,17 @@ class HandleIncomingMessage:
                 step="agent",
                 error_type=type(error).__name__,
             )
-            await self._handoff(message, texts.HANDOFF_ERROR, reason="error")
+            await self._handoff(
+                message, texts.HANDOFF_ERROR, reason="error", summary=agent_summary(session)
+            )
             return GatewayEventOutcome.APPLIED
         if result.handoff is not None:
-            await self._handoff(message, result.handoff.reply, reason=result.handoff.reason)
+            await self._handoff(
+                message,
+                result.handoff.reply,
+                reason=result.handoff.reason,
+                summary=agent_summary(session),
+            )
             return GatewayEventOutcome.APPLIED
         session.last_message_id = message.external_message_id
         await self._sessions.save(message.conversation_id, session.to_dict())
@@ -215,10 +236,20 @@ class HandleIncomingMessage:
         except _NotUnderstood as miss:
             return await self._on_miss(message, snapshot, miss.hint)
         except _HandoffChosen:
-            await self._handoff(message, texts.HANDOFF_REQUESTED, reason="chosen")
+            await self._handoff(
+                message,
+                texts.HANDOFF_REQUESTED,
+                reason="chosen",
+                summary=menu_summary(_restore(snapshot)),
+            )
             return GatewayEventOutcome.APPLIED
         except _NoCatalog:
-            await self._handoff(message, texts.HANDOFF_NO_CATALOG, reason="no_catalog")
+            await self._handoff(
+                message,
+                texts.HANDOFF_NO_CATALOG,
+                reason="no_catalog",
+                summary=menu_summary(_restore(snapshot)),
+            )
             return GatewayEventOutcome.APPLIED
         except AvailabilityRejectedError as error:
             restored = _restore(snapshot)
@@ -238,7 +269,12 @@ class HandleIncomingMessage:
                 step=snapshot["step"],
                 error_type=type(error).__name__,
             )
-            await self._handoff(message, texts.HANDOFF_ERROR, reason="error")
+            await self._handoff(
+                message,
+                texts.HANDOFF_ERROR,
+                reason="error",
+                summary=menu_summary(_restore(snapshot)),
+            )
             return GatewayEventOutcome.APPLIED
         else:
             session.misses = 0
@@ -256,15 +292,26 @@ class HandleIncomingMessage:
         session = _restore(snapshot)
         session.misses += 1
         if session.misses >= MAX_MISSES:
-            await self._handoff(message, texts.HANDOFF_NOT_UNDERSTOOD, reason="not_understood")
+            await self._handoff(
+                message,
+                texts.HANDOFF_NOT_UNDERSTOOD,
+                reason="not_understood",
+                summary=menu_summary(session),
+            )
             return GatewayEventOutcome.APPLIED
         lead = f"{texts.NOT_UNDERSTOOD} {hint}".strip()
         await self._reply_alone(message, f"{lead}\n\n{texts.prompt(session)}")
         await self._save(message, session)
         return GatewayEventOutcome.APPLIED
 
-    async def _handoff(self, message: IncomingClientMessage, reply: str, *, reason: str) -> None:
-        """US-27: avisa al cliente, olvida la sesión y deja la conversación a un encargado."""
+    async def _handoff(
+        self, message: IncomingClientMessage, reply: str, *, reason: str, summary: str | None
+    ) -> None:
+        """US-27: avisa al cliente, olvida la sesión y deja la conversación a un encargado.
+
+        Solo si Chatwoot aceptó el cambio se registra la derivación y se avisa a la bandeja
+        (spec 09, 6.2); ``summary`` se arma antes porque la sesión se borra aquí.
+        """
 
         log = get_logger("bot")
         log.info("bot_handoff", conversation_id=message.conversation_id, reason=reason)
@@ -286,6 +333,11 @@ class HandleIncomingMessage:
                 "bot_handoff_status_failed",
                 conversation_id=message.conversation_id,
                 error_type=type(error).__name__,
+            )
+            return
+        if self._handoffs is not None:
+            await self._handoffs.record(
+                message.conversation_id, message.sender_phone, reason=reason, summary=summary
             )
 
     async def _send(self, tx: BotTransaction, message: IncomingClientMessage, text: str) -> None:
@@ -491,6 +543,7 @@ class HandleIncomingMessage:
                 source=QuoteSource.WHATSAPP,
             )
         )
+        await link_created_quote(turn.tx, turn.message.conversation_id, quote, self._clock.utcnow())
         session.quote_id = str(quote.quote_id)
         session.options = [MenuOption("pay", texts.PAY_ADVANCE)]
         session.step = BotStep.CONFIRM

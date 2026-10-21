@@ -66,6 +66,7 @@ from app.application.use_cases.auth.login import LoginUseCase
 from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
 from app.application.use_cases.bot.agent_engine import ConversationAgent
+from app.application.use_cases.bot.bot_handoff import BotHandoffRecorder
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
@@ -1057,6 +1058,9 @@ def build_bot_transaction(session: AsyncSession) -> BotTransaction:
         pay_advance=get_pay_advance_use_case(),
         enqueue_message=get_enqueue_message_use_case(session),
         catalog=get_catalog_read_port(session),
+        conversation_links=sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(
+            session
+        ),
     )
 
 
@@ -1101,4 +1105,11 @@ def get_handle_incoming_message_use_case() -> HandleIncomingMessage:
         messaging=get_messaging_port(),
         clock=get_clock_port(),
         lock=get_bot_lock(),
+        handoffs=BotHandoffRecorder(
+            links=SqlAlchemyConversationLinkUnitOfWork(get_sessionmaker()),
+            lookup=get_inbox_lookup(),
+            messaging=get_messaging_port(),
+            publisher=get_conversation_event_publisher(),
+            clock=get_clock_port(),
+        ),
     )

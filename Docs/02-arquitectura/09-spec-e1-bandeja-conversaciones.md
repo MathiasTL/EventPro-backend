@@ -180,7 +180,7 @@ Etiqueta de solo lectura en la fila y en la cabecera del hilo. No se escribe, no
 ### 5.3 Qué no se guarda
 
 * No se guardan mensajes ni medios en EventPro (RN-10.6). El *outbox* ya conserva el *payload* de lo pendiente hasta enviarlo (y lo anula si `redact_after_send`); eso es una cola, no un archivo.
-* `handoff_summary` contiene **solo datos estructurados** de la sesión del bot (paquete, fecha, distrito, nombre y cotización), nunca texto libre del cliente. Máximo 500 caracteres.
+* `handoff_summary` contiene **solo datos estructurados** de la sesión del bot (cotización, paquete, temática, fecha y distrito; nunca dirección, nombre ni observaciones), nunca texto libre del cliente. Máximo 500 caracteres.
 * El contenido que viaja por Redis *pub/sub* (sección 8) no se persiste.
 
 ### 5.4 Cambios en `IMessagingPort`
@@ -589,7 +589,7 @@ Las capturas se tomaron el 2026-10-20 con el responsable del producto, a través
 * **Punto 2 (`update_last_seen`)** — si no reinicia `unread_count`, el contador se calcula en EventPro: columna `conversation_links.last_read_at` y conteo de mensajes entrantes posteriores en la primera página de mensajes. Cambia la migración, el caso de uso 6.8 y el ítem de la bandeja; el contrato de API no cambia.
 * **Punto 3 (`data_url`)** — si no es alcanzable desde la red interna aun reescribiendo el host, se descarga con el token de agente en la cabecera `api_access_token`; si tampoco funciona, el hilo muestra «Adjunto no disponible» con nombre y tipo, y la vista de adjuntos entrantes pasa a seguimiento.
 
-**Límites conocidos:** con un solo `retried_external_message_id`, un segundo reintento de un mensaje que volvió a fallar sobrescribe el id anterior, y el primer mensaje fallido se muestra como «Bot» (D24); el evento `conversation.updated` de la marca manual «Evento realizado» se publica antes de confirmar la transacción (si la confirmación falla, la interfaz se corrige en la siguiente consulta); tope de 500 conversaciones leídas; contador de no leídos compartido; sin reenvío de eventos perdidos; si Chatwoot falla durante la derivación, la reconciliación pendiente es quien corrige; la auditoría de una intervención puede fallar tras el cambio de Chatwoot.
+**Límites conocidos:** con un solo `retried_external_message_id`, un segundo reintento de un mensaje que volvió a fallar sobrescribe el id anterior, y el primer mensaje fallido se muestra como «Bot» (D24); el evento `conversation.updated` de la marca manual «Evento realizado» se publica antes de confirmar la transacción (si la confirmación falla, la interfaz se corrige en la siguiente consulta); tope de 500 conversaciones leídas; contador de no leídos compartido; sin reenvío de eventos perdidos; si Chatwoot falla durante la derivación, la reconciliación pendiente es quien corrige; la auditoría de una intervención puede fallar tras el cambio de Chatwoot; al derivar, el bot limpia un asignado viejo con *compare-and-set* contra el titular leído en la misma transacción, de modo que si una toma confirma antes que la derivación, la toma gana y se registra `bot_handoff_release_cas_lost`; solo una secuencia A, luego B, luego A en ese instante podría dejar la conversación `open` sin dueño, y un `SUPERADMIN` la reasigna; el motivo, el resumen y los avisos de la derivación son de mejor esfuerzo, y si fallan la conversación ya quedó con el encargado pero sin motivo ni evento `handoff.requested`; el motivo `tool_loop_limit` del agente se registra como `BOT_NOT_UNDERSTOOD` y `llm_after_action` como `BOT_ERROR`.
 
 ---
 
