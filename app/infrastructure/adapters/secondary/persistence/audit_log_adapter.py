@@ -28,6 +28,27 @@ def _day_end(day: date) -> datetime:
     return datetime.combine(day + timedelta(days=1), time.min, tzinfo=UTC)
 
 
+class SessionAuditRecorder:
+    """Agrega la entrada a la sesión del llamador sin confirmar: va en su misma transacción."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def record(self, entry: AuditLog) -> None:
+        self._session.add(
+            AuditLogModel(
+                id=entry.id,
+                user_id=entry.user_id,
+                action=entry.action,
+                entity_name=entry.entity_name,
+                entity_id=entry.entity_id,
+                old_values=entry.old_values,
+                new_values=entry.new_values,
+            )
+        )
+        await self._session.flush()
+
+
 class SQLAlchemyAuditLogAdapter:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory

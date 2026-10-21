@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.application.dtos.inbox_dto import (
     ConversationPage,
@@ -171,3 +171,18 @@ class MessagePageResponse(BaseModel):
             return cls(items=items, has_more=page.has_more)
         unsent = [UnsentMessageResponse.from_view(view) for view in page.unsent]
         return cls(items=items, has_more=page.has_more, unsent=unsent)
+
+
+class SendMessageRequest(BaseModel):
+    """Cuerpo de texto (6.4); ``template`` se acepta solo para rechazarlo con 422 (D20)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str | None = Field(default=None, max_length=4096)
+    template: dict[str, object] | None = None
+
+
+class QueuedMessageResponse(BaseModel):
+    outbox_id: UUID
+    chatwoot_conversation_id: int
+    delivery_status: Literal["QUEUED"] = "QUEUED"

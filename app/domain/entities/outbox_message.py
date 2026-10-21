@@ -235,8 +235,20 @@ class OutboxMessage:
         self.read_at = moment
         return True
 
+    @property
+    def is_retryable(self) -> bool:
+        """``FAILED`` por envío o por rechazo de WhatsApp, y con el contenido aún guardado."""
+
+        failed = self.status is OutboxStatus.FAILED or self.delivery_status is DeliveryStatus.FAILED
+        return failed and self.payload is not None
+
     def retry(self, *, now: datetime) -> None:
-        """Reencola un mensaje ``FAILED`` (por envío o por rechazo de WhatsApp)."""
+        """Reencola un mensaje ``FAILED`` (por envío o por rechazo de WhatsApp).
+
+        El id externo anterior pasa a ``retried_external_message_id`` para que el mensaje
+        fallido siga resolviendo a su autor (spec 09, D24); un reintento previo que no llegó a
+        enviarse (sin id externo) no pisa el que ya se conservó.
+        """
 
         if (
             self.status is not OutboxStatus.FAILED
@@ -250,6 +262,8 @@ class OutboxMessage:
             raise InvalidOutboxStateError(
                 "El contenido se anuló tras el envío; el mensaje no puede reintentarse"
             )
+        if self.external_message_id is not None:
+            self.retried_external_message_id = self.external_message_id
         self.status = OutboxStatus.PENDING
         self.attempts = 0
         self.next_attempt_at = moment

@@ -1,6 +1,7 @@
 """Router de lectura de la bandeja: RBAC, filtros, 503/404 y orden de rutas (spec 09, 7 y 10)."""
 
 from collections.abc import Iterator
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import httpx
@@ -15,6 +16,7 @@ from app.application.use_cases.messaging.conversation_assignment import (
     TakeoverConversation,
 )
 from app.application.use_cases.messaging.conversation_views import ConversationViewBuilder
+from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
 from app.application.use_cases.messaging.list_conversation_messages import (
     ListConversationMessages,
 )
@@ -24,8 +26,14 @@ from app.application.use_cases.messaging.list_conversations import (
 )
 from app.application.use_cases.messaging.mark_conversation_read import MarkConversationRead
 from app.application.use_cases.messaging.mark_event_done import MarkEventDone
+from app.application.use_cases.messaging.retry_message import RetryMessage
+from app.application.use_cases.messaging.send_conversation_message import (
+    RetryConversationMessage,
+    SendConversationMessage,
+)
 from app.domain.entities.conversation_link import ConversationLink
 from app.domain.entities.quote import QuoteStatus
+from app.domain.value_objects.outbox import OutboxStatus
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.secondary.cache.in_memory_conversation_session_adapter import (
@@ -44,6 +52,7 @@ from tests.application.assignment_support import InMemoryAuditPort, InMemoryLink
 from tests.application.conversation_link_support import InMemoryConversationLinkRepository
 from tests.application.inbox_read_support import FakeInboxLookup
 from tests.application.outbox_support import NOW, FixedClock, InMemoryOutboxStore
+from tests.domain.outbox_support import make_message
 from tests.unit.test_conversations_stream_router import OneEventSubscriber, _token
 
 BASE = "/api/v1/conversations"
@@ -78,6 +87,12 @@ class _Env:
             FixedClock(),
         )
         self.takeover = TakeoverConversation(*assignment_args)
+        self.outbox_store = InMemoryOutboxStore()
+        self.outbox = self.outbox_store.repository()
+        clock = FixedClock()
+        outgoing_args = (self.messaging, self.links, self.outbox, AuditService(self.audit))
+        self.send = SendConversationMessage(*outgoing_args, EnqueueMessage(self.outbox, clock))
+        self.retry = RetryConversationMessage(*outgoing_args, RetryMessage(self.outbox, clock))
         self.release = ReleaseConversation(*assignment_args)
 
     def link_quote(self, status: QuoteStatus) -> None:
@@ -105,6 +120,8 @@ def app(env: _Env) -> Iterator[FastAPI]:
     overrides[containers.get_mark_event_done_use_case] = lambda: env.event_done
     overrides[containers.get_takeover_conversation_use_case] = lambda: env.takeover
     overrides[containers.get_release_conversation_use_case] = lambda: env.release
+    overrides[containers.get_send_conversation_message_use_case] = lambda: env.send
+    overrides[containers.get_retry_conversation_message_use_case] = lambda: env.retry
     overrides[containers.get_conversation_event_subscriber] = lambda: OneEventSubscriber()
     auth_support.set_role(Role.ENCARGADO)
     yield application
@@ -177,6 +194,8 @@ async def test_search_and_filters_apply(app: FastAPI) -> None:
         ("POST", "/1/read"),
         ("POST", "/1/takeover"),
         ("POST", "/1/release"),
+        ("POST", "/1/messages"),
+        ("POST", f"/1/messages/{uuid4()}/retry"),
     ],
 )
 async def test_operador_is_forbidden(app: FastAPI, method: str, path: str) -> None:
@@ -416,3 +435,151 @@ async def test_superadmin_reassignment_through_the_endpoint_is_audited(
 
     assert response.status_code == 200
     assert [e.action for e in env.audit.entries] == ["OVERRIDE_CONVERSATION_ASSIGNMENT"]
+
+
+# --- enviar y reintentar (B7) ---------------------------------------------------------------
+
+
+async def _taken_by(app: FastAPI) -> UUID:
+    user = uuid4()
+    await _request(app, "POST", "/1/takeover", user=user)
+    return user
+
+
+async def test_send_returns_202_queued_and_audits_the_author(app: FastAPI, env: _Env) -> None:
+    user = await _taken_by(app)
+
+    response = await _request(app, "POST", "/1/messages", user=user, json={"content": "Hola"})
+
+    assert response.status_code == 202
+    body = response.json()
+    assert (body["chatwoot_conversation_id"], body["delivery_status"]) == (1, "QUEUED")
+    row = env.outbox_store.messages[UUID(body["outbox_id"])]
+    assert row.author_user_id == user
+    assert env.links.links[1].assigned_user_id == user
+
+
+async def test_send_without_taking_the_conversation_is_a_409(app: FastAPI) -> None:
+    response = await _request(app, "POST", "/1/messages", json={"content": "Hola"})
+
+    assert response.status_code == 409
+    assert response.json()["type"].endswith("/conversation-not-taken")
+
+
+async def test_send_to_another_encargados_conversation_is_a_409_with_the_assignee(
+    app: FastAPI,
+) -> None:
+    owner = await _taken_by(app)
+
+    response = await _request(app, "POST", "/1/messages", json={"content": "Hola"})
+
+    assert response.status_code == 409
+    assert response.json()["type"].endswith("/conversation-taken-by-other")
+    assert response.json()["assigned_user_id"] == str(owner)
+
+
+async def test_send_with_the_window_closed_is_a_422_with_the_expiry(
+    app: FastAPI, env: _Env
+) -> None:
+    user = await _taken_by(app)
+    link = env.links.links[1]
+    link.last_client_message_at = NOW - timedelta(hours=30)
+    env.links.put(link)
+    env.messaging.service_window_open = False
+
+    response = await _request(app, "POST", "/1/messages", user=user, json={"content": "Hola"})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["type"].endswith("/service-window-closed")
+    assert body["service_window_expires_at"] == (NOW - timedelta(hours=6)).isoformat()
+    assert env.outbox_store.messages == {}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"template": {"name": "contract_reminder", "language": "es", "params": {}}},
+        {"content": "Hola", "template": {"name": "x"}},
+        {},
+        {"content": "   "},
+        {"content": "Hola", "other": 1},
+    ],
+)
+async def test_send_rejects_templates_and_empty_bodies_with_422(
+    app: FastAPI, env: _Env, body: dict[str, object]
+) -> None:
+    user = await _taken_by(app)
+
+    response = await _request(app, "POST", "/1/messages", user=user, json=body)
+
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/validation-error")
+    assert env.outbox_store.messages == {}
+
+
+async def test_send_with_the_gateway_down_is_a_503(app: FastAPI, env: _Env) -> None:
+    user = await _taken_by(app)
+    env.messaging.unavailable = True
+
+    response = await _request(app, "POST", "/1/messages", user=user, json={"content": "Hola"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == FIXED_DETAIL
+
+
+async def _failed_row(env: _Env) -> UUID:
+    message = make_message(recipient=PHONE)
+    message.register_failure(error="caído", permanent=True, now=NOW)
+    env.outbox_store.put(message)
+    return message.id
+
+
+async def test_retry_returns_202_for_a_failed_row(app: FastAPI, env: _Env) -> None:
+    user = await _taken_by(app)
+    row_id = await _failed_row(env)
+
+    response = await _request(app, "POST", f"/1/messages/{row_id}/retry", user=user)
+
+    assert response.status_code == 202
+    assert response.json()["outbox_id"] == str(row_id)
+    assert env.outbox_store.messages[row_id].status is OutboxStatus.PENDING
+    (entry,) = env.audit.entries
+    assert entry.new_values is not None and entry.new_values["retry_of"] == str(row_id)
+
+
+async def test_retry_of_a_sent_or_pending_row_is_a_409_invalid_outbox_state(
+    app: FastAPI, env: _Env
+) -> None:
+    user = await _taken_by(app)
+    sent = make_message(recipient=PHONE)
+    sent.mark_sent(external_message_id="cw-1", conversation_id=1, now=NOW)
+    pending = make_message(recipient=PHONE)
+    env.outbox_store.put(sent)
+    env.outbox_store.put(pending)
+
+    for row in (sent, pending):
+        response = await _request(app, "POST", f"/1/messages/{row.id}/retry", user=user)
+        assert response.status_code == 409
+        assert response.json()["type"].endswith("/invalid-outbox-state")
+
+
+async def test_retry_of_a_missing_row_is_a_404(app: FastAPI) -> None:
+    user = await _taken_by(app)
+
+    response = await _request(app, "POST", f"/1/messages/{uuid4()}/retry", user=user)
+
+    assert response.status_code == 404
+    assert response.json()["type"].endswith("/not-found")
+
+
+async def test_retry_with_the_window_closed_is_a_422(app: FastAPI, env: _Env) -> None:
+    user = await _taken_by(app)
+    row_id = await _failed_row(env)
+    env.messaging.service_window_open = False
+
+    response = await _request(app, "POST", f"/1/messages/{row_id}/retry", user=user)
+
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/service-window-closed")
+    assert env.outbox_store.messages[row_id].status is OutboxStatus.FAILED

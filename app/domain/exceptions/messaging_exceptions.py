@@ -1,5 +1,6 @@
 """Errores del puerto de mensajería (gateway de WhatsApp)."""
 
+from datetime import datetime
 from uuid import UUID
 
 from app.domain.exceptions.resource_exceptions import DomainError
@@ -9,6 +10,14 @@ class ServiceWindowClosedError(DomainError):
     """Fuera de la ventana de 24 h (RN-11) solo se admiten plantillas aprobadas."""
 
     code = "service-window-closed"
+
+
+class ConversationWindowClosedError(ServiceWindowClosedError):
+    """Enviar o reintentar con la ventana cerrada; informa cuándo venció, si se sabe (6.4)."""
+
+    def __init__(self, expires_at: datetime | None) -> None:
+        super().__init__("Han pasado más de 24 horas; el cliente debe escribir primero.")
+        self.expires_at = expires_at
 
 
 class MessagingUnavailableError(DomainError):

@@ -38,13 +38,24 @@ from app.application.use_cases.messaging.list_conversations import (
 )
 from app.application.use_cases.messaging.mark_conversation_read import MarkConversationRead
 from app.application.use_cases.messaging.mark_event_done import MarkEventDone
+from app.application.use_cases.messaging.send_conversation_message import (
+    QueuedMessage,
+    RetryConversationMessage,
+    SendConversationMessage,
+)
 from app.domain.exceptions.messaging_exceptions import (
     ConversationNotTakenError,
     ConversationTakenByOtherError,
+    ConversationWindowClosedError,
     InvalidLeadTransitionError,
     MessagingUnavailableError,
+    ServiceWindowClosedError,
 )
-from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
+from app.domain.exceptions.outbox_exceptions import (
+    InvalidOutboxStateError,
+    OutboxMessageNotFoundError,
+)
+from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import (
     AuthContext,
@@ -57,6 +68,8 @@ from app.infrastructure.adapters.primary.web.schemas.conversation_schemas import
     ConversationPageResponse,
     ConversationResponse,
     MessagePageResponse,
+    QueuedMessageResponse,
+    SendMessageRequest,
 )
 from app.infrastructure.adapters.primary.web.sse import event_stream
 from app.infrastructure.di import containers
@@ -253,3 +266,77 @@ async def release_conversation(
     with _assignment_conflicts(), _gateway_errors():
         view = await use_case.execute(conversation_id, user_id=context.user_id, role=context.role)
     return ConversationResponse.from_view(view)
+
+
+def _queued(result: QueuedMessage) -> QueuedMessageResponse:
+    return QueuedMessageResponse(
+        outbox_id=result.outbox_id, chatwoot_conversation_id=result.chatwoot_conversation_id
+    )
+
+
+@contextmanager
+def _outgoing_errors() -> Iterator[None]:
+    """Errores de enviar y reintentar (6.4, 6.7) que no son 409 de asignación ni del gateway."""
+
+    try:
+        yield
+    except OutboxMessageNotFoundError as exc:
+        raise ProblemError(404, "not-found", "No encontrado", str(exc)) from exc
+    except ServiceWindowClosedError as exc:
+        expires_at = exc.expires_at if isinstance(exc, ConversationWindowClosedError) else None
+        raise ProblemError(
+            422,
+            exc.code,
+            "Error de validación",
+            str(exc),
+            service_window_expires_at=expires_at.isoformat() if expires_at else None,
+        ) from exc
+    except InvalidOutboxStateError as exc:
+        raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
+    except ValidationError as exc:
+        raise ProblemError(422, "validation-error", "Error de validación", str(exc)) from exc
+
+
+@router.post("/{conversation_id}/messages", status_code=202, response_model=QueuedMessageResponse)
+async def send_conversation_message(
+    conversation_id: ConversationId,
+    body: SendMessageRequest,
+    context: InboxUser,
+    use_case: Annotated[
+        SendConversationMessage, Depends(containers.get_send_conversation_message_use_case)
+    ],
+) -> QueuedMessageResponse:
+    """Encola un texto como el encargado asignado; el adjunto multipart llega con B9 (6.4)."""
+
+    if body.template is not None:
+        raise ProblemError(
+            422,
+            "validation-error",
+            "Error de validación",
+            "El envío de plantillas no está disponible en esta versión.",
+        )
+    with _assignment_conflicts(), _outgoing_errors(), _gateway_errors():
+        result = await use_case.execute(
+            conversation_id, user_id=context.user_id, content=body.content
+        )
+    return _queued(result)
+
+
+@router.post(
+    "/{conversation_id}/messages/{outbox_id}/retry",
+    status_code=202,
+    response_model=QueuedMessageResponse,
+)
+async def retry_conversation_message(
+    conversation_id: ConversationId,
+    outbox_id: UUID,
+    context: InboxUser,
+    use_case: Annotated[
+        RetryConversationMessage, Depends(containers.get_retry_conversation_message_use_case)
+    ],
+) -> QueuedMessageResponse:
+    """Reencola la misma fila del outbox de un mensaje fallido (6.7, D6)."""
+
+    with _assignment_conflicts(), _outgoing_errors(), _gateway_errors():
+        result = await use_case.execute(conversation_id, outbox_id, user_id=context.user_id)
+    return _queued(result)

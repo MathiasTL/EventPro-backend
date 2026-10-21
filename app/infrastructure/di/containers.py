@@ -35,6 +35,9 @@ from app.application.ports.output.conversation_event_publisher_port import (
 from app.application.ports.output.conversation_event_subscriber_port import (
     IConversationEventSubscriberPort,
 )
+from app.application.ports.output.conversation_link_repository_port import (
+    IConversationLinkRepositoryPort,
+)
 from app.application.ports.output.conversation_session_port import IConversationSessionPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
@@ -89,6 +92,11 @@ from app.application.use_cases.messaging.mark_conversation_read import MarkConve
 from app.application.use_cases.messaging.mark_event_done import MarkEventDone
 from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
 from app.application.use_cases.messaging.receive_gateway_event import ReceiveGatewayEvent
+from app.application.use_cases.messaging.retry_message import RetryMessage
+from app.application.use_cases.messaging.send_conversation_message import (
+    RetryConversationMessage,
+    SendConversationMessage,
+)
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
 )
@@ -176,6 +184,7 @@ from app.infrastructure.adapters.secondary.persistence import (
     catalog_admin_repository,
 )
 from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import (
+    SessionAuditRecorder,
     SQLAlchemyAuditLogAdapter,
 )
 from app.infrastructure.adapters.secondary.persistence.database import (
@@ -533,6 +542,40 @@ def get_mark_conversation_read_use_case(
     views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
 ) -> MarkConversationRead:
     return MarkConversationRead(get_messaging_port(), views, get_conversation_event_publisher())
+
+
+def _outgoing_args(
+    session: AsyncSession,
+) -> tuple[
+    IMessagingPort,
+    IConversationLinkRepositoryPort,
+    IOutboxRepositoryPort,
+    AuditService,
+]:
+    """Todo sobre la misma sesión: mensaje, auditoría y lectura del vínculo van juntos."""
+
+    return (
+        get_messaging_port(),
+        sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(session),
+        get_outbox_repository(session),
+        AuditService(SessionAuditRecorder(session)),
+    )
+
+
+def get_send_conversation_message_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> SendConversationMessage:
+    """Sesión transaccional: el mensaje y su auditoría se confirman antes de responder 202."""
+
+    return SendConversationMessage(*_outgoing_args(session), get_enqueue_message_use_case(session))
+
+
+def get_retry_conversation_message_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> RetryConversationMessage:
+    return RetryConversationMessage(
+        *_outgoing_args(session), RetryMessage(get_outbox_repository(session), get_clock_port())
+    )
 
 
 @lru_cache

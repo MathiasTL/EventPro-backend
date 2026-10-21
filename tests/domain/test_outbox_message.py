@@ -387,3 +387,34 @@ def test_retry_rejects_naive_datetime() -> None:
 
 def test_each_message_gets_its_own_identifier() -> None:
     assert make_message().id != make_message().id
+
+
+def test_retry_keeps_the_previous_external_id_to_preserve_authorship() -> None:
+    message = _sent()
+    message.record_delivery(status=DeliveryStatus.FAILED, error="Sin WhatsApp", at=NOW)
+    message.retry(now=NOW)
+    assert message.external_message_id is None
+    assert message.retried_external_message_id == "cw-1"
+
+
+def test_a_second_retry_without_a_new_send_does_not_lose_the_kept_id() -> None:
+    message = _sent()
+    message.record_delivery(status=DeliveryStatus.FAILED, error="Sin WhatsApp", at=NOW)
+    message.retry(now=NOW)
+    message.register_failure(error="caído", permanent=True, now=NOW)
+    message.retry(now=NOW)
+    assert message.retried_external_message_id == "cw-1"
+
+
+def test_is_retryable_matches_the_retry_rules() -> None:
+    failed = make_message()
+    failed.register_failure(error="x", permanent=True, now=NOW)
+    rejected = _sent()
+    rejected.record_delivery(status=DeliveryStatus.FAILED, error="x", at=NOW)
+    redacted = _sent(redact_after_send=True)
+    redacted.record_delivery(status=DeliveryStatus.FAILED, error="x", at=NOW)
+    assert failed.is_retryable
+    assert rejected.is_retryable
+    assert not _sent().is_retryable
+    assert not make_message().is_retryable
+    assert not redacted.is_retryable
