@@ -496,7 +496,8 @@ class SqlAlchemyManualBookingStore:
         quote = await quotes.get_by_id(quote_id)
         if quote is None:
             raise ResourceNotFoundError("Cotización no encontrada")
-        if quote.status is not QuoteStatus.CANCELLED:
+        # El reembolso resuelve el pago; no reabre ni cambia un vencimiento histórico.
+        if quote.status not in (QuoteStatus.CANCELLED, QuoteStatus.EXPIRED):
             quote.cancel(reason)
             await quotes.save(quote)
         await self._session.flush()

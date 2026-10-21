@@ -403,6 +403,92 @@ async def test_overbooked_advance_can_be_rejected_and_refunded(scenario):
     )
 
 
+@pytest.mark.parametrize(
+    "payment_status,action,expected_status,expected_http",
+    [
+        ("REQUIRES_MANUAL_APPROVAL", "REQUEST", "REFUND_PENDING", 200),
+        ("REFUND_PENDING", "CONFIRM", "REFUNDED", 200),
+        ("REJECTED", "REQUEST", "REJECTED", 409),
+    ],
+)
+async def test_expired_quote_refund_preserves_terminal_state(
+    scenario, payment_status, action, expected_status, expected_http
+):
+    client, factory, payload, headers, users = scenario
+    fake = SimpleNamespace(
+        check_availability=AsyncMock(
+            return_value=AvailabilityResult(AvailabilityStatus.REQUIRES_MANUAL_APPROVAL)
+        )
+    )
+    client._transport.app.dependency_overrides[containers.get_availability_port] = lambda: fake
+    registered = await register(client, payload, headers["SUPERADMIN"])
+    assert registered.status_code == 201, registered.text
+    payment_id = registered.json()["payment_id"]
+    # Snapshot histórico: el cron actual protege pagos que aún están en revisión.
+    async with factory() as session:
+        await session.execute(
+            text("UPDATE quotes SET status='EXPIRED' WHERE id=:id"),
+            {"id": payload["quote_id"]},
+        )
+        await session.execute(
+            text("UPDATE payments SET validation_status=:status WHERE id=:id"),
+            {"status": payment_status, "id": payment_id},
+        )
+        await session.commit()
+
+    path = f"{PREFIX}/{payload['quote_id']}/refund"
+    body = {"action": action, "reason": "Devolución documentada referencia DEV-EXPIRED"}
+    response = await client.post(path, json=body, headers=headers["ENCARGADO"])
+    assert response.status_code == expected_http, response.text
+    if expected_http == 200:
+        assert response.json()["payment_status"] == expected_status
+        assert response.json()["quote_status"] == "EXPIRED"
+        assert response.json()["event_id"] is None
+        assert response.json()["contract_id"] is None
+        replay = await client.post(path, json=body, headers=headers["ENCARGADO"])
+        assert replay.status_code == 200, replay.text
+        assert replay.json() == response.json()
+
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT q.status,p.validation_status,p.verified_by_user_id "
+                    "FROM quotes q JOIN payments p ON p.quote_id=q.id WHERE p.id=:id"
+                ),
+                {"id": payment_id},
+            )
+        ).one()
+        assert row.status == "EXPIRED"
+        assert row.validation_status == expected_status
+        if expected_http == 200:
+            assert row.verified_by_user_id == users["ENCARGADO"]
+        audits = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT new_values FROM audit_logs WHERE entity_id=:id "
+                        "AND action IN ('AUDIT_PAYMENT','REJECT_OVERBOOKED_PAYMENT')"
+                    ),
+                    {"id": payment_id},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(audits) == (1 if expected_http == 200 else 0)
+        if audits:
+            assert audits[0]["validation_status"] == expected_status
+            assert audits[0]["reason"] == body["reason"]
+        assert (
+            await session.scalar(
+                text("SELECT count(*) FROM events WHERE quote_id=:id"),
+                {"id": payload["quote_id"]},
+            )
+            == 0
+        )
+
+
 async def test_overbooked_advance_requires_explicit_approval_and_reason(scenario):
     client, _, payload, headers, _ = scenario
     fake = SimpleNamespace(
