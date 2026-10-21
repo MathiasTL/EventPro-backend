@@ -8,13 +8,13 @@ import pytest
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
 from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
+from app.application.use_cases.quote.create_quote import CreateQuoteUseCase
 from app.core.config import get_settings
 from app.infrastructure.adapters.secondary.cache.redis_conversation_session_adapter import (
     RedisConversationSessionAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
 from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
-    FakeCreateQuote,
     FakePayAdvance,
 )
 from app.infrastructure.adapters.secondary.persistence import SqlAlchemyCatalogReadRepository
@@ -38,12 +38,10 @@ def _fresh_caches(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         cache.cache_clear()
     containers.clear_application_caches()
     containers.get_fake_quote_store.cache_clear()
-    containers.get_create_quote_use_case.cache_clear()
     containers.get_pay_advance_use_case.cache_clear()
     yield
     containers.clear_application_caches()
     containers.get_fake_quote_store.cache_clear()
-    containers.get_create_quote_use_case.cache_clear()
     containers.get_pay_advance_use_case.cache_clear()
     for cache in (get_settings, get_engine, get_sessionmaker):
         cache.cache_clear()
@@ -63,11 +61,12 @@ def test_a_bot_transaction_shares_one_session_between_enqueue_and_catalog() -> N
 
 
 def test_the_quote_ports_come_from_the_shared_providers_so_swapping_them_is_one_line() -> None:
-    transaction = containers.build_bot_transaction(MagicMock())
+    session = MagicMock()
+    transaction = containers.build_bot_transaction(session)
 
-    assert transaction.create_quote is containers.get_create_quote_use_case()
+    assert transaction.create_quote._quotes._session is session
     assert transaction.pay_advance is containers.get_pay_advance_use_case()
-    assert isinstance(transaction.create_quote, FakeCreateQuote)
+    assert isinstance(transaction.create_quote, CreateQuoteUseCase)
     assert isinstance(transaction.pay_advance, FakePayAdvance)
 
 

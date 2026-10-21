@@ -92,7 +92,10 @@ def test_the_job_is_registered_with_bounded_tries_and_no_kept_result(worker: Mod
 
 
 def test_the_dispatch_cron_keeps_working_next_to_the_new_job(worker: ModuleType) -> None:
-    assert [cron.name for cron in worker.WorkerSettings.cron_jobs] == ["dispatch_outbox"]
+    assert {cron.name for cron in worker.WorkerSettings.cron_jobs} == {
+        "dispatch_outbox",
+        "expire_due_quotes",
+    }
 
 
 def test_events_are_enqueued_with_a_short_defer_so_sent_is_committed_first() -> None:

@@ -61,6 +61,7 @@ def quote_to_domain(row: QuoteModel) -> Quote:
         sent_at=row.sent_at,
         expires_at=row.expires_at,
         manual_request_hash=row.manual_request_hash,
+        observations=row.observations,
         created_at=row.created_at,
     )
 
@@ -93,6 +94,7 @@ def apply_quote_to_model(row: QuoteModel, entity: Quote) -> None:
     row.sent_at = entity.sent_at
     row.expires_at = entity.expires_at
     row.manual_request_hash = entity.manual_request_hash
+    row.observations = entity.observations
 
 
 def quote_to_model(entity: Quote) -> QuoteModel:
