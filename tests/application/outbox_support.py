@@ -1,6 +1,6 @@
 """Dobles en memoria de la cola de mensajes salientes para probar sin infraestructura."""
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -10,6 +10,7 @@ from app.application.ports.output.outbox_repository_port import IOutboxRepositor
 from app.domain.entities.outbox_message import OutboxMessage
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 from app.domain.value_objects.outbox import OutboxStatus
+from app.domain.value_objects.phone_number import PhoneNumber
 from tests.domain.outbox_support import NOW
 
 
@@ -31,6 +32,7 @@ class InMemoryOutboxRepository:
         self._messages = messages
         self._fail_save = fail_save
         self.for_update_requests = 0
+        self.batch_lookups = 0
 
     async def add(self, message: OutboxMessage) -> OutboxMessage:
         self._messages[message.id] = deepcopy(message)
@@ -68,6 +70,31 @@ class InMemoryOutboxRepository:
             ):
                 return deepcopy(message)
         return None
+
+    async def get_many_by_external_ids(
+        self, external_message_ids: Collection[str]
+    ) -> Mapping[str, OutboxMessage]:
+        self.batch_lookups += 1
+        found: dict[str, OutboxMessage] = {}
+        for message in self._messages.values():
+            for reference in (message.external_message_id, message.retried_external_message_id):
+                if reference is not None and reference in external_message_ids:
+                    found[reference] = deepcopy(message)
+        return found
+
+    async def list_unsent_for_recipient(
+        self, phone: PhoneNumber, *, limit: int = 50
+    ) -> Sequence[OutboxMessage]:
+        unsent = sorted(
+            (
+                message
+                for message in self._messages.values()
+                if message.recipient == phone
+                and message.status in (OutboxStatus.PENDING, OutboxStatus.FAILED)
+            ),
+            key=lambda message: message.created_at,
+        )
+        return [deepcopy(message) for message in unsent[:limit]]
 
     async def claim_due(
         self, *, now: datetime, limit: int, lease: timedelta

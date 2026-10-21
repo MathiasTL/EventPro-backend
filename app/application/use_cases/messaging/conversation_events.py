@@ -1,15 +1,17 @@
 """Armado de los eventos de la bandeja (spec 09, sección 8). Funciones puras.
 
-``conversation.updated`` lleva aquí solo lo que el evento del gateway y el vínculo permiten
-saber; los campos que exigen consultas por lote (``lead_status``, ``quote_status``,
-``assigned_user_name``) los suma la bandeja de lectura (B5).
+``conversation.updated`` lleva lo que el evento del gateway y el vínculo permiten saber; los
+campos que exigen consultas por lote (``lead_status``, ``quote_status``,
+``assigned_user_name``) llegan en ``enrichment`` cuando el *worker* pudo consultarlos.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.application.dtos.conversation_event_dto import ConversationEvent, ConversationEventType
 from app.application.dtos.gateway_event_dto import ConversationSnapshot, MessageDetails
+from app.application.dtos.inbox_dto import ConversationView, LeadStatus
 from app.application.dtos.messaging_dto import (
     AuthorType,
     ConversationLifecycle,
@@ -20,6 +22,7 @@ from app.application.use_cases.messaging.failure_catalog import translate_delive
 from app.domain.entities.client import Client
 from app.domain.entities.conversation_link import ConversationLink
 from app.domain.entities.outbox_message import OutboxMessage
+from app.domain.entities.quote import QuoteStatus
 from app.domain.value_objects.outbox import DeliveryStatus, OutboxStatus
 
 PREVIEW_MAX_CHARS = 120
@@ -27,6 +30,15 @@ ATTACHMENT_PREVIEW = "[Adjunto]"
 SERVICE_WINDOW = timedelta(hours=24)
 _UNREPORTED = "SENT"
 _ATTACHMENT_PATH = "/api/v1/conversations/{conversation_id}/attachments/{attachment_id}"
+
+
+@dataclass(frozen=True)
+class LeadEnrichment:
+    """Campos de ``conversation.updated`` que salen de las consultas por lote (7.2)."""
+
+    lead_status: LeadStatus
+    quote_status: QuoteStatus | None
+    assigned_user_name: str | None
 
 
 def message_created_event(
@@ -96,32 +108,69 @@ def conversation_updated_event(
     content: str,
     details: MessageDetails,
     at: datetime,
+    enrichment: LeadEnrichment | None = None,
 ) -> ConversationEvent:
     expires_at = (
         link.last_client_message_at + SERVICE_WINDOW if link.last_client_message_at else None
     )
     phone = snapshot.contact_phone.value if snapshot.contact_phone else None
     name = client.full_name if client else snapshot.contact_name or phone
+    # El asignado solo cuenta con la conversación ``open`` (4.1).
+    assigned = link.assigned_user_id if snapshot.lifecycle is ConversationLifecycle.OPEN else None
+    data: dict[str, Any] = {
+        "chatwoot_conversation_id": conversation_id,
+        "client": {
+            "id": str(client.id) if client else None,
+            "name": name,
+            "phone": phone,
+        },
+        "quote_id": str(link.quote_id) if link.quote_id else None,
+        "status": snapshot.lifecycle.value.lower(),
+        "mode": "HUMAN" if snapshot.lifecycle is ConversationLifecycle.OPEN else "BOT",
+        "assigned_user_id": str(assigned) if assigned else None,
+        "unread_count": snapshot.unread_count,
+        "handoff_reason": link.handoff_reason.value if link.handoff_reason else None,
+        "handed_off_at": _iso(link.handed_off_at) if link.handed_off_at else None,
+        "last_message_preview": _preview(content, bool(details.attachments)),
+        "last_message_at": _iso(at),
+        "service_window_open": snapshot.can_reply,
+        "service_window_expires_at": _iso(expires_at) if expires_at else None,
+    }
+    if enrichment is not None:
+        data["quote_status"] = enrichment.quote_status.value if enrichment.quote_status else None
+        data["lead_status"] = enrichment.lead_status.value
+        data["assigned_user_name"] = enrichment.assigned_user_name
+    return ConversationEvent(event=ConversationEventType.CONVERSATION_UPDATED, data=data)
+
+
+def conversation_view_event(view: ConversationView) -> ConversationEvent:
+    """``conversation.updated`` con el ítem completo de la bandeja (7.2), para la API."""
+
     return ConversationEvent(
         event=ConversationEventType.CONVERSATION_UPDATED,
         data={
-            "chatwoot_conversation_id": conversation_id,
+            "chatwoot_conversation_id": view.chatwoot_conversation_id,
             "client": {
-                "id": str(client.id) if client else None,
-                "name": name,
-                "phone": phone,
+                "id": str(view.client_id) if view.client_id else None,
+                "name": view.client_name,
+                "phone": view.phone,
             },
-            "quote_id": str(link.quote_id) if link.quote_id else None,
-            "status": snapshot.lifecycle.value.lower(),
-            "mode": "HUMAN" if snapshot.lifecycle is ConversationLifecycle.OPEN else "BOT",
-            "assigned_user_id": str(link.assigned_user_id) if link.assigned_user_id else None,
-            "unread_count": snapshot.unread_count,
-            "handoff_reason": link.handoff_reason.value if link.handoff_reason else None,
-            "handed_off_at": _iso(link.handed_off_at) if link.handed_off_at else None,
-            "last_message_preview": _preview(content, bool(details.attachments)),
-            "last_message_at": _iso(at),
-            "service_window_open": snapshot.can_reply,
-            "service_window_expires_at": _iso(expires_at) if expires_at else None,
+            "quote_id": str(view.quote_id) if view.quote_id else None,
+            "quote_status": view.quote_status.value if view.quote_status else None,
+            "lead_status": view.lead_status.value,
+            "status": view.lifecycle.value.lower(),
+            "mode": view.mode.value,
+            "assigned_user_id": str(view.assigned_user_id) if view.assigned_user_id else None,
+            "assigned_user_name": view.assigned_user_name,
+            "unread_count": view.unread_count,
+            "handoff_reason": view.handoff_reason.value if view.handoff_reason else None,
+            "handed_off_at": _iso(view.handed_off_at) if view.handed_off_at else None,
+            "last_message_preview": view.last_message_preview,
+            "last_message_at": _iso(view.last_message_at) if view.last_message_at else None,
+            "service_window_open": view.service_window_open,
+            "service_window_expires_at": (
+                _iso(view.service_window_expires_at) if view.service_window_expires_at else None
+            ),
         },
     )
 
@@ -151,11 +200,11 @@ def _delivery_fields(
         "failure_reason": failure.reason if failure else None,
         "failure_code": failure.code if failure else None,
         "outbox_id": str(outbox.id) if outbox else None,
-        "retryable": _retryable(outbox),
+        "retryable": is_retryable(outbox),
     }
 
 
-def _retryable(outbox: OutboxMessage | None) -> bool:
+def is_retryable(outbox: OutboxMessage | None) -> bool:
     if outbox is None or outbox.payload is None:
         return False
     return outbox.status is OutboxStatus.FAILED or outbox.delivery_status is DeliveryStatus.FAILED

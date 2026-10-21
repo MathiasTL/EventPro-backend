@@ -20,7 +20,11 @@ from app.application.dtos.gateway_event_dto import (
     OutgoingMessageEcho,
     UnhandledGatewayEvent,
 )
-from app.application.dtos.messaging_dto import ConversationStatus, MessageDirection
+from app.application.dtos.messaging_dto import (
+    ConversationLifecycle,
+    ConversationStatus,
+    MessageDirection,
+)
 from app.application.ports.output.conversation_event_publisher_port import (
     IConversationEventPublisherPort,
 )
@@ -29,8 +33,10 @@ from app.application.ports.output.inbox_event_unit_of_work_port import (
     InboxEventTransaction,
     InboxEventUnitOfWork,
 )
+from app.application.ports.output.inbox_lookup_port import IInboxLookupPort
 from app.application.ports.output.outbox_repository_port import OutboxTransactionFactory
 from app.application.use_cases.messaging import conversation_events as events
+from app.application.use_cases.messaging.lead_status import derive_lead_status
 from app.application.use_cases.messaging.message_authorship import resolve_author_type
 from app.application.use_cases.messaging.record_delivery_status import RecordDeliveryStatus
 from app.core.logging import get_logger
@@ -58,7 +64,9 @@ class ProcessGatewayEvent:
     ``inbox`` y ``publisher`` activan la bandeja: con ``inbox``, cada mensaje asegura el
     vínculo de su conversación y un eco saliente sin fila de outbox espera a su fila; con
     ``publisher``, cada cambio se difunde como evento de mejor esfuerzo (una falla se registra
-    y nunca falla el trabajo).
+    y nunca falla el trabajo). Con ``lookup``, ``conversation.updated`` suma el estado
+    comercial, el estado de la cotización y el nombre del asignado; si la consulta falla, el
+    evento sale sin esos campos.
     """
 
     def __init__(
@@ -69,12 +77,14 @@ class ProcessGatewayEvent:
         incoming_handler: IIncomingMessageHandler | None = None,
         inbox: InboxEventUnitOfWork | None = None,
         publisher: IConversationEventPublisherPort | None = None,
+        lookup: IInboxLookupPort | None = None,
     ) -> None:
         self._transaction = transaction
         self._gateway = gateway
         self._incoming_handler = incoming_handler
         self._inbox = inbox
         self._publisher = publisher
+        self._lookup = lookup
 
     async def execute(
         self, *, raw_body: bytes, received_at: datetime, last_attempt: bool = False
@@ -262,9 +272,35 @@ class ProcessGatewayEvent:
                     content=content,
                     details=details,
                     at=at,
+                    enrichment=await self._enrich(link, snapshot),
                 )
             )
         await self._publish(*batch)
+
+    async def _enrich(
+        self, link: ConversationLink, snapshot: ConversationSnapshot
+    ) -> events.LeadEnrichment | None:
+        """Consulta cotización y asignado fuera de toda transacción; ``None`` si falla."""
+
+        if self._lookup is None:
+            return None
+        assignee = (
+            link.assigned_user_id if snapshot.lifecycle is ConversationLifecycle.OPEN else None
+        )
+        try:
+            statuses = await self._lookup.quote_statuses([link.quote_id]) if link.quote_id else {}
+            names = await self._lookup.user_names([assignee]) if assignee else {}
+        except Exception as exc:
+            get_logger("gateway_events").warning(
+                "conversation_enrichment_failed", error_type=type(exc).__name__
+            )
+            return None
+        quote_status = statuses.get(link.quote_id) if link.quote_id else None
+        return events.LeadEnrichment(
+            lead_status=derive_lead_status(quote_status),
+            quote_status=quote_status,
+            assigned_user_name=names.get(assignee) if assignee else None,
+        )
 
     async def _publish(self, *batch: ConversationEvent) -> None:
         """Mejor esfuerzo: registra la falla y sigue (spec 09, sección 8)."""

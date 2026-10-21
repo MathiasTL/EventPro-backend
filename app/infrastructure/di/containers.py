@@ -41,6 +41,7 @@ from app.application.ports.output.document_source_port import IDocumentSourcePor
 from app.application.ports.output.event_dedup_port import IEventDedupPort
 from app.application.ports.output.gateway_event_port import IGatewayEventPort
 from app.application.ports.output.gateway_event_queue_port import IGatewayEventQueuePort
+from app.application.ports.output.inbox_lookup_port import IInboxLookupPort
 from app.application.ports.output.language_model_port import ILanguageModelPort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
@@ -70,8 +71,17 @@ from app.application.use_cases.event.register_event_extension import RegisterEve
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
+from app.application.use_cases.messaging.conversation_views import ConversationViewBuilder
 from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.application.use_cases.messaging.list_conversation_messages import (
+    ListConversationMessages,
+)
+from app.application.use_cases.messaging.list_conversations import (
+    GetConversation,
+    ListConversations,
+)
+from app.application.use_cases.messaging.mark_conversation_read import MarkConversationRead
 from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
 from app.application.use_cases.messaging.receive_gateway_event import ReceiveGatewayEvent
 from app.application.use_cases.payment.approve_overbooked_payment import (
@@ -177,7 +187,9 @@ from app.infrastructure.adapters.secondary.persistence.refresh_token_repository 
 )
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_client_repository,
+    sqlalchemy_conversation_link_repository,
     sqlalchemy_event_repository,
+    sqlalchemy_inbox_lookup,
     sqlalchemy_outbox_repository,
     sqlalchemy_payment_repository,
     sqlalchemy_quote_repository,
@@ -425,7 +437,46 @@ def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
         incoming_handler=get_handle_incoming_message_use_case(),
         inbox=SqlAlchemyInboxEventUnitOfWork(session_factory),
         publisher=get_conversation_event_publisher(),
+        lookup=get_inbox_lookup(),
     )
+
+
+@lru_cache
+def get_inbox_lookup() -> IInboxLookupPort:
+    return sqlalchemy_inbox_lookup.SqlAlchemyInboxLookup(get_sessionmaker())
+
+
+def get_conversation_view_builder(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ConversationViewBuilder:
+    links = sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(session)
+    return ConversationViewBuilder(links, get_inbox_lookup())
+
+
+def get_list_conversations_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> ListConversations:
+    return ListConversations(get_messaging_port(), views)
+
+
+def get_get_conversation_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> GetConversation:
+    return GetConversation(get_messaging_port(), views)
+
+
+def get_list_conversation_messages_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ListConversationMessages:
+    return ListConversationMessages(
+        get_messaging_port(), get_outbox_repository(session), get_inbox_lookup()
+    )
+
+
+def get_mark_conversation_read_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> MarkConversationRead:
+    return MarkConversationRead(get_messaging_port(), views, get_conversation_event_publisher())
 
 
 @lru_cache
@@ -708,6 +759,7 @@ def clear_application_caches() -> None:
     _chatwoot_client.cache_clear()
     get_gateway_event_port.cache_clear()
     get_process_gateway_event_use_case.cache_clear()
+    get_inbox_lookup.cache_clear()
     get_conversation_event_publisher.cache_clear()
     get_conversation_event_subscriber.cache_clear()
     get_conversation_session_port.cache_clear()
