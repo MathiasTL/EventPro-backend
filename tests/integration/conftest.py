@@ -34,6 +34,8 @@ def infra() -> Iterator[None]:
         )
         os.environ["REDIS_HOST"] = redis.get_container_host_ip()
         os.environ["REDIS_PORT"] = str(redis.get_exposed_port(6379))
+        os.environ["REDIS_PASSWORD"] = ""
+        os.environ["REDIS_DB"] = "0"
 
         get_settings.cache_clear()
         subprocess.run(
@@ -55,9 +57,20 @@ def database_url() -> str:
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limit() -> Iterator[None]:
+def _reset_rate_limit(infra: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Aísla el limiter de slowapi (compartido por IP 'testclient' en todo el proceso)."""
+    from limits.storage import storage_from_string
+    from limits.strategies import FixedWindowRateLimiter
+
     from app.infrastructure.adapters.primary.web.rate_limit import limiter
+
+    # El módulo puede importarse antes de que infra exporte el puerto aleatorio.
+    # Reenlazar el singleton conserva los decoradores y evita tocar el Redis local.
+    settings = get_settings()
+    storage = storage_from_string(f"redis://{settings.redis_host}:{settings.redis_port}/0")
+    monkeypatch.setattr(limiter, "_storage", storage)
+    monkeypatch.setattr(limiter, "_limiter", FixedWindowRateLimiter(storage))
+    monkeypatch.setattr(limiter, "_storage_dead", False)
 
     limiter.reset()
     yield

@@ -4,6 +4,12 @@ Bienvenido a la documentación técnica, arquitectónica y operativa de **EventP
 
 Esta documentación constituye la **Fase de Especificación y Diseño (Definition of Ready)** previa a la etapa de desarrollo de software.
 
+## Integración backend con E2
+
+La entrega local de contratos y firma se describe en la [especificación E2](02-arquitectura/09-spec-e2-contratos-pdf.md). La [guía de coordinación E2](05-operaciones/coordinaciones-e2/README.md) describe los puntos de conexión y las tareas de Christian, Mathias, Nicolas, David y Renzo. Cada integrante adapta su módulo a los contratos existentes de E2 y documenta la compatibilidad en su PR.
+
+Consultar también el [plan de Diego](05-operaciones/05-plan-de-trabajo-diego-e2.md).
+
 ---
 
 ## 📚 Estructura Completa de la Documentación
