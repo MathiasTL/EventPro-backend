@@ -32,6 +32,9 @@ from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.conversation_event_publisher_port import (
     IConversationEventPublisherPort,
 )
+from app.application.ports.output.conversation_event_subscriber_port import (
+    IConversationEventSubscriberPort,
+)
 from app.application.ports.output.conversation_session_port import IConversationSessionPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
@@ -110,8 +113,11 @@ from app.infrastructure.adapters.secondary.cache.redis_event_dedup_adapter impor
     RedisEventDedupAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
-from app.infrastructure.adapters.secondary.events.logging_conversation_event_publisher import (
-    LoggingConversationEventPublisher,
+from app.infrastructure.adapters.secondary.events.redis_conversation_event_publisher import (
+    RedisConversationEventPublisher,
+)
+from app.infrastructure.adapters.secondary.events.redis_conversation_event_subscriber import (
+    RedisConversationEventSubscriber,
 )
 from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
@@ -398,9 +404,16 @@ def get_gateway_event_port() -> IGatewayEventPort:
 
 @lru_cache
 def get_conversation_event_publisher() -> IConversationEventPublisherPort:
-    """Publicador de eventos de la bandeja; hoy solo registra (el de Redis llega con B4)."""
+    """Publicador de eventos de la bandeja sobre Redis, compartido por el worker y la API."""
 
-    return LoggingConversationEventPublisher()
+    return RedisConversationEventPublisher(get_redis_client())
+
+
+@lru_cache
+def get_conversation_event_subscriber() -> IConversationEventSubscriberPort:
+    """Suscriptor del canal de eventos de la bandeja, para el stream SSE."""
+
+    return RedisConversationEventSubscriber(get_redis_client())
 
 
 @lru_cache
@@ -696,6 +709,7 @@ def clear_application_caches() -> None:
     get_gateway_event_port.cache_clear()
     get_process_gateway_event_use_case.cache_clear()
     get_conversation_event_publisher.cache_clear()
+    get_conversation_event_subscriber.cache_clear()
     get_conversation_session_port.cache_clear()
     get_bot_lock.cache_clear()
     get_bot_unit_of_work.cache_clear()

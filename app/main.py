@@ -14,6 +14,7 @@ from app.infrastructure.adapters.primary.web.v1 import (
     audit_logs_router,
     budgets_router,
     catalog_router,
+    conversations_router,
     crew_router,
     events_router,
     financial_router,
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     application.include_router(budgets_router.router, prefix=settings.api_v1_prefix)
     application.include_router(manual_bookings_router.router, prefix=settings.api_v1_prefix)
     application.include_router(audit_logs_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(conversations_router.router, prefix=settings.api_v1_prefix)
     # Siempre registrada: sin secreto configurado responde 401, así no depende de la configuración.
     application.include_router(chatwoot_webhook.router, prefix=settings.api_v1_prefix)
     return application

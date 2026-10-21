@@ -30,3 +30,16 @@ class ConversationEvent:
         """``{"v": 1, "event": "<nombre>", "data": {...}}``, listo para serializar."""
 
         return {"v": self.v, "event": self.event.value, "data": dict(self.data)}
+
+    @classmethod
+    def from_envelope(cls, envelope: Mapping[str, Any]) -> "ConversationEvent":
+        """Inversa de :meth:`to_envelope`; lanza ``KeyError`` o ``ValueError`` si no es válido."""
+
+        data = envelope["data"]
+        if not isinstance(data, Mapping):
+            raise ValueError("data debe ser un objeto")
+        return cls(
+            event=ConversationEventType(envelope["event"]),
+            data=data,
+            v=int(envelope["v"]),
+        )

@@ -14,8 +14,8 @@ from app.infrastructure.adapters.secondary.cache.redis_conversation_session_adap
     RedisConversationSessionAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
-from app.infrastructure.adapters.secondary.events.logging_conversation_event_publisher import (
-    LoggingConversationEventPublisher,
+from app.infrastructure.adapters.secondary.events.redis_conversation_event_publisher import (
+    RedisConversationEventPublisher,
 )
 from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
     FakePayAdvance,
@@ -92,5 +92,5 @@ def test_the_gateway_event_use_case_hands_client_messages_to_the_bot() -> None:
     assert isinstance(use_case, ProcessGatewayEvent)
     assert use_case._incoming_handler is containers.get_handle_incoming_message_use_case()
     assert isinstance(use_case._inbox, SqlAlchemyInboxEventUnitOfWork)
-    # B3: el worker arranca con el publicador provisional; el de Redis llega con B4.
-    assert isinstance(use_case._publisher, LoggingConversationEventPublisher)
+    # B4: el worker publica por Redis (el registrador queda para pruebas y desarrollo).
+    assert isinstance(use_case._publisher, RedisConversationEventPublisher)
