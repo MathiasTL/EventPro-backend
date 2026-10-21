@@ -1,7 +1,8 @@
 """Router de lectura de la bandeja: RBAC, filtros, 503/404 y orden de rutas (spec 09, 7 y 10)."""
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import httpx
@@ -17,6 +18,9 @@ from app.application.use_cases.messaging.conversation_assignment import (
 )
 from app.application.use_cases.messaging.conversation_views import ConversationViewBuilder
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.application.use_cases.messaging.get_conversation_attachment import (
+    GetConversationAttachment,
+)
 from app.application.use_cases.messaging.list_conversation_messages import (
     ListConversationMessages,
 )
@@ -45,6 +49,9 @@ from app.infrastructure.adapters.secondary.events.in_memory_conversation_event_p
 from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
     FakeMessagingAdapter,
 )
+from app.infrastructure.adapters.secondary.storage.local_evidence_storage import (
+    LocalEvidenceStorage,
+)
 from app.infrastructure.di import containers
 from app.main import create_app
 from tests import auth_support
@@ -57,6 +64,8 @@ from tests.unit.test_conversations_stream_router import OneEventSubscriber, _tok
 
 BASE = "/api/v1/conversations"
 PHONE = PhoneNumber("+51999888777")
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+PDF = b"%PDF-1.4\n" + b"0" * 64
 FIXED_DETAIL = "La mensajería no está disponible temporalmente."
 
 
@@ -109,7 +118,7 @@ def env() -> _Env:
 
 
 @pytest.fixture
-def app(env: _Env) -> Iterator[FastAPI]:
+def app(env: _Env, tmp_path: Path) -> Iterator[FastAPI]:
     application = create_app()
     auth_support.install(application)
     overrides = application.dependency_overrides
@@ -122,6 +131,10 @@ def app(env: _Env) -> Iterator[FastAPI]:
     overrides[containers.get_release_conversation_use_case] = lambda: env.release
     overrides[containers.get_send_conversation_message_use_case] = lambda: env.send
     overrides[containers.get_retry_conversation_message_use_case] = lambda: env.retry
+    overrides[containers.get_get_conversation_attachment_use_case] = lambda: (
+        GetConversationAttachment(env.messaging)
+    )
+    overrides[containers.get_evidence_storage] = lambda: LocalEvidenceStorage(tmp_path)
     overrides[containers.get_conversation_event_subscriber] = lambda: OneEventSubscriber()
     auth_support.set_role(Role.ENCARGADO)
     yield application
@@ -191,6 +204,7 @@ async def test_search_and_filters_apply(app: FastAPI) -> None:
         ("GET", ""),
         ("GET", "/1"),
         ("GET", "/1/messages"),
+        ("GET", "/1/attachments/1"),
         ("POST", "/1/read"),
         ("POST", "/1/takeover"),
         ("POST", "/1/release"),
@@ -269,7 +283,13 @@ async def test_mark_read_returns_204_and_publishes(app: FastAPI, env: _Env) -> N
 
 @pytest.mark.parametrize(
     ("method", "path"),
-    [("GET", ""), ("GET", "/1"), ("GET", "/1/messages"), ("POST", "/1/read")],
+    [
+        ("GET", ""),
+        ("GET", "/1"),
+        ("GET", "/1/messages"),
+        ("GET", "/1/attachments/1"),
+        ("POST", "/1/read"),
+    ],
 )
 async def test_gateway_unavailable_maps_to_503(
     app: FastAPI, env: _Env, method: str, path: str
@@ -583,3 +603,276 @@ async def test_retry_with_the_window_closed_is_a_422(app: FastAPI, env: _Env) ->
     assert response.status_code == 422
     assert response.json()["type"].endswith("/service-window-closed")
     assert env.outbox_store.messages[row_id].status is OutboxStatus.FAILED
+
+
+# --- proxy de adjuntos y envío multipart (B9) ----------------------------------------------
+
+
+async def _incoming_attachment(
+    app: FastAPI, env: _Env, filename: str = "foto.jpg", content_type: str = "image/jpeg"
+) -> int:
+    env.messaging.receive_attachment(PHONE, JPEG, filename, content_type)
+    body = (await _request(app, "GET", "/1/messages")).json()
+    return int(body["items"][0]["attachments"][0]["id"])
+
+
+async def test_attachment_proxy_streams_the_bytes_with_safe_headers(
+    app: FastAPI, env: _Env
+) -> None:
+    attachment_id = await _incoming_attachment(app, env, filename='../a"b\nc.jpg')
+
+    response = await _request(app, "GET", f"/1/attachments/{attachment_id}")
+
+    assert response.status_code == 200
+    assert response.content == JPEG
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["content-disposition"] == (
+        "inline; filename=\"a_b_c.jpg\"; filename*=UTF-8''a_b_c.jpg"
+    )
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "chatwoot" not in str(response.headers).lower()
+
+
+async def test_attachment_proxy_does_not_require_the_conversation_to_be_taken(
+    app: FastAPI, env: _Env
+) -> None:
+    attachment_id = await _incoming_attachment(app, env)
+
+    assert env.links.links.get(1) is None or env.links.links[1].assigned_user_id is None
+    assert (await _request(app, "GET", f"/1/attachments/{attachment_id}")).status_code == 200
+
+
+async def test_attachment_of_another_conversation_or_missing_is_404(
+    app: FastAPI, env: _Env
+) -> None:
+    attachment_id = await _incoming_attachment(app, env)
+    env.messaging.receive_text(PhoneNumber("+51911222333"), "Hola", name="Otra")
+
+    for path in (f"/2/attachments/{attachment_id}", "/1/attachments/99999", "/999/attachments/1"):
+        response = await _request(app, "GET", path)
+        assert response.status_code == 404
+        assert response.json()["type"].endswith("/not-found")
+
+
+async def test_attachment_proxy_with_the_gateway_down_is_a_503(app: FastAPI, env: _Env) -> None:
+    attachment_id = await _incoming_attachment(app, env)
+    env.messaging.unavailable = True
+
+    response = await _request(app, "GET", f"/1/attachments/{attachment_id}")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == FIXED_DETAIL
+
+
+async def _send_file(
+    app: FastAPI,
+    user: UUID | None,
+    data: bytes,
+    *,
+    filename: str = "foto.jpg",
+    content_type: str = "image/jpeg",
+    content: str | None = None,
+) -> httpx.Response:
+    return await _request(
+        app,
+        "POST",
+        "/1/messages",
+        user=user,
+        files={"attachment": (filename, data, content_type)},
+        data={"content": content} if content is not None else None,
+    )
+
+
+async def test_multipart_send_enqueues_a_document_with_the_author(
+    app: FastAPI, env: _Env, tmp_path: Path
+) -> None:
+    user = await _taken_by(app)
+
+    response = await _send_file(app, user, JPEG, filename="a/b/foto.jpg", content="  Mira  ")
+
+    assert response.status_code == 202
+    body = response.json()
+    assert (body["chatwoot_conversation_id"], body["delivery_status"]) == (1, "QUEUED")
+    row = env.outbox_store.messages[UUID(body["outbox_id"])]
+    assert row.message_type.value == "DOCUMENT"
+    assert row.author_user_id == user
+    payload = row.payload
+    assert payload["filename"] == "foto.jpg"
+    assert payload["content_type"] == "image/jpeg"
+    assert payload["caption"] == "Mira"
+    assert (tmp_path / payload["path"]).read_bytes() == JPEG
+    assert "Mira" not in str(env.audit.entries[-1])
+
+
+async def test_multipart_send_accepts_a_pdf_without_caption(app: FastAPI, env: _Env) -> None:
+    user = await _taken_by(app)
+
+    response = await _send_file(
+        app, user, PDF, filename="presupuesto.pdf", content_type="application/pdf"
+    )
+
+    row = env.outbox_store.messages[UUID(response.json()["outbox_id"])]
+    assert response.status_code == 202
+    assert (row.payload["content_type"], row.payload["caption"]) == ("application/pdf", None)
+
+
+@pytest.mark.parametrize(
+    ("data", "content_type"),
+    [
+        (JPEG + b"0" * (5 * 1024 * 1024), "image/jpeg"),
+        (b"not an image at all, just text", "image/jpeg"),
+        (b"MZ" + b"\x00" * 64, "application/pdf"),
+        (b"", "image/jpeg"),
+    ],
+    ids=["oversize", "wrong-magic-bytes", "disallowed-type", "empty"],
+)
+async def test_multipart_send_rejects_invalid_files_with_422(
+    app: FastAPI, env: _Env, tmp_path: Path, data: bytes, content_type: str
+) -> None:
+    user = await _taken_by(app)
+
+    response = await _send_file(app, user, data, content_type=content_type)
+
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/invalid-file")
+    assert env.outbox_store.messages == {}
+    assert not (tmp_path / "evidence").exists()
+
+
+async def test_multipart_without_the_file_field_is_a_validation_error(
+    app: FastAPI, env: _Env
+) -> None:
+    user = await _taken_by(app)
+
+    response = await _request(
+        app, "POST", "/1/messages", user=user, files={"other": ("a.jpg", JPEG, "image/jpeg")}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/validation-error")
+
+
+async def test_multipart_preconditions_still_apply_and_leave_no_file(
+    app: FastAPI, env: _Env, tmp_path: Path
+) -> None:
+    not_taken = await _send_file(app, None, JPEG)
+    owner = await _taken_by(app)
+    other = await _send_file(app, None, JPEG)
+    env.messaging.service_window_open = False
+    closed = await _send_file(app, owner, JPEG)
+    env.messaging.service_window_open = True
+    env.messaging.unavailable = True
+    down = await _send_file(app, owner, JPEG)
+
+    assert [r.status_code for r in (not_taken, other, closed, down)] == [409, 409, 422, 503]
+    assert closed.json()["type"].endswith("/service-window-closed")
+    assert env.outbox_store.messages == {}
+    assert list((tmp_path / "evidence").iterdir()) == []
+
+
+async def test_multipart_is_forbidden_for_an_operator(app: FastAPI) -> None:
+    auth_support.set_role(Role.OPERADOR)
+
+    assert (await _send_file(app, None, JPEG)).status_code == 403
+
+
+async def test_json_send_still_works_beside_multipart(app: FastAPI, env: _Env) -> None:
+    user = await _taken_by(app)
+
+    response = await _request(app, "POST", "/1/messages", user=user, json={"content": "Hola"})
+
+    assert response.status_code == 202
+    row = env.outbox_store.messages[UUID(response.json()["outbox_id"])]
+    assert row.message_type.value == "TEXT"
+
+
+async def test_multipart_with_an_oversize_content_length_is_rejected_unread(
+    app: FastAPI, env: _Env, tmp_path: Path
+) -> None:
+    user = await _taken_by(app)
+    token = _token(subject=user)
+    boundary = "b"
+    sent: list[int] = []
+
+    async def body() -> AsyncIterator[bytes]:
+        sent.append(1)
+        yield b"x"
+
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        response = await client.post(
+            f"{BASE}/1/messages",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(6 * 1024 * 1024 + 128 * 1024),
+            },
+            content=body(),
+        )
+
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/invalid-file")
+    assert sent == []
+    assert env.outbox_store.messages == {}
+    assert not (tmp_path / "evidence").exists()
+
+
+async def test_multipart_without_content_length_is_a_validation_error(
+    app: FastAPI, env: _Env
+) -> None:
+    user = await _taken_by(app)
+
+    async def body() -> AsyncIterator[bytes]:
+        yield b"--b--\r\n"
+
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        response = await client.post(
+            f"{BASE}/1/messages",
+            headers={
+                "Authorization": f"Bearer {_token(subject=user)}",
+                "Content-Type": "multipart/form-data; boundary=b",
+            },
+            content=body(),
+        )
+
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/validation-error")
+    assert env.outbox_store.messages == {}
+
+
+async def test_multipart_with_two_files_is_rejected(
+    app: FastAPI, env: _Env, tmp_path: Path
+) -> None:
+    user = await _taken_by(app)
+
+    response = await _request(
+        app,
+        "POST",
+        "/1/messages",
+        user=user,
+        files=[
+            ("attachment", ("a.jpg", JPEG, "image/jpeg")),
+            ("attachment", ("b.jpg", JPEG, "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("/invalid-file")
+    assert env.outbox_store.messages == {}
+
+
+async def test_invalid_json_errors_keep_the_body_location(app: FastAPI) -> None:
+    user = await _taken_by(app)
+
+    bad_field = await _request(app, "POST", "/1/messages", user=user, json={"content": 5})
+    bad_json = await _request(
+        app,
+        "POST",
+        "/1/messages",
+        user=user,
+        content=b"{nope",
+    )
+
+    assert bad_field.status_code == bad_json.status_code == 422
+    assert bad_field.json()["errors"][0]["field"] == "body.content"
+    assert bad_json.json()["errors"][0]["field"] == "body"

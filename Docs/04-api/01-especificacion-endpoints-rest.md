@@ -1379,7 +1379,7 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
 * **Errores:** `404` (`not-found`, la conversación no existe), `503` (`messaging-gateway-unavailable`).
 
 #### `GET /conversations/{id}/attachments/{attachment_id}`
-* **Descripción:** Proxy de los medios de la conversación (imágenes, comprobantes, documentos). El backend obtiene el archivo de Chatwoot por la red interna y lo transmite al cliente con el `Content-Type` original y `Content-Disposition: inline; filename=...`. Valida que el adjunto pertenezca a la conversación indicada. Las URL de Chatwoot nunca se exponen al navegador.
+* **Descripción:** Proxy de los medios de la conversación (imágenes, comprobantes, documentos). El backend obtiene el archivo de Chatwoot por la red interna y lo transmite al cliente con el `Content-Type` original y `Content-Disposition: inline; filename=...`. Valida que el adjunto pertenezca a la conversación indicada. La respuesta añade `Cache-Control: private, no-store`, `X-Content-Type-Options: nosniff` y `Content-Security-Policy: default-src 'none'; sandbox`, para que un medio ajeno no ejecute contenido activo. Las URL de Chatwoot nunca se exponen al navegador.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`. La lectura no exige que la conversación esté tomada.
 * **Response `200 OK`:** el contenido binario del archivo.
 * **Errores:** `404` (`not-found`, el adjunto no existe o no pertenece a la conversación), `503` (`messaging-gateway-unavailable`).

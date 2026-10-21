@@ -190,6 +190,7 @@ class FakeMessagingAdapter:
         self._conversation(conversation_id).unread_count = 0
 
     async def get_attachment(self, conversation_id: int, attachment_id: int) -> AttachmentContent:
+        self._ensure_available()
         self._conversation(conversation_id)
         content = self._attachments.get((conversation_id, attachment_id))
         if content is None:

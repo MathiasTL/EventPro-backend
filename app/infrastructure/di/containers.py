@@ -82,6 +82,9 @@ from app.application.use_cases.messaging.conversation_assignment import (
 from app.application.use_cases.messaging.conversation_views import ConversationViewBuilder
 from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.application.use_cases.messaging.get_conversation_attachment import (
+    GetConversationAttachment,
+)
 from app.application.use_cases.messaging.list_conversation_messages import (
     ListConversationMessages,
 )
@@ -481,6 +484,10 @@ def get_get_conversation_use_case(
     views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
 ) -> GetConversation:
     return GetConversation(get_messaging_port(), views)
+
+
+def get_get_conversation_attachment_use_case() -> GetConversationAttachment:
+    return GetConversationAttachment(get_messaging_port())
 
 
 def get_list_conversation_messages_use_case(

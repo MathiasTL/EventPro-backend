@@ -6,13 +6,20 @@
 Los errores del gateway se traducen solo aquí (D10): un manejador global alteraría otros módulos.
 """
 
+import logging
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Annotated
+from typing import Annotated, Any
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError as PydanticValidationError
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.application.dtos.inbox_dto import (
     SEARCH_MIN_CHARS,
@@ -23,9 +30,13 @@ from app.application.dtos.messaging_dto import ConversationStatus
 from app.application.ports.output.conversation_event_subscriber_port import (
     IConversationEventSubscriberPort,
 )
+from app.application.ports.output.payment_evidence_storage_port import IPaymentEvidenceStoragePort
 from app.application.use_cases.messaging.conversation_assignment import (
     ReleaseConversation,
     TakeoverConversation,
+)
+from app.application.use_cases.messaging.get_conversation_attachment import (
+    GetConversationAttachment,
 )
 from app.application.use_cases.messaging.list_conversation_messages import (
     DEFAULT_LIMIT,
@@ -56,6 +67,7 @@ from app.domain.exceptions.outbox_exceptions import (
     OutboxMessageNotFoundError,
 )
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
+from app.domain.exceptions.storage_exceptions import EvidenceValidationError
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import (
     AuthContext,
@@ -72,7 +84,10 @@ from app.infrastructure.adapters.primary.web.schemas.conversation_schemas import
     SendMessageRequest,
 )
 from app.infrastructure.adapters.primary.web.sse import event_stream
+from app.infrastructure.adapters.secondary.storage.local_evidence_storage import mime_for_path
 from app.infrastructure.di import containers
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversations", tags=["Conversaciones"])
 
@@ -82,6 +97,14 @@ _NOT_FOUND_DETAIL = "La conversación no existe."
 
 InboxUser = Annotated[AuthContext, Depends(require_role(Role.ENCARGADO, Role.SUPERADMIN))]
 ConversationId = Annotated[int, Path(ge=1)]
+AttachmentId = Annotated[int, Path(ge=1)]
+
+ATTACHMENT_FIELD = "attachment"
+_MULTIPART = "multipart/form-data"
+_MAX_FORM_FIELDS = 4
+_MAX_PART_BYTES = 64 * 1024
+_MULTIPART_OVERHEAD = 64 * 1024
+_UNSAFE_FILENAME_CHARS = re.compile(r'[\x00-\x1f\x7f"\\/]')
 
 
 @contextmanager
@@ -193,6 +216,45 @@ async def list_conversation_messages(
     return MessagePageResponse.from_page(conversation_id, page)
 
 
+def _safe_filename(raw: str | None, default: str) -> str:
+    """Sin separadores de ruta, comillas ni caracteres de control; acotado a 120 caracteres."""
+
+    name = _UNSAFE_FILENAME_CHARS.sub("_", (raw or "").replace("\\", "/").rsplit("/", 1)[-1])
+    return name.strip(" .")[:120] or default
+
+
+def _content_disposition(filename: str) -> str:
+    ascii_name = filename.encode("ascii", "replace").decode().replace("?", "_")
+    return f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+@router.get("/{conversation_id}/attachments/{attachment_id}", response_class=Response)
+async def get_conversation_attachment(
+    conversation_id: ConversationId,
+    attachment_id: AttachmentId,
+    context: InboxUser,
+    use_case: Annotated[
+        GetConversationAttachment, Depends(containers.get_get_conversation_attachment_use_case)
+    ],
+) -> Response:
+    """Proxy de medios (11, D17): el navegador nunca ve la URL de Chatwoot."""
+
+    with _gateway_errors():
+        attachment = await use_case.execute(conversation_id, attachment_id)
+    filename = _safe_filename(attachment.filename, f"adjunto-{attachment_id}")
+    return Response(
+        content=attachment.data,
+        media_type=attachment.content_type,
+        headers={
+            "Content-Disposition": _content_disposition(filename),
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            # Un medio ajeno nunca debe ejecutar contenido activo en el origen de la API.
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
+
+
 @router.post("/{conversation_id}/read", status_code=204)
 async def mark_conversation_read(
     conversation_id: ConversationId,
@@ -297,28 +359,153 @@ def _outgoing_errors() -> Iterator[None]:
         raise ProblemError(422, "validation-error", "Error de validación", str(exc)) from exc
 
 
-@router.post("/{conversation_id}/messages", status_code=202, response_model=QueuedMessageResponse)
-async def send_conversation_message(
-    conversation_id: ConversationId,
-    body: SendMessageRequest,
-    context: InboxUser,
-    use_case: Annotated[
-        SendConversationMessage, Depends(containers.get_send_conversation_message_use_case)
-    ],
-) -> QueuedMessageResponse:
-    """Encola un texto como el encargado asignado; el adjunto multipart llega con B9 (6.4)."""
+_SEND_OPENAPI: dict[str, Any] = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": SendMessageRequest.model_json_schema()},
+            _MULTIPART: {
+                "schema": {
+                    "type": "object",
+                    "required": [ATTACHMENT_FIELD],
+                    "properties": {
+                        ATTACHMENT_FIELD: {"type": "string", "format": "binary"},
+                        "content": {"type": "string", "maxLength": 4096},
+                    },
+                }
+            },
+        },
+    }
+}
 
-    if body.template is not None:
+
+def _require_bounded_multipart(request: Request, max_upload_bytes: int) -> None:
+    raw = request.headers.get("content-length", "")
+    if not raw.isdigit():
         raise ProblemError(
             422,
             "validation-error",
             "Error de validación",
-            "El envío de plantillas no está disponible en esta versión.",
+            "El envío con adjunto requiere el encabezado Content-Length.",
         )
-    with _assignment_conflicts(), _outgoing_errors(), _gateway_errors():
-        result = await use_case.execute(
-            conversation_id, user_id=context.user_id, content=body.content
+    if int(raw) > max_upload_bytes + _MULTIPART_OVERHEAD:
+        raise ProblemError(
+            422, "invalid-file", "Archivo inválido", "El archivo no puede superar 5 MiB"
         )
+
+
+async def _read_send_body(
+    request: Request, max_upload_bytes: int
+) -> SendMessageRequest | tuple[UploadFile, str | None]:
+    """Un solo camino para JSON (texto) y multipart (adjunto); se decide por ``Content-Type``.
+
+    El multipart se acota antes de leerlo: ``Content-Length`` obligatorio y limitado, un solo
+    archivo y pocos campos, para que un cuerpo enorme no llene el disco temporal.
+    """
+
+    if not request.headers.get("content-type", "").lower().startswith(_MULTIPART):
+        try:
+            return SendMessageRequest.model_validate_json(await request.body())
+        except PydanticValidationError as exc:
+            errors = [
+                {**error, "loc": ("body", *error["loc"])}
+                for error in exc.errors(include_url=False, include_context=False)
+            ]
+            raise RequestValidationError(errors) from exc
+    _require_bounded_multipart(request, max_upload_bytes)
+    try:
+        form = await request.form(
+            max_files=1, max_fields=_MAX_FORM_FIELDS, max_part_size=_MAX_PART_BYTES
+        )
+    except StarletteHTTPException as exc:
+        raise ProblemError(
+            422, "invalid-file", "Archivo inválido", "El envío solo admite un archivo y un texto."
+        ) from exc
+    upload = form.get(ATTACHMENT_FIELD)
+    caption = form.get("content")
+    if not isinstance(upload, UploadFile):
+        raise ProblemError(
+            422, "validation-error", "Error de validación", "Falta el archivo adjunto."
+        )
+    if caption is not None and (not isinstance(caption, str) or len(caption) > 4096):
+        raise ProblemError(
+            422, "validation-error", "Error de validación", "El texto del adjunto no es válido."
+        )
+    return upload, (caption.strip() or None) if isinstance(caption, str) else None
+
+
+async def _store_upload(
+    upload: UploadFile, storage: IPaymentEvidenceStoragePort, caption: str | None
+) -> tuple[str, dict[str, Any]]:
+    """Valida (5 MB, contenido, tipos) y guarda; devuelve la ruta y el payload ``DOCUMENT``."""
+
+    if upload.size is not None and upload.size > storage.max_bytes():
+        raise ProblemError(
+            422, "invalid-file", "Archivo inválido", "El archivo no puede superar 5 MiB"
+        )
+    data = await upload.read()
+    try:
+        path = await storage.store(
+            data=data,
+            content_type=upload.content_type or "",
+            original_filename=upload.filename or "adjunto",
+        )
+    except EvidenceValidationError as exc:
+        raise ProblemError(422, "invalid-file", "Archivo inválido", str(exc)) from exc
+    document = {
+        "path": path,
+        "filename": _safe_filename(upload.filename, "adjunto"),
+        "content_type": mime_for_path(path),
+        "caption": caption,
+    }
+    return path, document
+
+
+@router.post(
+    "/{conversation_id}/messages",
+    status_code=202,
+    response_model=QueuedMessageResponse,
+    openapi_extra=_SEND_OPENAPI,
+)
+async def send_conversation_message(
+    conversation_id: ConversationId,
+    request: Request,
+    context: InboxUser,
+    use_case: Annotated[
+        SendConversationMessage, Depends(containers.get_send_conversation_message_use_case)
+    ],
+    storage: Annotated[IPaymentEvidenceStoragePort, Depends(containers.get_evidence_storage)],
+) -> QueuedMessageResponse:
+    """Encola un texto (JSON) o un adjunto (multipart) como el encargado asignado (6.4, D19)."""
+
+    body = await _read_send_body(request, storage.max_bytes())
+    if isinstance(body, SendMessageRequest):
+        if body.template is not None:
+            raise ProblemError(
+                422,
+                "validation-error",
+                "Error de validación",
+                "El envío de plantillas no está disponible en esta versión.",
+            )
+        with _assignment_conflicts(), _outgoing_errors(), _gateway_errors():
+            result = await use_case.execute(
+                conversation_id, user_id=context.user_id, content=body.content
+            )
+        return _queued(result)
+    upload, caption = body
+    path, document = await _store_upload(upload, storage, caption)
+    try:
+        with _assignment_conflicts(), _outgoing_errors(), _gateway_errors():
+            result = await use_case.execute(
+                conversation_id, user_id=context.user_id, document=document
+            )
+    except BaseException:
+        # Las precondiciones fallaron o el envío no se encoló: no queda un archivo huérfano.
+        try:
+            await storage.delete(path)
+        except Exception:
+            logger.exception("No se pudo eliminar el adjunto de un envío rechazado.")
+        raise
     return _queued(result)
 
 
