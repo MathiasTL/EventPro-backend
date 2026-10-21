@@ -39,6 +39,9 @@ from app.application.ports.output.conversation_link_repository_port import (
     IConversationLinkRepositoryPort,
 )
 from app.application.ports.output.conversation_session_port import IConversationSessionPort
+from app.application.ports.output.crew_assignment_repository_port import (
+    ICrewAssignmentRepositoryPort,
+)
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
 from app.application.ports.output.event_dedup_port import IEventDedupPort
@@ -73,6 +76,9 @@ from app.application.use_cases.contract.create_manual_contract import CreateManu
 from app.application.use_cases.contract.manage_contracts import ManageContracts
 from app.application.use_cases.contract.sign_contract import SignContract
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
+from app.application.use_cases.crew.override_transit_interval import (
+    OverrideCrewTransitIntervalUseCase,
+)
 from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
 from app.application.use_cases.event.register_event_extension import RegisterEventExtensionUseCase
 from app.application.use_cases.event.settle_event import SettleEventUseCase
@@ -119,6 +125,7 @@ from app.application.use_cases.quote.create_quote import CreateQuoteUseCase
 from app.application.use_cases.quote.expire_due_quotes import ExpireDueQuotesUseCase
 from app.application.use_cases.quote.get_quote import GetQuoteUseCase
 from app.application.use_cases.quote.list_quotes import ListQuotesUseCase
+from app.application.use_cases.quote.override_mobility import OverrideQuoteMobilityUseCase
 from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
 from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
 from app.application.use_cases.quote.register_manual_booking import RegisterManualBookingUseCase
@@ -197,6 +204,7 @@ from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import 
 from app.infrastructure.adapters.secondary.persistence.database import (
     get_catalog_write_session,
     get_engine,
+    get_overrides_write_session,
     get_session,
     get_sessionmaker,
 )
@@ -212,6 +220,7 @@ from app.infrastructure.adapters.secondary.persistence.refresh_token_repository 
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_client_repository,
     sqlalchemy_conversation_link_repository,
+    sqlalchemy_crew_assignment_repository,
     sqlalchemy_event_repository,
     sqlalchemy_inbox_lookup,
     sqlalchemy_outbox_repository,
@@ -850,6 +859,32 @@ def get_approve_overbooked_payment_use_case(
         AuditService(SQLAlchemyAuditLogAdapter(get_sessionmaker(), session=session)),
         sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
         get_contract_use_case(session),
+    )
+
+
+def get_override_quote_mobility_use_case(
+    session: Annotated[AsyncSession, Depends(get_overrides_write_session, scope="function")],
+) -> OverrideQuoteMobilityUseCase:
+    return OverrideQuoteMobilityUseCase(
+        sqlalchemy_quote_repository.SqlAlchemyQuoteRepository(session),
+        get_financial_engine(),
+        get_audit_service(),
+    )
+
+
+def get_crew_assignment_repository(
+    session: Annotated[AsyncSession, Depends(get_overrides_write_session, scope="function")],
+) -> ICrewAssignmentRepositoryPort:
+    return sqlalchemy_crew_assignment_repository.SqlAlchemyCrewAssignmentRepository(session)
+
+
+def get_override_crew_transit_interval_use_case(
+    session: Annotated[AsyncSession, Depends(get_overrides_write_session, scope="function")],
+) -> OverrideCrewTransitIntervalUseCase:
+    return OverrideCrewTransitIntervalUseCase(
+        get_crew_assignment_repository(session),
+        sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+        get_audit_service(),
     )
 
 

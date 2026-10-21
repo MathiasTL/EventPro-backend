@@ -23,6 +23,9 @@ class IQuoteRepositoryPort(Protocol):
     async def get_by_id(self, quote_id: UUID) -> Quote | None:
         """Devuelve la cotización con sus extras, o None."""
 
+    async def get_by_id_for_update(self, quote_id: UUID) -> Quote | None:
+        """Como ``get_by_id``, pero bloquea la fila (``FOR UPDATE``) hasta cerrar la transacción."""
+
     async def get_detail(self, quote_id: UUID) -> QuoteDetailDTO | None:
         """Detalle comercial con importes congelados, cliente y pagos."""
 

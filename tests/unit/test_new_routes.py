@@ -28,3 +28,5 @@ def test_crew_and_override_routes_are_registered() -> None:
     assert "/api/v1/crews" in paths
     assert "/api/v1/crews/{crew_id}" in paths
     assert "/api/v1/overrides/payments/{payment_id}/approve-simultaneous" in paths
+    assert "/api/v1/overrides/quotes/{quote_id}/mobility" in paths
+    assert "/api/v1/overrides/crew-assignments/{assignment_id}/transit-interval" in paths

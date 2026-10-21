@@ -7,7 +7,9 @@ import pytest
 from app.domain.entities.quote import Quote, QuoteExtraLine, QuoteSource, QuoteStatus
 from app.domain.exceptions.quote_exceptions import InvalidQuoteStateError, QuoteExpiredError
 from app.domain.exceptions.resource_exceptions import ValidationError
+from app.domain.value_objects.liquidation import ExtraCharge, Liquidation
 from app.domain.value_objects.mobility import MobilityZone, RouteEstimate
+from app.domain.value_objects.money import Money
 
 from .financial_support import default_engine, pen
 from .quote_support import NOW, make_quote
@@ -286,3 +288,76 @@ def test_quote_keeps_defaults_for_unused_optional_fields() -> None:
     assert quote.latitude is None
     assert quote.mobility_overridden is False
     assert isinstance(quote, Quote)
+
+
+def _recomputed_liquidation(quote: Quote, mobility_amount: Money) -> Liquidation:
+    """Reproduce el recálculo de ``OverrideQuoteMobilityUseCase`` (mismos insumos)."""
+
+    engine = default_engine()
+    extras = [ExtraCharge(line.unit_price, line.quantity) for line in quote.extras]
+    extras_total = pen("0.00")
+    for extra in extras:
+        extras_total = extras_total + extra.subtotal
+    return engine.liquidate(
+        package_price=quote.liquidation.services_subtotal - extras_total,
+        extras=extras,
+        mobility_amount=mobility_amount,
+    )
+
+
+def test_override_mobility_recalculates_total_and_balance_without_touching_advance() -> None:
+    quote = make_quote()
+    original_advance = quote.liquidation.advance_amount
+    new_liquidation = _recomputed_liquidation(quote, pen("95.00"))
+
+    quote.override_mobility(liquidation=new_liquidation, reason="Peajes no computados")
+
+    assert quote.mobility_overridden is True
+    assert quote.mobility_override_reason == "Peajes no computados"
+    assert quote.liquidation.mobility_amount == pen("95.00")
+    assert quote.liquidation.advance_amount == original_advance
+
+
+def test_override_mobility_strips_reason() -> None:
+    quote = make_quote()
+    new_liquidation = _recomputed_liquidation(quote, pen("95.00"))
+    quote.override_mobility(liquidation=new_liquidation, reason="  Zona de alto tráfico  ")
+    assert quote.mobility_override_reason == "Zona de alto tráfico"
+
+
+@pytest.mark.parametrize("reason", ["", "   ", None])
+def test_override_mobility_requires_a_reason(reason: str | None) -> None:
+    quote = make_quote()
+    new_liquidation = _recomputed_liquidation(quote, pen("95.00"))
+    with pytest.raises(ValidationError):
+        quote.override_mobility(liquidation=new_liquidation, reason=reason)
+
+
+@pytest.mark.parametrize(
+    "status", [QuoteStatus.CONVERTED, QuoteStatus.CANCELLED, QuoteStatus.EXPIRED]
+)
+def test_override_mobility_rejects_converted_cancelled_or_expired(status: QuoteStatus) -> None:
+    quote = make_quote()
+    quote.status = status
+    new_liquidation = _recomputed_liquidation(quote, pen("95.00"))
+    with pytest.raises(InvalidQuoteStateError):
+        quote.override_mobility(liquidation=new_liquidation, reason="Motivo válido")
+
+
+@pytest.mark.parametrize("status", [QuoteStatus.SENT, QuoteStatus.PAYMENT_STARTED])
+def test_override_mobility_allowed_before_conversion(status: QuoteStatus) -> None:
+    quote = make_quote()
+    quote.status = status
+    new_liquidation = _recomputed_liquidation(quote, pen("95.00"))
+    quote.override_mobility(liquidation=new_liquidation, reason="Motivo válido")
+    assert quote.status is status
+
+
+def test_override_mobility_rejects_a_liquidation_that_changes_the_advance() -> None:
+    quote = make_quote()
+    engine = default_engine()
+    tampered = engine.liquidate(
+        package_price=pen("2000.00"), extras=[], mobility_amount=pen("95.00")
+    )
+    with pytest.raises(ValidationError):
+        quote.override_mobility(liquidation=tampered, reason="Motivo válido")
