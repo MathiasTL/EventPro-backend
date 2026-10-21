@@ -26,6 +26,9 @@ class IOutboxRepositoryPort(Protocol):
     ) -> OutboxMessage | None:
         """Busca por el identificador que asignó Chatwoot; ``for_update`` bloquea la fila."""
 
+    async def find_by_message_reference(self, external_message_id: str) -> OutboxMessage | None:
+        """Busca por el id externo actual o por el que conservó un reintento (D24)."""
+
     async def claim_due(
         self, *, now: datetime, limit: int, lease: timedelta
     ) -> Sequence[OutboxMessage]:

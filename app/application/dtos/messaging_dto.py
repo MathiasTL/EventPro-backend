@@ -39,6 +39,14 @@ class MessageSender(StrEnum):
     AGENT_BOT = "AGENT_BOT"
 
 
+class AuthorType(StrEnum):
+    """Quién escribió un mensaje según EventPro; se resuelve por el outbox primero (D3)."""
+
+    CLIENT = "CLIENT"
+    BOT = "BOT"
+    AGENT = "AGENT"
+
+
 @dataclass(frozen=True)
 class MessageReceipt:
     message_id: str

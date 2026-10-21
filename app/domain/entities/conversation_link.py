@@ -105,6 +105,13 @@ class ConversationLink:
         self.quote_id = quote_id
         self.updated_at = _require_aware(at, "at")
 
+    def link_client(self, client_id: UUID, *, at: datetime) -> None:
+        """Vincula el cliente registrado si aún no hay uno; nunca reemplaza el existente."""
+
+        if self.client_id is None:
+            self.client_id = client_id
+            self.updated_at = _require_aware(at, "at")
+
     def record_client_message(self, at: datetime) -> None:
         """Anota el último mensaje entrante; nunca retrocede ante un evento fuera de orden."""
 

@@ -60,6 +60,15 @@ class InMemoryOutboxRepository:
                 return deepcopy(message)
         return None
 
+    async def find_by_message_reference(self, external_message_id: str) -> OutboxMessage | None:
+        for message in self._messages.values():
+            if external_message_id in (
+                message.external_message_id,
+                message.retried_external_message_id,
+            ):
+                return deepcopy(message)
+        return None
+
     async def claim_due(
         self, *, now: datetime, limit: int, lease: timedelta
     ) -> Sequence[OutboxMessage]:

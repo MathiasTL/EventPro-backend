@@ -29,6 +29,9 @@ from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, I
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.client_repository_port import IClientRepositoryPort
 from app.application.ports.output.clock_port import IClockPort
+from app.application.ports.output.conversation_event_publisher_port import (
+    IConversationEventPublisherPort,
+)
 from app.application.ports.output.conversation_session_port import IConversationSessionPort
 from app.application.ports.output.crew_schedule_read_port import ICrewScheduleReadPort
 from app.application.ports.output.document_source_port import IDocumentSourcePort
@@ -107,6 +110,9 @@ from app.infrastructure.adapters.secondary.cache.redis_event_dedup_adapter impor
     RedisEventDedupAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
+from app.infrastructure.adapters.secondary.events.logging_conversation_event_publisher import (
+    LoggingConversationEventPublisher,
+)
 from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
     system_clock_adapter,
@@ -178,6 +184,9 @@ from app.infrastructure.adapters.secondary.persistence.sqlalchemy_bot_unit_of_wo
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
     SQLAlchemyHealthAdapter,
+)
+from app.infrastructure.adapters.secondary.persistence.sqlalchemy_inbox_event_unit_of_work import (
+    SqlAlchemyInboxEventUnitOfWork,
 )
 from app.infrastructure.adapters.secondary.persistence.user_repository import (
     SQLAlchemyUserRepository,
@@ -388,11 +397,21 @@ def get_gateway_event_port() -> IGatewayEventPort:
 
 
 @lru_cache
+def get_conversation_event_publisher() -> IConversationEventPublisherPort:
+    """Publicador de eventos de la bandeja; hoy solo registra (el de Redis llega con B4)."""
+
+    return LoggingConversationEventPublisher()
+
+
+@lru_cache
 def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
+    session_factory = get_sessionmaker()
     return ProcessGatewayEvent(
-        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
+        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(session_factory),
         gateway=get_gateway_event_port(),
         incoming_handler=get_handle_incoming_message_use_case(),
+        inbox=SqlAlchemyInboxEventUnitOfWork(session_factory),
+        publisher=get_conversation_event_publisher(),
     )
 
 
@@ -676,6 +695,7 @@ def clear_application_caches() -> None:
     _chatwoot_client.cache_clear()
     get_gateway_event_port.cache_clear()
     get_process_gateway_event_use_case.cache_clear()
+    get_conversation_event_publisher.cache_clear()
     get_conversation_session_port.cache_clear()
     get_bot_lock.cache_clear()
     get_bot_unit_of_work.cache_clear()

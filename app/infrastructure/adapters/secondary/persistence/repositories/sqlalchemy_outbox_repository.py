@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
@@ -62,6 +62,20 @@ class SqlAlchemyOutboxRepository:
         if for_update:
             statement = statement.with_for_update().execution_options(populate_existing=True)
         row = await self._session.scalar(statement)
+        return outbox_to_domain(row) if row is not None else None
+
+    async def find_by_message_reference(self, external_message_id: str) -> OutboxMessage | None:
+        row = await self._session.scalar(
+            select(OutboxMessageModel)
+            .where(
+                or_(
+                    OutboxMessageModel.external_message_id == external_message_id,
+                    OutboxMessageModel.retried_external_message_id == external_message_id,
+                )
+            )
+            .order_by(OutboxMessageModel.created_at.desc())
+            .limit(1)
+        )
         return outbox_to_domain(row) if row is not None else None
 
     async def claim_due(

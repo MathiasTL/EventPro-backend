@@ -113,3 +113,14 @@ def test_restart_lead_cycle_clears_the_mark_and_unlinks_the_quote() -> None:
     assert link.event_done_at is None
     assert link.event_done_by_user_id is None
     assert link.quote_id is None
+
+
+def test_link_client_fills_a_missing_client_but_never_replaces_one() -> None:
+    link = _link()
+    first, second = uuid4(), uuid4()
+
+    link.link_client(first, at=LATER)
+    link.link_client(second, at=LATER + timedelta(hours=1))
+
+    assert link.client_id == first
+    assert link.updated_at == LATER

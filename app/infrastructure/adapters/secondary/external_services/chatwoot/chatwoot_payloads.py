@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from app.application.dtos.gateway_event_dto import ConversationSnapshot, MessageDetails
 from app.application.dtos.messaging_dto import (
     ConversationLifecycle,
     ConversationMessage,
@@ -390,6 +391,45 @@ def incoming_sender_phone(body: Mapping[str, Any]) -> PhoneNumber | None:
             except ValidationError:
                 continue
     return None
+
+
+def conversation_snapshot(body: Mapping[str, Any]) -> ConversationSnapshot | None:
+    """Estado de la conversación incrustado en un webhook de mensaje, o `None` si no se lee.
+
+    El teléfono y el nombre son los del contacto (`conversation.meta.sender`); `sender` del
+    mensaje saliente es el agente y no sirve.
+    """
+
+    conversation = body.get(CONVERSATION_KEY)
+    if not isinstance(conversation, Mapping):
+        return None
+    lifecycle = _LIFECYCLES.get(str(conversation.get(STATUS_KEY)))
+    if lifecycle is None:
+        return None
+    unread = conversation.get(UNREAD_COUNT_KEY)
+    return ConversationSnapshot(
+        lifecycle=lifecycle,
+        unread_count=unread if isinstance(unread, int) and not isinstance(unread, bool) else 0,
+        can_reply=conversation.get(CAN_REPLY_KEY) is True,
+        contact_phone=_sender_phone(conversation),
+        contact_name=_meta_name(conversation, SENDER_KEY),
+    )
+
+
+def message_details(body: Mapping[str, Any]) -> MessageDetails:
+    """Hora, remitente, adjuntos y estado de un webhook de mensaje (`message_created`)."""
+
+    sender = body.get(SENDER_KEY)
+    sender_type = sender.get(TYPE_KEY) if isinstance(sender, Mapping) else None
+    embedded = embedded_message(body) or {}
+    return MessageDetails(
+        sent_at=event_time(body.get(CREATED_AT_KEY)),
+        sender=_SENDERS.get(sender_type) if isinstance(sender_type, str) else None,
+        sender_name=_text(sender.get(NAME_KEY)) if isinstance(sender, Mapping) else None,
+        attachments=tuple(attachments_of(body)),
+        delivery_status=delivery_status_from(embedded.get(STATUS_KEY)),
+        error=external_error(body) or external_error(embedded),
+    )
 
 
 def _sender_phone(item: Mapping[str, Any]) -> PhoneNumber | None:
