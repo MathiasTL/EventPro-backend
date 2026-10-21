@@ -79,6 +79,17 @@ class TestRealFindClients(ClientHooks, FindClientsContract):
         with Session(self.sync) as session:
             assert session.get(ClientModel, client_id).phone == "999888777"
 
+    async def test_unparseable_stored_phone_is_listed_as_stored(self):
+        client_id = self.seed_client("999888777", "Carlos")
+        with self.sync.begin() as connection:
+            connection.execute(
+                text("UPDATE clients SET phone='anexo 12' WHERE id=:id"), {"id": client_id}
+            )
+        page = await self.make_port().execute(FindClientsFilter())
+        assert [(item.id, item.phone) for item in page.items] == [(client_id, "anexo 12")]
+        detail = await GetClientUseCase(SqlAlchemyClientRepository(self.session)).execute(client_id)
+        assert detail.phone == "anexo 12"
+
     async def test_pages_are_stable_when_timestamps_match(self):
         for number in range(3):
             self.seed_client(f"95500000{number}", f"Cliente {number}")

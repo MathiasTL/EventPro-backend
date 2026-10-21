@@ -70,9 +70,15 @@ class SqlAlchemyClientRepository:
 
     @staticmethod
     def _to_dto(row: ClientModel) -> ClientDTO:
+        # La columna no restringe el formato: un registro no normalizable se muestra tal cual
+        # en lugar de impedir el listado completo.
+        try:
+            phone = PhoneNumber.parse(row.phone).value
+        except ValidationError:
+            phone = row.phone
         return ClientDTO(
             id=row.id,
-            phone=PhoneNumber.parse(row.phone).value,
+            phone=phone,
             full_name=row.full_name,
             dni=row.dni,
             ruc=row.ruc,
