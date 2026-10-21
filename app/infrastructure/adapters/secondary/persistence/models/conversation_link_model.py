@@ -1,4 +1,4 @@
-"""Tabla conversation_links (0001_initial_schema + 0007_inbox_support)."""
+"""Tabla conversation_links (0001_initial_schema + 0009_inbox_support)."""
 
 from datetime import datetime
 from uuid import UUID

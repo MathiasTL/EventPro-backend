@@ -89,9 +89,9 @@ def test_revision_chain_is_linear_from_0003() -> None:
     financial_revision = script.get_revision("0005_event_financial_snapshots")
     assert financial_revision is not None
     assert financial_revision.down_revision == revision.revision
-    inbox_revision = script.get_revision("0007_inbox_support")
+    inbox_revision = script.get_revision("0009_inbox_support")
     assert inbox_revision is not None
-    assert inbox_revision.down_revision == "0006_quote_observations"
+    assert inbox_revision.down_revision == "0008_contract_signature"
 
 
 def test_upgrade_adds_columns_and_default_and_downgrade_restores_them(database_url: str) -> None:
@@ -203,7 +203,7 @@ async def _table_columns(connection, table: str) -> dict[str, bool]:  # type: ig
 def test_inbox_support_upgrade_and_downgrade(database_url: str) -> None:
     config = _config(database_url)
     command.upgrade(config, "head")  # el contenedor del módulo se comparte entre pruebas
-    command.downgrade(config, "0006_quote_observations")
+    command.downgrade(config, "0008_contract_signature")
 
     async def before(connection) -> None:  # type: ignore[no-untyped-def]
         links = await _table_columns(connection, "conversation_links")
@@ -214,7 +214,7 @@ def test_inbox_support_upgrade_and_downgrade(database_url: str) -> None:
         )
 
     _run(database_url, before)
-    command.upgrade(config, "0007_inbox_support")
+    command.upgrade(config, "0009_inbox_support")
 
     async def after_upgrade(connection) -> None:  # type: ignore[no-untyped-def]
         links = await _table_columns(connection, "conversation_links")
@@ -238,7 +238,7 @@ def test_inbox_support_upgrade_and_downgrade(database_url: str) -> None:
         )
 
     _run(database_url, after_upgrade)
-    command.downgrade(config, "0006_quote_observations")
+    command.downgrade(config, "0008_contract_signature")
 
     async def after_downgrade(connection) -> None:  # type: ignore[no-untyped-def]
         links = await _table_columns(connection, "conversation_links")

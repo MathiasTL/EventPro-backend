@@ -14,8 +14,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0007_inbox_support"
-down_revision = "0006_quote_observations"
+revision = "0009_inbox_support"
+down_revision = "0008_contract_signature"
 branch_labels = None
 depends_on = None
 
