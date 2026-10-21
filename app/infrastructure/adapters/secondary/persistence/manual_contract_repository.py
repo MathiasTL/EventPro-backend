@@ -30,7 +30,8 @@ class SqlAlchemyManualContractStore(SqlAlchemyManualBookingStore):
         for extra_id, quantity in request.quantities:
             await self._session.execute(
                 text(
-                    "UPDATE quote_extras SET quantity=:qty,unit_price=subtotal/:qty "
+                    "UPDATE quote_extras SET quantity=CAST(:qty AS integer), "
+                    "unit_price=subtotal/CAST(:qty AS integer) "
                     "WHERE quote_id=:quote AND extra_id=:extra"
                 ),
                 {"qty": quantity, "quote": request.quote_id, "extra": extra_id},

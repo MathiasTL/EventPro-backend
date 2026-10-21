@@ -120,8 +120,13 @@ async def test_manual_draft_replay_and_conflict_are_atomic(scenario):
     assert issued.status_code == 200 and issued.json()["status"] == "ISSUED"
 
 
-async def test_manual_keeps_quantities_and_quote_notes_with_real_quote_repository(scenario):
+async def test_manual_keeps_quantities_and_quote_notes_with_real_quote_repository(
+    scenario, monkeypatch
+):
     client, factory, legacy, headers, _ = scenario
+    # Este caso espera éxito: conservar la excepción original facilita diagnosticar
+    # errores de persistencia sin convertirlos en un 500 genérico del transporte.
+    monkeypatch.setattr(client._transport, "raise_app_exceptions", True)
     extra_id = uuid4()
     async with factory() as session:
         await session.execute(
