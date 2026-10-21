@@ -210,12 +210,12 @@ class Quote:
     def override_mobility(self, *, liquidation: Liquidation, reason: str) -> None:
         """RF-21 / US-19: sobrescribe el monto de movilidad sin alterar el adelanto.
 
-        Rechaza la cotización ``CONVERTED`` o ``CANCELLED`` (el contrato ya se emitió o la
-        cotización se anuló); el motivo es obligatorio. ``liquidation`` ya viene recalculada
-        por ``FinancialEngine.liquidate`` con el nuevo monto de movilidad.
+        Solo admite cotizaciones abiertas (``SENT`` o ``PAYMENT_STARTED``): rechaza las
+        ``CONVERTED``, ``CANCELLED`` o ``EXPIRED``; el motivo es obligatorio. ``liquidation`` ya
+        viene recalculada por ``FinancialEngine.liquidate`` con el nuevo monto de movilidad.
         """
 
-        if self.status in (QuoteStatus.CONVERTED, QuoteStatus.CANCELLED):
+        if self.status not in _OPEN_STATUSES:
             raise InvalidQuoteStateError(f"La cotización está {self.status.value}.")
         if not reason or not reason.strip():
             raise ValidationError("El motivo del ajuste de movilidad es obligatorio")

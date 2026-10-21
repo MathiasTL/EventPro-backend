@@ -23,7 +23,7 @@ USER_ID = uuid4()
 
 def _use_case(quote) -> tuple[OverrideQuoteMobilityUseCase, AsyncMock, AsyncMock]:
     quotes = AsyncMock()
-    quotes.get_by_id.return_value = quote
+    quotes.get_by_id_for_update.return_value = quote
     audit_port = AsyncMock()
     use_case = OverrideQuoteMobilityUseCase(quotes, default_engine(), AuditService(audit_port))
     return use_case, quotes, audit_port
@@ -59,6 +59,16 @@ def test_override_recalculates_total_and_balance_keeping_advance() -> None:
     assert entry.old_values["mobility_overridden"] is False
 
 
+def test_quote_is_loaded_with_a_row_lock() -> None:
+    quote = make_quote()
+    use_case, quotes, _audit_port = _use_case(quote)
+
+    asyncio.run(use_case.execute(_input(quote.id)))
+
+    quotes.get_by_id_for_update.assert_awaited_once_with(quote.id)
+    quotes.get_by_id.assert_not_awaited()
+
+
 def test_missing_quote_raises() -> None:
     use_case, quotes, audit_port = _use_case(None)
     with pytest.raises(ResourceNotFoundError):
@@ -67,8 +77,10 @@ def test_missing_quote_raises() -> None:
     audit_port.record.assert_not_awaited()
 
 
-@pytest.mark.parametrize("status", [QuoteStatus.CONVERTED, QuoteStatus.CANCELLED])
-def test_converted_or_cancelled_quote_raises_invalid_state(status: QuoteStatus) -> None:
+@pytest.mark.parametrize(
+    "status", [QuoteStatus.CONVERTED, QuoteStatus.CANCELLED, QuoteStatus.EXPIRED]
+)
+def test_non_open_quote_raises_invalid_state(status: QuoteStatus) -> None:
     quote = make_quote()
     quote.status = status
     use_case, quotes, audit_port = _use_case(quote)

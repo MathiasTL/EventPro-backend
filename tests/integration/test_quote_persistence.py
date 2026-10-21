@@ -12,7 +12,7 @@ import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.dtos.override_dto import OverrideMobilityInput
@@ -470,3 +470,29 @@ async def test_override_mobility_on_converted_quote_raises_without_persisting(
     assert reloaded is not None
     assert reloaded.mobility_overridden is False
     assert reloaded.liquidation.mobility_amount == quote.liquidation.mobility_amount
+
+
+async def test_get_by_id_for_update_takes_a_row_lock(
+    engine: AsyncEngine, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """La lectura con bloqueo impide que otra transacción tome la misma fila."""
+    package_id, [extra_id] = await _seed_catalog(engine)
+    quote = make_quote(
+        client_id=await _new_client(factory), package_id=package_id, extra_id=extra_id
+    )
+    async with factory() as session:
+        await SqlAlchemyQuoteRepository(session).add(quote)
+        await session.commit()
+
+    async with factory() as holder, holder.begin():
+        locked = await SqlAlchemyQuoteRepository(holder).get_by_id_for_update(quote.id)
+        assert locked == quote
+        async with factory() as other, other.begin():
+            with pytest.raises(DBAPIError):
+                await other.execute(
+                    text("SELECT id FROM quotes WHERE id = :id FOR UPDATE NOWAIT"),
+                    {"id": quote.id},
+                )
+
+    async with factory() as session:
+        assert await SqlAlchemyQuoteRepository(session).get_by_id_for_update(uuid4()) is None

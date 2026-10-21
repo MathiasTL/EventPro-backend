@@ -58,6 +58,16 @@ class SqlAlchemyQuoteRepository:
         row = await self._session.get(QuoteModel, quote_id)
         return quote_to_domain(row) if row is not None else None
 
+    async def get_by_id_for_update(self, quote_id: UUID) -> Quote | None:
+        stmt = (
+            select(QuoteModel)
+            .where(QuoteModel.id == quote_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return quote_to_domain(row) if row is not None else None
+
     async def get_detail(self, quote_id: UUID) -> QuoteDetailDTO | None:
         quote = await self.get_by_id(quote_id)
         if quote is None:

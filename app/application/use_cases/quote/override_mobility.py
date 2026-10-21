@@ -11,14 +11,10 @@ from __future__ import annotations
 from app.application.dtos.override_dto import OverrideMobilityDTO, OverrideMobilityInput
 from app.application.ports.output.quote_repository_port import IQuoteRepositoryPort
 from app.application.services.audit_service import AuditService
-from app.domain.entities.quote import QuoteStatus
-from app.domain.exceptions.quote_exceptions import InvalidQuoteStateError
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 from app.domain.services.financial_engine import FinancialEngine
 from app.domain.value_objects.liquidation import ExtraCharge
 from app.domain.value_objects.money import Money
-
-_BLOCKED_STATUSES = (QuoteStatus.CONVERTED, QuoteStatus.CANCELLED)
 
 
 class OverrideQuoteMobilityUseCase:
@@ -32,11 +28,10 @@ class OverrideQuoteMobilityUseCase:
         self._audit = audit
 
     async def execute(self, dto: OverrideMobilityInput) -> OverrideMobilityDTO:
-        quote = await self._quotes.get_by_id(dto.quote_id)
+        quote = await self._quotes.get_by_id_for_update(dto.quote_id)
         if quote is None:
             raise ResourceNotFoundError("Cotización no encontrada")
-        if quote.status in _BLOCKED_STATUSES:
-            raise InvalidQuoteStateError(f"La cotización está {quote.status.value}.")
+        # El estado abierto se valida en la entidad, con la fila ya bloqueada.
 
         extras_total = Money.zero()
         for line in quote.extras:

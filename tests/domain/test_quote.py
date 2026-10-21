@@ -333,8 +333,10 @@ def test_override_mobility_requires_a_reason(reason: str | None) -> None:
         quote.override_mobility(liquidation=new_liquidation, reason=reason)
 
 
-@pytest.mark.parametrize("status", [QuoteStatus.CONVERTED, QuoteStatus.CANCELLED])
-def test_override_mobility_rejects_converted_or_cancelled(status: QuoteStatus) -> None:
+@pytest.mark.parametrize(
+    "status", [QuoteStatus.CONVERTED, QuoteStatus.CANCELLED, QuoteStatus.EXPIRED]
+)
+def test_override_mobility_rejects_converted_cancelled_or_expired(status: QuoteStatus) -> None:
     quote = make_quote()
     quote.status = status
     new_liquidation = _recomputed_liquidation(quote, pen("95.00"))

@@ -51,6 +51,9 @@ class FakeQuoteRepository:
     async def get_by_id(self, quote_id: UUID) -> Quote | None:
         return self._quote if self._quote.id == quote_id else None
 
+    async def get_by_id_for_update(self, quote_id: UUID) -> Quote | None:
+        return await self.get_by_id(quote_id)
+
 
 class FakeCrewAssignmentRepository:
     def __init__(self, assignment: CrewAssignmentDTO) -> None:
