@@ -59,3 +59,9 @@ async def get_catalog_write_session() -> AsyncIterator[AsyncSession]:
     """El catálogo confirma antes de enviar HTTP con Depends(scope='function')."""
     async with get_sessionmaker()() as session, session.begin():
         yield session
+
+
+async def get_overrides_write_session() -> AsyncIterator[AsyncSession]:
+    """Los overrides (RF-21, RF-22) confirman antes de enviar HTTP con Depends(scope='function')."""
+    async with get_sessionmaker()() as session, session.begin():
+        yield session
