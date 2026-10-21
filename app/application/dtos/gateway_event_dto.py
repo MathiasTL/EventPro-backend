@@ -1,10 +1,17 @@
 """DTOs de los eventos que el gateway de mensajería informa a la aplicación."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from app.application.dtos.messaging_dto import ConversationStatus, MessageDirection
+from app.application.dtos.messaging_dto import (
+    ConversationLifecycle,
+    ConversationStatus,
+    MessageAttachment,
+    MessageDirection,
+    MessageSender,
+)
 from app.domain.value_objects.outbox import DeliveryStatus
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -38,6 +45,36 @@ class UnhandledGatewayEvent:
 
 
 @dataclass(frozen=True)
+class ConversationSnapshot:
+    """Estado de la conversación que Chatwoot incrusta en el evento de un mensaje (6.1).
+
+    ``contact_name`` es el nombre del contacto de Chatwoot, no el del cliente de EventPro.
+    """
+
+    lifecycle: ConversationLifecycle
+    unread_count: int = 0
+    can_reply: bool = False
+    contact_phone: PhoneNumber | None = None
+    contact_name: str | None = None
+
+
+@dataclass(frozen=True)
+class MessageDetails:
+    """Datos del mensaje que el bot no necesita pero la bandeja sí.
+
+    ``sent_at`` es ``None`` si el evento no trae hora legible. ``delivery_status`` y ``error``
+    son los que el mensaje ya trae al crearse (Chatwoot puede rechazarlo de inmediato).
+    """
+
+    sent_at: datetime | None = None
+    sender: MessageSender | None = None
+    sender_name: str | None = None
+    attachments: Sequence[MessageAttachment] = ()
+    delivery_status: DeliveryStatus | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class IncomingClientMessage:
     """Mensaje de texto que un cliente escribió; el bot decide si lo responde.
 
@@ -51,9 +88,25 @@ class IncomingClientMessage:
     sender_phone: PhoneNumber
     content: str
     is_private: bool = False
+    snapshot: ConversationSnapshot | None = None
+    details: MessageDetails = MessageDetails()
 
 
-GatewayEvent = DeliveryNotice | IncomingClientMessage | UnhandledGatewayEvent
+@dataclass(frozen=True)
+class OutgoingMessageEcho:
+    """Eco de ``message_created`` de un mensaje saliente (del bot o de un encargado).
+
+    No lleva teléfono: el bot nunca lo atiende; la bandeja lo publica con su autoría.
+    """
+
+    external_message_id: str
+    conversation_id: int
+    content: str
+    snapshot: ConversationSnapshot | None = None
+    details: MessageDetails = MessageDetails()
+
+
+GatewayEvent = DeliveryNotice | IncomingClientMessage | OutgoingMessageEcho | UnhandledGatewayEvent
 
 
 @dataclass(frozen=True)

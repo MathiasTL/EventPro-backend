@@ -1,7 +1,7 @@
 import uuid
 from uuid import UUID
 
-from app.application.ports.output.audit_log_port import IAuditLogPort
+from app.application.ports.output.audit_log_port import IAuditRecorderPort
 from app.domain.entities.audit_log import AUDIT_ACTIONS, AuditLog
 
 
@@ -16,7 +16,7 @@ class InvalidAuditActionError(ValueError):
 class AuditService:
     """Servicio de auditoría que las demás épicas invocan (contrato E2)."""
 
-    def __init__(self, port: IAuditLogPort) -> None:
+    def __init__(self, port: IAuditRecorderPort) -> None:
         self._port = port
 
     async def record(

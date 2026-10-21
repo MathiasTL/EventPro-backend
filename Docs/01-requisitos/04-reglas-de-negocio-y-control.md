@@ -302,3 +302,16 @@ stateDiagram-v2
 | Motivo de traspaso | `BOT_NOT_UNDERSTOOD` | Bot no entendió | El bot no entendió al cliente dos veces consecutivas. |
 | Motivo de traspaso | `MANUAL_TAKEOVER` | Toma manual | Un encargado tomó la conversación mientras la atendía el bot. |
 | Motivo de traspaso | `BOT_ERROR` | Error del bot | Excepción no controlada del bot; derivación automática. |
+| Estado comercial de la conversación | `QUOTING` | Cotizando | Sin cotización vinculada: el bot recoge los datos del evento. |
+| Estado comercial de la conversación | `QUOTE_SENT` | Cotización enviada | La cotización vinculada está `SENT` y no se ha iniciado el pago. |
+| Estado comercial de la conversación | `PAYMENT_STARTED` | Pago iniciado | La cotización vinculada está en `PAYMENT_STARTED`. |
+| Estado comercial de la conversación | `CONVERTED` | Convertido | La cotización vinculada está `CONVERTED` (adelanto validado y evento creado). |
+| Estado comercial de la conversación | `QUOTE_CLOSED` | Vencida/Cancelada | La cotización vinculada está `EXPIRED` o `CANCELLED`: terminó sin convertirse. |
+| Estado comercial de la conversación | `EVENT_DONE` | Evento realizado | La cotización está `CONVERTED` y su evento está `SETTLED` (cálculo automático), o un `ENCARGADO` o `SUPERADMIN` lo marcó a mano desde `CONVERTED`. |
+
+**Reglas del estado comercial de la conversación** (especificación 09, secciones 4.2 y D25):
+
+1. Es una etiqueta de **solo lectura derivada** de la cotización vinculada a la conversación (`conversation_links.quote_id`); no es un ciclo de vida propio ni un *pipeline*. Sus etiquetas no reutilizan las de la cotización («Cotizado», «Convertida», ...), que describen a la cotización.
+2. `EVENT_DONE` se alcanza de dos formas: se calcula cuando el evento de la cotización está `SETTLED`, o un `ENCARGADO` o `SUPERADMIN` lo marca a mano, solo desde `CONVERTED` y sin necesidad de haber tomado la conversación. La marca es solo un cambio de estado: no modifica el modo, la asignación ni el `status` de la conversación.
+3. Las conversaciones nunca se cierran: un cliente que vuelve a escribir sigue en el mismo chat.
+4. Cuando el cliente escribe de nuevo estando en `EVENT_DONE`, el ciclo se reinicia a `QUOTING`: se desvincula la cotización de la conversación (sin borrarla ni alterar sus eventos) y la cotización nueva que cree el bot se vincula como siempre.

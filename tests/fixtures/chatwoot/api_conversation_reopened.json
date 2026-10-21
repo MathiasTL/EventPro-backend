@@ -1,0 +1,131 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "meta": {
+      "sender": {
+        "additional_attributes": {
+          "social_profiles": {
+            "whatsapp": "cliente.prueba"
+          },
+          "social_whatsapp_user_name": "cliente.prueba"
+        },
+        "availability_status": "offline",
+        "email": null,
+        "id": 1,
+        "name": "Cliente Prueba",
+        "phone_number": "+51999111222",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "last_activity_at": 1792552409,
+        "created_at": 1791657993
+      },
+      "channel": "Channel::Whatsapp",
+      "hmac_verified": false
+    },
+    "id": 1,
+    "messages": [
+      {
+        "id": 46,
+        "content": "Recibí el archivo. ¿Qué te gustaría cotizar para tu evento?",
+        "account_id": 2,
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "created_at": 1792552415,
+        "updated_at": "2026-10-21T03:13:38.536Z",
+        "private": false,
+        "status": "delivered",
+        "source_id": "wamid.FAKE0008",
+        "content_type": "text",
+        "content_attributes": {},
+        "sender_type": "AgentBot",
+        "sender_id": 1,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Recibí el archivo. ¿Qué te gustaría cotizar para tu evento?",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 2,
+          "last_activity_at": 1792552415,
+          "contact_inbox": {
+            "source_id": "51999111222"
+          }
+        },
+        "sender": {
+          "id": 1,
+          "name": "EventPro Bot",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      }
+    ],
+    "account_id": 2,
+    "uuid": "00000000-0000-4000-8000-000000000001",
+    "additional_attributes": {},
+    "agent_last_seen_at": 1792551867,
+    "assignee_last_seen_at": 0,
+    "can_reply": true,
+    "contact_info_request": {
+      "available": false,
+      "reason": null,
+      "delivery_mode": null
+    },
+    "contact_last_seen_at": 0,
+    "custom_attributes": {},
+    "inbox_id": 1,
+    "labels": [],
+    "muted": false,
+    "snoozed_until": null,
+    "status": "pending",
+    "created_at": 1791657993,
+    "updated_at": 1792552415.80714,
+    "timestamp": 1792552415,
+    "first_reply_created_at": 1791658147,
+    "unread_count": 2,
+    "last_non_activity_message": {
+      "id": 46,
+      "content": "Recibí el archivo. ¿Qué te gustaría cotizar para tu evento?",
+      "account_id": 2,
+      "inbox_id": 1,
+      "conversation_id": 1,
+      "message_type": 1,
+      "created_at": 1792552415,
+      "updated_at": "2026-10-21T03:13:38.536Z",
+      "private": false,
+      "status": "delivered",
+      "source_id": "wamid.FAKE0008",
+      "content_type": "text",
+      "content_attributes": {},
+      "sender_type": "AgentBot",
+      "sender_id": 1,
+      "external_source_ids": {},
+      "additional_attributes": {},
+      "processed_message_content": "Recibí el archivo. ¿Qué te gustaría cotizar para tu evento?",
+      "sentiment": {},
+      "conversation": {
+        "assignee_id": null,
+        "unread_count": 2,
+        "last_activity_at": 1792552415,
+        "contact_inbox": {
+          "source_id": "51999111222"
+        }
+      },
+      "sender": {
+        "id": 1,
+        "name": "EventPro Bot",
+        "avatar_url": "",
+        "type": "agent_bot"
+      }
+    },
+    "last_activity_at": 1792552415,
+    "priority": null,
+    "waiting_since": 0,
+    "sla_policy_id": null
+  }
+}

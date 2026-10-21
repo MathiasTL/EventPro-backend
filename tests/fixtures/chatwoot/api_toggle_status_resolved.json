@@ -1,0 +1,14 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "payload": {
+      "success": true,
+      "conversation_id": 1,
+      "current_status": "resolved",
+      "snoozed_until": null
+    }
+  }
+}

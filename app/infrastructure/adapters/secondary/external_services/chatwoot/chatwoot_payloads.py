@@ -2,25 +2,29 @@
 
 Todos los nombres de campo de Chatwoot son constantes de este módulo. Las formas de las respuestas
 y de los webhooks están contrastadas con capturas reales de Chatwoot v4.18.0 (ver
-`tests/fixtures/chatwoot/README.md`); la excepción son los adjuntos, que no se capturaron.
+`tests/fixtures/chatwoot/README.md`); los adjuntos se capturaron el 2026-10-20.
 Las funciones son puras; los fallos de forma se informan como `MessagingUnavailableError` con un
 texto fijo que nombra la clave ausente y nunca el contenido recibido.
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from app.application.dtos.gateway_event_dto import ConversationSnapshot, MessageDetails
 from app.application.dtos.messaging_dto import (
+    ConversationLifecycle,
     ConversationMessage,
     ConversationStatus,
     ConversationSummary,
     ListSection,
+    MessageAttachment,
     MessageDirection,
     MessageReceipt,
+    MessageSender,
 )
 from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
 from app.domain.exceptions.resource_exceptions import ValidationError
@@ -48,6 +52,13 @@ MESSAGES_KEY = "messages"
 META_KEY = "meta"
 SENDER_KEY = "sender"
 LAST_ACTIVITY_AT_KEY = "last_activity_at"
+UNREAD_COUNT_KEY = "unread_count"
+LAST_NON_ACTIVITY_KEY = "last_non_activity_message"
+ASSIGNEE_KEY = "assignee"
+TYPE_KEY = "type"
+FILE_TYPE_KEY = "file_type"
+EXTENSION_KEY = "extension"
+FILE_SIZE_KEY = "file_size"
 # Webhooks: nombre del evento, hora de actualización (del mensaje incrustado), conversación y
 # motivo de un envío fallido.
 EVENT_KEY = "event"
@@ -87,12 +98,28 @@ TEMPLATE_PLACEHOLDER = "[plantilla:{name}]"
 # --- Valores que Chatwoot devuelve --------------------------------------------------------
 STATUS_PENDING = "pending"
 STATUS_OPEN = "open"
+STATUS_RESOLVED = "resolved"
 STATUS_ALL = "all"
 _DIRECTIONS: Mapping[int | str, MessageDirection] = {
     0: MessageDirection.INCOMING,
     "incoming": MessageDirection.INCOMING,
     1: MessageDirection.OUTGOING,
     "outgoing": MessageDirection.OUTGOING,
+}
+_LISTED_DIRECTIONS: Mapping[int | str, MessageDirection] = {
+    **_DIRECTIONS,
+    2: MessageDirection.ACTIVITY,
+    "activity": MessageDirection.ACTIVITY,
+}
+_SENDERS: Mapping[str, MessageSender] = {
+    "contact": MessageSender.CONTACT,
+    "user": MessageSender.USER,
+    "agent_bot": MessageSender.AGENT_BOT,
+}
+_LIFECYCLES: Mapping[str, ConversationLifecycle] = {
+    STATUS_PENDING: ConversationLifecycle.PENDING,
+    STATUS_OPEN: ConversationLifecycle.OPEN,
+    STATUS_RESOLVED: ConversationLifecycle.RESOLVED,
 }
 _CONVERSATION_STATUSES: Mapping[str, ConversationStatus] = {
     STATUS_PENDING: ConversationStatus.BOT,
@@ -109,6 +136,8 @@ _DELIVERY_STATUSES: Mapping[str, DeliveryStatus] = {
 }
 
 _MICROSECONDS_PER_SECOND = 1_000_000
+PREVIEW_MAX_CHARS = 120
+ATTACHMENT_PREVIEW = "[Adjunto]"
 _NON_DIGITS = re.compile(r"\D")
 
 
@@ -187,6 +216,15 @@ def decode_direction(message_type: Any) -> MessageDirection | None:
         return None
 
 
+def decode_listed_direction(message_type: Any) -> MessageDirection | None:
+    """Como `decode_direction`, pero la actividad (`2`) es un mensaje del sistema, no `None`."""
+
+    try:
+        return _LISTED_DIRECTIONS.get(message_type)
+    except TypeError:
+        return None
+
+
 # --- Contactos ----------------------------------------------------------------------------
 
 
@@ -246,13 +284,19 @@ def build_status_request(status: ConversationStatus) -> dict[str, str]:
 
 
 def build_conversation_list_params(
-    inbox_id: int, status: ConversationStatus | None, page: int
+    inbox_id: int, status: ConversationStatus | None, page: int, *, include_resolved: bool = False
 ) -> dict[str, str | int]:
-    """Parámetros del listado; sin filtro se piden todas y se descartan resueltas y pospuestas."""
+    """Parámetros del listado.
+
+    Sin filtro, o con resueltas incluidas (cuentan como ``BOT``), se piden todas y el filtro se
+    aplica al leer; las pospuestas siempre se descartan.
+    """
 
     return {
         INBOX_ID_KEY: inbox_id,
-        STATUS_KEY: STATUS_ALL if status is None else _CHATWOOT_STATUSES[status],
+        STATUS_KEY: (
+            STATUS_ALL if status is None or include_resolved else _CHATWOOT_STATUSES[status]
+        ),
         PAGE_PARAM: page,
         SORT_BY_PARAM: SORT_LAST_ACTIVITY_DESC,
     }
@@ -262,26 +306,64 @@ def conversation_items(list_body: Any) -> Sequence[Mapping[str, Any]]:
     return _require_list(_require(list_body, DATA_KEY), PAYLOAD_KEY)
 
 
-def parse_conversation_summary(item: Mapping[str, Any]) -> ConversationSummary | None:
-    """Resumen de una conversación, o `None` si no es pendiente/abierta o no tiene teléfono."""
+def parse_conversation_summary(
+    item: Mapping[str, Any], *, include_resolved: bool = False
+) -> ConversationSummary | None:
+    """Resumen de una conversación, o `None` si no es listable o no tiene teléfono.
 
-    status = _CONVERSATION_STATUSES.get(str(item.get(STATUS_KEY)))
+    Son listables las pendientes y abiertas, y las resueltas solo con `include_resolved`.
+    """
+
+    lifecycle = _LIFECYCLES.get(str(item.get(STATUS_KEY)))
     phone = _sender_phone(item)
-    if status is None or phone is None:
+    if lifecycle is None or phone is None:
         return None
+    if lifecycle is ConversationLifecycle.RESOLVED and not include_resolved:
+        return None
+    last = item.get(LAST_NON_ACTIVITY_KEY)
+    unread = item.get(UNREAD_COUNT_KEY)
     return ConversationSummary(
         conversation_id=_require_int(item, ID_KEY),
         phone=phone,
-        status=status,
+        status=(
+            ConversationStatus.HUMAN
+            if lifecycle is ConversationLifecycle.OPEN
+            else ConversationStatus.BOT
+        ),
         service_window_open=item.get(CAN_REPLY_KEY) is True,
         last_message_at=_last_message_at(item),
+        lifecycle=lifecycle,
+        contact_name=_meta_name(item, SENDER_KEY),
+        unread_count=unread if isinstance(unread, int) and not isinstance(unread, bool) else 0,
+        last_message_preview=_preview(last) if isinstance(last, Mapping) else None,
+        assignee_name=_meta_name(item, ASSIGNEE_KEY),
     )
 
 
-def has_listable_status(item: Mapping[str, Any]) -> bool:
-    """Indica si la conversación está pendiente o abierta (las únicas que se listan)."""
+def has_listable_status(item: Mapping[str, Any], *, include_resolved: bool = False) -> bool:
+    """Indica si la conversación se lista: pendiente o abierta, y resuelta si se pide."""
 
-    return str(item.get(STATUS_KEY)) in _CONVERSATION_STATUSES
+    lifecycle = _LIFECYCLES.get(str(item.get(STATUS_KEY)))
+    if lifecycle is None:
+        return False
+    return include_resolved or lifecycle is not ConversationLifecycle.RESOLVED
+
+
+def _meta_name(item: Mapping[str, Any], key: str) -> str | None:
+    meta = item.get(META_KEY)
+    person = meta.get(key) if isinstance(meta, Mapping) else None
+    name = person.get(NAME_KEY) if isinstance(person, Mapping) else None
+    return name if isinstance(name, str) and name else None
+
+
+def _preview(message: Mapping[str, Any]) -> str | None:
+    """Vista previa del último mensaje que no es actividad: texto o «[Adjunto]»."""
+
+    content = message.get(CONTENT_KEY)
+    if isinstance(content, str) and content.strip():
+        return content.strip()[:PREVIEW_MAX_CHARS]
+    attachments = message.get(ATTACHMENTS_KEY)
+    return ATTACHMENT_PREVIEW if isinstance(attachments, list) and attachments else None
 
 
 def conversation_status_of(status: Any) -> ConversationStatus | None:
@@ -311,6 +393,45 @@ def incoming_sender_phone(body: Mapping[str, Any]) -> PhoneNumber | None:
     return None
 
 
+def conversation_snapshot(body: Mapping[str, Any]) -> ConversationSnapshot | None:
+    """Estado de la conversación incrustado en un webhook de mensaje, o `None` si no se lee.
+
+    El teléfono y el nombre son los del contacto (`conversation.meta.sender`); `sender` del
+    mensaje saliente es el agente y no sirve.
+    """
+
+    conversation = body.get(CONVERSATION_KEY)
+    if not isinstance(conversation, Mapping):
+        return None
+    lifecycle = _LIFECYCLES.get(str(conversation.get(STATUS_KEY)))
+    if lifecycle is None:
+        return None
+    unread = conversation.get(UNREAD_COUNT_KEY)
+    return ConversationSnapshot(
+        lifecycle=lifecycle,
+        unread_count=unread if isinstance(unread, int) and not isinstance(unread, bool) else 0,
+        can_reply=conversation.get(CAN_REPLY_KEY) is True,
+        contact_phone=_sender_phone(conversation),
+        contact_name=_meta_name(conversation, SENDER_KEY),
+    )
+
+
+def message_details(body: Mapping[str, Any]) -> MessageDetails:
+    """Hora, remitente, adjuntos y estado de un webhook de mensaje (`message_created`)."""
+
+    sender = body.get(SENDER_KEY)
+    sender_type = sender.get(TYPE_KEY) if isinstance(sender, Mapping) else None
+    embedded = embedded_message(body) or {}
+    return MessageDetails(
+        sent_at=event_time(body.get(CREATED_AT_KEY)),
+        sender=_SENDERS.get(sender_type) if isinstance(sender_type, str) else None,
+        sender_name=_text(sender.get(NAME_KEY)) if isinstance(sender, Mapping) else None,
+        attachments=tuple(attachments_of(body)),
+        delivery_status=delivery_status_from(embedded.get(STATUS_KEY)),
+        error=external_error(body) or external_error(embedded),
+    )
+
+
 def _sender_phone(item: Mapping[str, Any]) -> PhoneNumber | None:
     meta = item.get(META_KEY)
     sender = meta.get(SENDER_KEY) if isinstance(meta, Mapping) else None
@@ -324,6 +445,11 @@ def _sender_phone(item: Mapping[str, Any]) -> PhoneNumber | None:
 
 
 def _last_message_at(item: Mapping[str, Any]) -> datetime | None:
+    """Hora del último mensaje que no es actividad; el aviso de reapertura no la mueve."""
+
+    last = item.get(LAST_NON_ACTIVITY_KEY)
+    if isinstance(last, Mapping):
+        return instant(_require(last, CREATED_AT_KEY), _require_int(last, ID_KEY))
     messages = item.get(MESSAGES_KEY)
     if isinstance(messages, list) and messages:
         last = messages[-1]
@@ -429,13 +555,22 @@ def oldest_message_id(items: Sequence[Mapping[str, Any]]) -> int:
 
 
 def parse_conversation_message(item: Mapping[str, Any]) -> ConversationMessage | None:
-    """Mensaje entrante o saliente; `None` para actividad, plantillas y notas privadas."""
+    """Mensaje, aviso de actividad incluido; `None` para plantillas y notas privadas.
 
-    direction = decode_direction(item.get(MESSAGE_TYPE_KEY))
+    El remitente es el tipo crudo de Chatwoot: la autoría real (bot o encargado) la resuelve el
+    *outbox* (D3). Un aviso de actividad nunca trae remitente.
+    """
+
+    direction = decode_listed_direction(item.get(MESSAGE_TYPE_KEY))
     if direction is None or item.get(PRIVATE_KEY) is True:
         return None
     message_id = _require_int(item, ID_KEY)
     content = item.get(CONTENT_KEY)
+    sender = None if direction is MessageDirection.ACTIVITY else item.get(SENDER_KEY)
+    sender_type = sender.get(TYPE_KEY) if isinstance(sender, Mapping) else None
+    sender_name = sender.get(NAME_KEY) if isinstance(sender, Mapping) else None
+    status = item.get(STATUS_KEY)
+    content_type = item.get(CONTENT_TYPE_KEY)
     return ConversationMessage(
         message_id=str(message_id),
         conversation_id=_require_int(item, CONVERSATION_ID_KEY),
@@ -443,7 +578,73 @@ def parse_conversation_message(item: Mapping[str, Any]) -> ConversationMessage |
         body=content if isinstance(content, str) else None,
         sent_at=instant(_require(item, CREATED_AT_KEY), message_id),
         attachment_filename=_attachment_filename(item),
+        sender=_SENDERS.get(sender_type) if isinstance(sender_type, str) else None,
+        sender_name=sender_name if isinstance(sender_name, str) and sender_name else None,
+        status=status if isinstance(status, str) else None,
+        external_error=external_error(item),
+        content_type=content_type if isinstance(content_type, str) else None,
+        attachments=tuple(attachments_of(item)),
     )
+
+
+def attachments_of(item: Mapping[str, Any]) -> Iterator[MessageAttachment]:
+    """Adjuntos de un mensaje; se omiten las entradas sin `id` entero."""
+
+    for _, attachment in _raw_attachments(item):
+        yield attachment
+
+
+def find_attachment(
+    items: Sequence[Mapping[str, Any]], attachment_id: int
+) -> tuple[MessageAttachment, str] | None:
+    """Adjunto y URL pública (`data_url`) con ese id entre mensajes públicos, si está."""
+
+    for item in items:
+        if item.get(PRIVATE_KEY) is True:
+            continue
+        for url, attachment in _raw_attachments(item):
+            if attachment.attachment_id == attachment_id and url is not None:
+                return attachment, url
+    return None
+
+
+def _raw_attachments(item: Mapping[str, Any]) -> Iterator[tuple[str | None, MessageAttachment]]:
+    entries = item.get(ATTACHMENTS_KEY)
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        attachment_id = entry.get(ID_KEY)
+        if isinstance(attachment_id, bool) or not isinstance(attachment_id, int):
+            continue
+        url = entry.get(DATA_URL_KEY)
+        url = url if isinstance(url, str) else None
+        yield (
+            url,
+            MessageAttachment(
+                attachment_id=attachment_id,
+                file_type=_text(entry.get(FILE_TYPE_KEY)) or "file",
+                content_type=_text(entry.get(CONTENT_TYPE_KEY)),
+                extension=_text(entry.get(EXTENSION_KEY)),
+                file_size=_whole(entry.get(FILE_SIZE_KEY)),
+                filename=_filename_of(url),
+            ),
+        )
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _whole(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _filename_of(url: str | None) -> str | None:
+    if url is None:
+        return None
+    return unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or None
 
 
 def _attachment_filename(item: Mapping[str, Any]) -> str | None:
@@ -451,9 +652,7 @@ def _attachment_filename(item: Mapping[str, Any]) -> str | None:
     if not isinstance(attachments, list) or not attachments:
         return None
     url = attachments[0].get(DATA_URL_KEY) if isinstance(attachments[0], Mapping) else None
-    if not isinstance(url, str):
-        return None
-    return unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or None
+    return _filename_of(url if isinstance(url, str) else None)
 
 
 # --- Webhooks y estado de entrega ---------------------------------------------------------

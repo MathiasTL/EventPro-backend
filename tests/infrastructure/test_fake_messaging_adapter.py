@@ -9,6 +9,7 @@ from app.domain.exceptions.messaging_exceptions import (
     MessagingUnavailableError,
     ServiceWindowClosedError,
 )
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
     FakeMessagingAdapter,
     SentMessageKind,
@@ -33,6 +34,24 @@ class TestFakeMessagingAdapter(MessagingPortContract):
     def make_unavailable(self, adapter: IMessagingPort) -> None:
         assert isinstance(adapter, FakeMessagingAdapter)
         adapter.unavailable = True
+
+    def receive_text(self, adapter: IMessagingPort, sender: PhoneNumber, body: str) -> None:
+        assert isinstance(adapter, FakeMessagingAdapter)
+        adapter.receive_text(sender, body)
+
+    def receive_attachment(
+        self, adapter: IMessagingPort, sender: PhoneNumber, data: bytes, name: str, kind: str
+    ) -> None:
+        assert isinstance(adapter, FakeMessagingAdapter)
+        adapter.receive_attachment(sender, data, name, kind)
+
+    def add_activity(self, adapter: IMessagingPort, conversation_id: int, text: str) -> None:
+        assert isinstance(adapter, FakeMessagingAdapter)
+        adapter.add_activity(conversation_id, text)
+
+    def resolve(self, adapter: IMessagingPort, conversation_id: int) -> None:
+        assert isinstance(adapter, FakeMessagingAdapter)
+        adapter.resolve_conversation(conversation_id)
 
 
 async def test_sent_log_records_each_kind_for_assertions() -> None:

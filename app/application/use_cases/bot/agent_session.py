@@ -37,6 +37,8 @@ def trim_history(
 class AgentSession:
     history: list[LlmMessage] = field(default_factory=list)
     quote_id: str | None = None
+    # Paquete, temática, fecha y distrito de la cotización: datos para el resumen de derivación.
+    quote_details: str | None = None
     payment_started: bool = False
     # Último mensaje ya procesado: un reintento del trabajo no responde dos veces.
     last_message_id: str | None = None
@@ -46,6 +48,7 @@ class AgentSession:
             ENGINE_KEY: AGENT_ENGINE,
             "history": [message.to_dict() for message in self.history],
             "quote_id": self.quote_id,
+            "quote_details": self.quote_details,
             "payment_started": self.payment_started,
             "last_message_id": self.last_message_id,
         }
@@ -60,6 +63,7 @@ class AgentSession:
             return cls(
                 history=[LlmMessage.from_dict(item) for item in data.get("history", [])],
                 quote_id=data.get("quote_id"),
+                quote_details=data.get("quote_details"),
                 payment_started=bool(data.get("payment_started", False)),
                 last_message_id=data.get("last_message_id"),
             )

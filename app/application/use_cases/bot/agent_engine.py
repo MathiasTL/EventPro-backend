@@ -36,6 +36,7 @@ from app.application.ports.output.language_model_port import ILanguageModelPort,
 from app.application.use_cases.bot import agent_prompt as prompts
 from app.application.use_cases.bot import bot_messages as texts
 from app.application.use_cases.bot.agent_session import AgentSession, trim_history
+from app.application.use_cases.bot.bot_handoff import link_created_quote, quote_details
 from app.application.use_cases.bot.bot_session import BotSession, MenuOption
 from app.core.logging import get_logger
 from app.domain.entities.quote import QuoteSource, QuoteStatus
@@ -279,6 +280,7 @@ class ConversationAgent:
                         source=QuoteSource.WHATSAPP,
                     )
                 )
+                await link_created_quote(tx, message.conversation_id, quote, self._clock.utcnow())
                 await _enqueue(tx, message, texts.quote_summary(summary_session, quote))
         except AvailabilityRejectedError as error:
             return _ToolOutcome(
@@ -301,6 +303,7 @@ class ConversationAgent:
         except ValidationError as error:
             return _ToolOutcome({"ok": False, "error": "validation", "message": str(error)})
         session.quote_id = str(quote.quote_id)
+        session.quote_details = quote_details(summary_session)
         session.payment_started = False
         return _ToolOutcome(
             {

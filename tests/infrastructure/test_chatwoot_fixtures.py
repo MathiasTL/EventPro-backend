@@ -12,13 +12,23 @@ from tests.chatwoot_fixture_support import (
     scrub_violations,
 )
 
-EXPECTED_FIXTURES = [
+# Capturas reales saneadas del 2026-10-19 (primeras 12) y del 2026-10-20 (bandeja de E1).
+CAPTURED_API_FIXTURES = [
     "api_contact_created",
     "api_contact_search",
     "api_conversation_created",
     "api_conversation_list",
+    "api_conversation_reopened",
+    "api_inbox_conversation_list",
+    "api_inbox_message_list",
     "api_message_created",
+    "api_message_created_by_agent",
     "api_message_list",
+    "api_message_list_window_failed",
+    "api_toggle_status_resolved",
+    "api_update_last_seen",
+]
+CAPTURED_WEBHOOK_FIXTURES = [
     "message_created_incoming",
     "message_created_outgoing",
     "message_updated_delivered",
@@ -26,6 +36,25 @@ EXPECTED_FIXTURES = [
     "message_updated_read",
     "message_updated_sent",
 ]
+# Construidos a mano desde la referencia de Meta: `provisional` es `true`.
+CONSTRUCTED_FIXTURES = ["message_updated_failed_131026"]
+CAPTURED_FIXTURES = [*CAPTURED_API_FIXTURES, *CAPTURED_WEBHOOK_FIXTURES]
+EXPECTED_FIXTURES = sorted([*CAPTURED_FIXTURES, *CONSTRUCTED_FIXTURES])
+# Valores inventados que pueden aparecer en nombres, usuarios de WhatsApp y correos.
+FAKE_PEOPLE = {
+    "Agente Demo",
+    "Bandeja WhatsApp Demo",
+    "Cliente Demo",
+    "Cliente Prueba",
+    "Cuenta Demo",
+    "Encargado Prueba",
+    "EventPro Bot",
+    "cliente.demo",
+    "cliente.prueba",
+    "hello_world",
+}
+FAKE_PHONES = {"+51999111222", "+51999333444", "51999111222", "51999333444"}
+_PEOPLE_KEYS = {"name", "available_name", "social_whatsapp_user_name", "whatsapp"}
 
 _SAFE = {
     "provisional": True,
@@ -54,11 +83,57 @@ def test_fixture_is_scrubbed_and_has_the_expected_envelope(name: str) -> None:
     document = load_fixture(name)
 
     assert set(document) == {"provisional", "headers", "body"}
-    assert document["provisional"] is False
+    assert document["provisional"] is (name in CONSTRUCTED_FIXTURES)
     assert scrub_violations(document) == []
 
 
-@pytest.mark.parametrize("name", EXPECTED_FIXTURES[6:])
+def _values(node: Any, keys: set[str]) -> list[Any]:
+    """Valores de todas las claves `keys` en cualquier nivel del documento."""
+
+    found: list[Any] = []
+    if isinstance(node, dict):
+        for key, child in node.items():
+            if key in keys:
+                found.append(child)
+            found.extend(_values(child, keys))
+    elif isinstance(node, list):
+        for child in node:
+            found.extend(_values(child, keys))
+    return found
+
+
+@pytest.mark.parametrize("name", EXPECTED_FIXTURES)
+def test_fixture_carries_only_invented_people_phones_and_emails(name: str) -> None:
+    body = load_fixture(name)["body"]
+
+    people = {value for value in _values(body, _PEOPLE_KEYS) if isinstance(value, str)}
+    phones = {value for value in _values(body, {"phone_number"}) if isinstance(value, str)}
+    assert people - FAKE_PEOPLE - FAKE_PHONES == set()
+    assert phones - FAKE_PHONES == set()
+    assert all(value is None for value in _values(body, {"email"}))
+
+
+@pytest.mark.parametrize("name", CAPTURED_API_FIXTURES)
+def test_attachment_urls_use_the_fake_public_host_and_token(name: str) -> None:
+    urls = [
+        value
+        for value in _values(load_fixture(name)["body"], {"data_url", "thumb_url"})
+        if isinstance(value, str)
+    ]
+
+    assert all(url.startswith("https://chat.example.test/rails/active_storage/") for url in urls)
+    assert all("FAKETOKEN" in url for url in urls)
+
+
+def test_the_constructed_meta_failure_fixture_keeps_the_captured_error_format() -> None:
+    captured = load_fixture("message_updated_failed")["body"]["content_attributes"]
+    constructed = load_fixture("message_updated_failed_131026")["body"]["content_attributes"]
+
+    assert captured["external_error"].startswith("(#131030) ")
+    assert constructed["external_error"].startswith("(#131026) ")
+
+
+@pytest.mark.parametrize("name", CAPTURED_WEBHOOK_FIXTURES + CONSTRUCTED_FIXTURES)
 def test_webhook_fixtures_never_carry_a_real_signature(name: str) -> None:
     headers = {key.lower(): value for key, value in load_fixture(name)["headers"].items()}
 
