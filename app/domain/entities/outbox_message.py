@@ -126,6 +126,8 @@ class OutboxMessage:
     delivery_error: str | None = None
     delivered_at: datetime | None = None
     read_at: datetime | None = None
+    author_user_id: UUID | None = None
+    retried_external_message_id: str | None = None
     id: UUID = field(default_factory=uuid4)
 
     @classmethod
@@ -138,8 +140,12 @@ class OutboxMessage:
         now: datetime,
         redact_after_send: bool = False,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        author_user_id: UUID | None = None,
     ) -> Self:
-        """Nace ``PENDING`` con ``attempts = 0`` y listo para despacharse en ``now``."""
+        """Nace ``PENDING`` con ``attempts = 0`` y listo para despacharse en ``now``.
+
+        ``author_user_id`` es el encargado que lo envió; los mensajes del bot no tienen autor.
+        """
 
         moment = _require_aware(now, "now")
         if not isinstance(recipient, PhoneNumber):
@@ -152,6 +158,7 @@ class OutboxMessage:
             payload=validate_payload(message_type, payload),
             redact_after_send=redact_after_send,
             max_attempts=max_attempts,
+            author_user_id=author_user_id,
             next_attempt_at=moment,
             created_at=moment,
         )

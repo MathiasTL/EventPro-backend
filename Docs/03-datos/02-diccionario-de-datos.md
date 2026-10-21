@@ -398,10 +398,13 @@ Cola de mensajes salientes con reintentos (patrón *outbox*). Desacopla las tran
 | `delivered_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que WhatsApp entregó el mensaje. |
 | `read_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Momento en que el cliente leyó el mensaje. |
 | `redact_after_send` | `BOOLEAN` | NO | `false` | - | Si es verdadero, el `payload` se anula al marcar el mensaje como `SENT`. |
+| `author_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que envió el mensaje desde la bandeja de conversaciones; nulo en los mensajes del bot. |
+| `retried_external_message_id` | `TEXT` | SÍ | `NULL` | INDEX | Identificador de Chatwoot anterior de un mensaje reintentado; permite conservar la autoría del mensaje fallido que sigue en el hilo. |
 
 *Restricciones de tabla:*
 * `INDEX(status, next_attempt_at)` para el despachador de mensajes pendientes.
 * `UNIQUE(external_message_id)`: un aviso de entrega corresponde a un único mensaje; admite varios valores nulos.
+* `INDEX(author_user_id)` y `INDEX(retried_external_message_id)` para resolver la autoría de los mensajes de un hilo.
 
 ---
 
@@ -447,12 +450,16 @@ Vínculo entre una conversación de Chatwoot y los datos de negocio de EventPro 
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del vínculo. |
 | `chatwoot_conversation_id` | `BIGINT` | NO | - | UNIQUE | Identificador de la conversación en Chatwoot. |
-| `client_id` | `UUID` | NO | - | FK (`clients.id`), INDEX | Cliente de la conversación (el teléfono de WhatsApp es su clave natural). |
+| `client_id` | `UUID` | SÍ | `NULL` | FK (`clients.id`), INDEX | Cliente de la conversación (el teléfono de WhatsApp es su clave natural); nulo mientras el contacto no corresponde a un cliente registrado, porque el vínculo no crea clientes. |
 | `quote_id` | `UUID` | SÍ | `NULL` | FK (`quotes.id`), INDEX | Cotización vigente de la conversación, si existe. |
 | `assigned_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX parcial | Encargado que tomó la conversación; nulo mientras responde el bot o si está derivada sin asignar. |
 | `handoff_reason` | `VARCHAR(30)` | SÍ | `NULL` | CHECK in (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`) | Motivo de la última derivación a un humano; nulo si nunca fue derivada. UI: «Solicitud del cliente», «Bot no entendió», «Toma manual», «Error del bot». |
 | `handoff_summary` | `TEXT` | SÍ | `NULL` | - | Resumen generado al derivar (datos capturados y cotización vigente). |
 | `handed_off_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora de la última derivación; permite ordenar la bandeja. |
+| `last_client_message_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora del último mensaje entrante del cliente; la ventana de servicio de WhatsApp vence 24 horas después. |
+| `event_done_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora en que un encargado marcó el evento como realizado; nulo si no hay marca manual. |
+| `event_done_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Usuario que registró la marca de evento realizado. |
+| `lead_cycle_started_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Inicio del ciclo comercial vigente; se reinicia cuando el cliente vuelve a escribir tras un evento realizado. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de creación del vínculo. |
 | `updated_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de la última modificación del vínculo. |
 

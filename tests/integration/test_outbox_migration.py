@@ -89,6 +89,9 @@ def test_revision_chain_is_linear_from_0003() -> None:
     financial_revision = script.get_revision("0005_event_financial_snapshots")
     assert financial_revision is not None
     assert financial_revision.down_revision == revision.revision
+    inbox_revision = script.get_revision("0007_inbox_support")
+    assert inbox_revision is not None
+    assert inbox_revision.down_revision == "0006_quote_observations"
 
 
 def test_upgrade_adds_columns_and_default_and_downgrade_restores_them(database_url: str) -> None:
@@ -175,3 +178,79 @@ def test_new_constraints_reject_duplicates_and_unknown_delivery_status(database_
         )
 
     _run(database_url, unknown_delivery_status)
+
+
+_INBOX_LINK_COLUMNS = {
+    "last_client_message_at",
+    "event_done_at",
+    "event_done_by_user_id",
+    "lead_cycle_started_at",
+}
+_INBOX_OUTBOX_COLUMNS = {"author_user_id", "retried_external_message_id"}
+
+
+async def _table_columns(connection, table: str) -> dict[str, bool]:  # type: ignore[no-untyped-def]
+    rows = await connection.execute(
+        text(
+            "SELECT column_name, is_nullable = 'YES' FROM information_schema.columns "
+            "WHERE table_name = :table"
+        ),
+        {"table": table},
+    )
+    return {name: nullable for name, nullable in rows}
+
+
+def test_inbox_support_upgrade_and_downgrade(database_url: str) -> None:
+    config = _config(database_url)
+    command.upgrade(config, "head")  # el contenedor del módulo se comparte entre pruebas
+    command.downgrade(config, "0006_quote_observations")
+
+    async def before(connection) -> None:  # type: ignore[no-untyped-def]
+        links = await _table_columns(connection, "conversation_links")
+        assert not _INBOX_LINK_COLUMNS & links.keys()
+        assert links["client_id"] is False
+        assert (
+            not _INBOX_OUTBOX_COLUMNS & (await _table_columns(connection, "outbox_messages")).keys()
+        )
+
+    _run(database_url, before)
+    command.upgrade(config, "0007_inbox_support")
+
+    async def after_upgrade(connection) -> None:  # type: ignore[no-untyped-def]
+        links = await _table_columns(connection, "conversation_links")
+        assert links.keys() >= _INBOX_LINK_COLUMNS
+        assert links["client_id"] is True
+        assert (await _table_columns(connection, "outbox_messages")).keys() >= _INBOX_OUTBOX_COLUMNS
+        await connection.execute(
+            text("INSERT INTO conversation_links (chatwoot_conversation_id) VALUES (900)")
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO clients (id, phone, full_name) "
+                "VALUES ('00000000-0000-0000-0000-0000000000c1', '+51999000901', 'Ana')"
+            )
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO conversation_links (chatwoot_conversation_id, client_id) "
+                "VALUES (901, '00000000-0000-0000-0000-0000000000c1')"
+            )
+        )
+
+    _run(database_url, after_upgrade)
+    command.downgrade(config, "0006_quote_observations")
+
+    async def after_downgrade(connection) -> None:  # type: ignore[no-untyped-def]
+        links = await _table_columns(connection, "conversation_links")
+        assert not _INBOX_LINK_COLUMNS & links.keys()
+        assert links["client_id"] is False
+        assert (
+            not _INBOX_OUTBOX_COLUMNS & (await _table_columns(connection, "outbox_messages")).keys()
+        )
+        remaining = await connection.scalar(
+            text("SELECT array_agg(chatwoot_conversation_id) FROM conversation_links")
+        )
+        assert remaining == [901]  # el vínculo sin cliente no es representable y se elimina
+
+    _run(database_url, after_downgrade)
+    command.upgrade(config, "head")

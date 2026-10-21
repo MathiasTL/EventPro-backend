@@ -1,4 +1,5 @@
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 
@@ -53,3 +54,22 @@ async def test_enqueue_rejects_an_incoherent_payload_and_stores_nothing() -> Non
             recipient=PHONE, message_type=MessageType.TEXT, payload={"name": "x"}
         )
     assert store.messages == {}
+
+
+async def test_enqueue_records_the_author_and_defaults_to_no_author() -> None:
+    store = InMemoryOutboxStore()
+    use_case = EnqueueMessage(store.repository(), FixedClock())
+    author = uuid4()
+
+    authored = await use_case.execute(
+        recipient=PHONE,
+        message_type=MessageType.TEXT,
+        payload=TEXT_PAYLOAD,
+        author_user_id=author,
+    )
+    bot = await use_case.execute(
+        recipient=PHONE, message_type=MessageType.TEXT, payload=TEXT_PAYLOAD
+    )
+
+    assert store.messages[authored.id].author_user_id == author
+    assert store.messages[bot.id].author_user_id is None
