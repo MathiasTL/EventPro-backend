@@ -133,7 +133,7 @@ Etiqueta de solo lectura en la fila y en la cabecera del hilo. No se escribe, no
 | Saliente sin fila y sin `sender` | Regla de respaldo | `BOT` |
 
 * La regla de respaldo es `BOT` porque un humano solo escribe por EventPro y eso siempre deja fila de *outbox*.
-* **A verificar con capturas reales:** el `sender.type` del Agent Bot (`agent_bot` según el código de Chatwoot) no está en las fixtures; las capturas actuales solo muestran `user` (`tests/fixtures/chatwoot/message_created_outgoing.json`, `api_message_list.json`). Es la tarea B2 del plan.
+* **Verificado el 2026-10-20 (B2):** en la API, un mensaje del Agent Bot trae `message_type: 1` y `sender.type: "agent_bot"` (`sender.name: "EventPro Bot"`); el del cliente, `message_type: 0` y `sender.type: "contact"`; un aviso de actividad (reapertura, cambio de estado), `message_type: 2` y **sin** `sender`. El adaptador expone el tipo crudo (`MessageSender`: `CONTACT`, `USER`, `AGENT_BOT` o `None`) y marca la actividad como `MessageDirection.ACTIVITY`: nunca es `BOT`, y la interfaz la muestra como aviso del sistema o la oculta. El *payload* de webhook de un mensaje del Agent Bot no se capturó (solo la API).
 * **Carrera en tiempo real:** el eco `message_created` de un saliente puede llegar antes de que el despachador confirme `SENT`. El *worker* trata un saliente sin fila de *outbox* como `UNKNOWN_MESSAGE` y reutiliza el reintento acotado de `process_gateway_event` (`worker.py:81-106`); en el último intento publica con la regla de respaldo. El webhook ya espera 2 s antes de encolar (spec 05, §3.3).
 
 ### 4.4 Otros datos de la fila
@@ -141,12 +141,12 @@ Etiqueta de solo lectura en la fila y en la cabecera del hilo. No se escribe, no
 | Dato | Origen | Nota |
 | :--- | :--- | :--- |
 | Nombre | `clients.full_name` si hay cliente; si no, nombre del contacto de Chatwoot; si no, el teléfono | El adaptador crea el contacto con el teléfono como nombre (`chatwoot_payloads.py:201-202`) |
-| Vista previa | Último mensaje no de actividad de la conversación; 120 caracteres; «[Adjunto]» si no hay texto | A verificar que `last_non_activity_message` venga poblado en conversaciones reales (la fixture tiene la conversación vacía) |
+| Vista previa | Último mensaje no de actividad de la conversación; 120 caracteres; «[Adjunto]» si no hay texto | Verificado el 2026-10-20: `last_non_activity_message` viene poblado en conversaciones reales (`null` solo si la conversación no tiene mensajes). El adaptador calcula la vista previa y `last_message_at` con ese mensaje, de modo que un aviso de actividad no los mueve |
 | `unread_count` | `unread_count` de la conversación de Chatwoot (presente en `message_created_incoming.json:110` y `api_conversation_list.json:57`) | Ver D13 |
 | `service_window_open` | `can_reply` de Chatwoot (ya verificado, spec 05 §3.6) | Autoritativo |
 | `service_window_expires_at` | `conversation_links.last_client_message_at` + 24 h | Ver D15 |
 
-> **Decisión de diseño D13.** El contador de no leídos es el de Chatwoot y se reinicia con `POST /conversations/{id}/read`, que llama a la API de Chatwoot para marcar la conversación como vista por el agente de servicio. *Por qué:* evita almacenar contadores; la consecuencia es que el contador es **compartido** entre encargados (hay un solo agente de servicio). El endpoint de Chatwoot (`update_last_seen`) debe verificarse en v4.18.0.
+> **Decisión de diseño D13.** El contador de no leídos es el de Chatwoot y se reinicia con `POST /conversations/{id}/read`, que llama a la API de Chatwoot para marcar la conversación como vista por el agente de servicio. *Por qué:* evita almacenar contadores; la consecuencia es que el contador es **compartido** entre encargados (hay un solo agente de servicio). Verificado el 2026-10-20 en v4.18.0: `POST /conversations/{id}/update_last_seen` con el token de agente reinicia `unread_count` (de 10 a 0) y devuelve la conversación.
 
 > **Decisión de diseño D15.** Se agrega `last_client_message_at` a `conversation_links`. *Por qué:* Chatwoot informa si se puede responder, pero no cuándo vence la ventana; recorrer mensajes por cada fila de la bandeja es inviable. Es una marca de tiempo, no contenido de mensajes.
 
@@ -189,11 +189,11 @@ Contrato nuevo, con la suite `tests/infrastructure/messaging_port_contract.py` a
 
 | Cambio | Detalle |
 | :--- | :--- |
-| `list_conversations(..., include_resolved)` | `ConversationSummary` suma `lifecycle`, `contact_name`, `unread_count`, `last_message_preview`. Con `include_resolved=False` se mantiene el comportamiento actual |
+| `list_conversations(..., include_resolved)` | `ConversationSummary` suma `lifecycle`, `contact_name`, `unread_count`, `last_message_preview` y `assignee_name`. Con `include_resolved=False` se mantiene el comportamiento actual; las resueltas cuentan como `BOT` y las pospuestas nunca se listan |
 | `get_conversation(id)` | Mismo resumen para una conversación; `ResourceNotFoundError` si no existe |
-| `list_messages(id, *, before_id, limit)` | Sustituye `before: datetime` por un cursor por id (D16); `ConversationMessage` suma remitente (`CONTACT`/`USER`/`AGENT_BOT`/`None`), nombre, `status`, `external_error`, `content_type` y adjuntos (`id`, `file_type`, `content_type`, nombre) |
+| `list_messages(id, *, before_id, limit)` | Sustituye `before: datetime` por un cursor por id (D16); `ConversationMessage` suma remitente (`CONTACT`/`USER`/`AGENT_BOT`/`None`), nombre, `status` (crudo: `sent`, `delivered`, `read`, `failed`), `external_error` (texto crudo, nunca sale del backend), `content_type` y adjuntos (`id`, `file_type`, `content_type`, extensión, tamaño, nombre). Incluye los avisos de actividad (`MessageDirection.ACTIVITY`, sin remitente); las notas privadas no |
 | `mark_conversation_read(id)` | `update_last_seen` con el token de agente (D13) |
-| `get_attachment(id, attachment_id)` | Bytes, tipo y nombre; ver D17 |
+| `get_attachment(id, attachment_id)` | `AttachmentContent` (bytes, tipo y nombre); `ResourceNotFoundError` si el adjunto no está en la conversación o el destino no es seguro; ver D17 |
 
 > **Decisión de diseño D16.** El cursor de mensajes es por id. *Por qué:* Chatwoot ya pagina por id; el cursor por fecha del puerto obligaba a recorrer hasta 25 páginas y a fabricar microsegundos (`chatwoot_payloads.py:147-166`). El API devuelve del más reciente al más antiguo, como 2.14; el puerto sigue entregando orden cronológico y el caso de uso lo invierte.
 
@@ -405,20 +405,23 @@ La sección 2.14 de la especificación REST y su catálogo de errores se actuali
 ## 9. Catálogo de motivos de falla
 
 > **Decisión de diseño D5.** Se extrae el código de Meta del texto `external_error` (`(#131030) ...`, `chatwoot_payloads.py:487-492`) con una expresión regular y se traduce con un catálogo fijo en la capa de aplicación; el texto original **nunca** llega al navegador y el código se expone aparte como `failure_code`. *Por qué:* la interfaz no puede mencionar al gateway (US-30) y el texto de Meta cambia sin aviso.
+>
+> **Ajuste del 2026-10-20 (B2).** El fallo por ventana de 24 h lo produce Chatwoot antes de llegar a Meta: el mensaje queda en `failed` con un `external_error` en español (la ventana de atención al cliente de WhatsApp de 24 horas está cerrada) y **sin** código numérico. Por eso ese caso se identifica por la ausencia de código más ese texto, no por `131047`, que se conserva como respaldo si Meta llegara a rechazarlo.
 
 | Código | Origen | `failure_reason` (español) |
 | :--- | :--- | :--- |
-| `131047` | Mensaje fuera de la ventana de re-interacción (24 h) | Han pasado más de 24 horas; el cliente debe escribir primero. |
+| sin código y texto de ventana cerrada (Chatwoot) | Chatwoot rechaza el envío porque la ventana de 24 h está cerrada; es el caso real observado | Han pasado más de 24 horas; el cliente debe escribir primero. |
+| `131047` | Respaldo: Meta rechaza un mensaje fuera de la ventana de re-interacción (24 h) | Han pasado más de 24 horas; el cliente debe escribir primero. |
 | `131026` | Mensaje no entregable | El cliente no puede recibir el mensaje. Comprueba que su número tenga WhatsApp activo. |
 | `131030` | Destinatario fuera de la lista permitida | El número no está entre los destinatarios de prueba. |
 | `131031` | Cuenta de WhatsApp Business bloqueada | La cuenta de WhatsApp Business está bloqueada. Contacta al administrador del sistema. |
 | `131056` | Límite de envíos al mismo cliente | Se enviaron demasiados mensajes a este cliente. Espera unos minutos. |
 | `131049` | Mensaje limitado por WhatsApp | WhatsApp limitó este mensaje. Intenta más tarde. |
-| otro o sin código | Cualquier fallo | No se pudo entregar el mensaje. |
+| otro, o sin código y sin el texto de ventana | Cualquier fallo | No se pudo entregar el mensaje. |
 
-Para filas del *outbox* que no salieron (`last_error`, sin código de Meta) se traduce por el tipo de excepción que ya guarda el despachador: `ServiceWindowClosedError` → «Han pasado más de 24 horas; el cliente debe escribir primero.»; `MessagingUnavailableError` → «La mensajería no estuvo disponible. Reintenta el envío.»; cualquier otro → «No se pudo enviar el mensaje.» Los códigos y su significado provienen de la referencia de errores de WhatsApp Cloud API; solo `131030` está respaldado por una captura propia (spec 05, §4), por lo que el resto se confirma con capturas reales (tarea B2).
+Para filas del *outbox* que no salieron (`last_error`, sin código de Meta) se traduce por el tipo de excepción que ya guarda el despachador: `ServiceWindowClosedError` → «Han pasado más de 24 horas; el cliente debe escribir primero.»; `MessagingUnavailableError` → «La mensajería no estuvo disponible. Reintenta el envío.»; cualquier otro → «No se pudo enviar el mensaje.» Los códigos y su significado provienen de la referencia de errores de WhatsApp Cloud API; solo `131030` y el caso de la ventana de 24 h sin código están respaldados por capturas propias (spec 05, §4; B2, 2026-10-20). `131026` no se pudo provocar con un número ficticio (falla antes por la ventana) y su fixture está construida y marcada como «no capturada»; el resto de los códigos sigue sin captura.
 
-**Reintentar:** ver 6.7. El botón aparece si `retryable` es verdadero; si la causa es `131047`, el API lo rechaza con `service-window-closed` mientras la ventana siga cerrada.
+**Reintentar:** ver 6.7. El botón aparece si `retryable` es verdadero; si la causa es la ventana de 24 h (sin código o `131047`), el API lo rechaza con `service-window-closed` mientras la ventana siga cerrada.
 
 ---
 
@@ -447,7 +450,7 @@ Se reutilizan los tipos del catálogo de la sección 3 de la especificación RES
 
 * Todos los endpoints exigen `ENCARGADO` o `SUPERADMIN` con `require_role` (`deps.py:26-50`); el rol se lee de la base en cada petición.
 * El navegador nunca recibe URL, tokens ni textos de error de Chatwoot (RN de aislamiento de binarios, RBAC regla 5).
-* **Proxy de adjuntos (D17):** Chatwoot no ofrece lectura de un adjunto por id; el caso de uso recorre los mensajes de la conversación (con el mismo tope de páginas) para hallar el adjunto y su `data_url`, y valida que pertenezca a esa conversación. La URL se reescribe al host interno de Chatwoot y solo se descarga si coincide con `CHATWOOT_BASE_URL`; cualquier otra se rechaza (anti-SSRF). Los adjuntos no se capturaron aún (spec 05), de modo que la forma de `data_url` y su alcance desde la red interna son verificaciones de la tarea B2.
+* **Proxy de adjuntos (D17):** Chatwoot no ofrece lectura de un adjunto por id; el caso de uso recorre los mensajes de la conversación (con el mismo tope de páginas) para hallar el adjunto y su `data_url`, y valida que pertenezca a esa conversación. La URL se reescribe al host interno de Chatwoot y solo se descarga si coincide con `CHATWOOT_BASE_URL`; cualquier otra se rechaza (anti-SSRF). Verificado el 2026-10-20 (B2): `data_url` usa el anfitrión público y redirige (302) al archivo con un identificador firmado sin vencimiento; desde el contenedor del API se descarga con el anfitrión interno más los encabezados `Host` y `X-Forwarded-Proto` originales, siguiendo redirecciones. El adaptador lo implementa así: solo sigue redirecciones relativas o hacia el anfitrión interno o el público (reescrito al interno), con un máximo de 3, sin enviar el token, y rechaza cualquier otro destino con `ResourceNotFoundError`.
 * `handoff_summary` y la auditoría no contienen texto libre del cliente ni de los mensajes.
 * El `access_token` en la consulta del stream no se registra (sección 8) y se reutiliza el mismo token de 60 minutos.
 * La publicación Redis viaja por la red interna de Docker; el contenido de los mensajes no se persiste en Redis.
@@ -564,23 +567,27 @@ Con Chatwoot, API, *worker* y el frontend levantados, un encargado y un `SUPERAD
 
 ---
 
-## 15. Verificaciones pendientes (a confirmar con capturas o pruebas)
+## 15. Verificaciones (resultados de las capturas de B2)
 
-1. `sender.type` del Agent Bot en webhook y API (D3).
-2. Endpoint y comportamiento de `update_last_seen` en Chatwoot v4.18.0 (D13).
-3. Forma de `attachments[]` y alcance de `data_url` desde la red interna (D17).
-4. `last_non_activity_message` poblado en conversaciones reales (vista previa).
-5. Reapertura en `pending` cuando el cliente escribe a una `resolved`, y `toggle_status` a `open` desde `resolved` (spec 05, §9, punto 2; D8).
-6. Formato de `external_error` para códigos distintos de `131030` (sección 9).
-7. Que Chatwoot no tenga reglas de resolución automática activas.
-8. `flush_interval -1` en Caddy para el stream y claim `exp` en el JWT (`security.py:26-38`).
-9. Que `can_reply` equivalga a la ventana de 24 h del último mensaje entrante (ya presente en las fixtures; falta confirmar el borde).
+Las capturas se tomaron el 2026-10-20 con el responsable del producto, a través de SSH a la VM de Oracle, contra la API interna de Chatwoot v4.18.0 (cuenta 2). Las fixtures saneadas están en `tests/fixtures/chatwoot/` y su procedencia, en el `README.md` de ese directorio.
 
-**Cómo se obtienen las capturas (B2):** en la prueba en vivo con el responsable del producto, a través del túnel SSH a la VM de Oracle y el número de prueba de Meta, igual que el ensayo del bot. Los casos que no se puedan provocar en esa sesión (por ejemplo `131047`, que exige esperar más de 24 h) se cubren con fixtures construidas desde la referencia de Meta y quedan marcadas como «no capturada» en la fixture.
+| # | Verificación | Resultado |
+| :--- | :--- | :--- |
+| 1 | `sender.type` del Agent Bot (D3) | **Verificado en la API.** Agent Bot: `message_type: 1` y `sender.type: "agent_bot"`; cliente: `message_type: 0` y `sender.type: "contact"`; actividad: `message_type: 2` y sin `sender`. El *payload* de webhook del Agent Bot **no** se capturó |
+| 2 | `update_last_seen` (D13) | **Verificado.** `POST /conversations/{id}/update_last_seen` con el token de agente: `unread_count` pasa de 10 a 0. No hace falta la contingencia |
+| 3 | Adjuntos y alcance de `data_url` (D17) | **Verificado.** `attachments[]` trae `file_type`, `extension`, `content_type`, `file_size`, `width`, `height`, `data_url` y `thumb_url`; `data_url` redirige (302) y se descarga desde el contenedor del API con el anfitrión interno más `Host` y `X-Forwarded-Proto`: 200 `image/jpeg`. La URL pública funciona sin autenticación (identificador firmado sin vencimiento) |
+| 4 | `last_non_activity_message` poblado | **Verificado** en conversaciones reales |
+| 5 | Reapertura de una `resolved` | **Verificado.** Al escribir el cliente, la conversación pasa a `pending` y responde el bot (premisa de D8) |
+| 6 | Formato de `external_error` para códigos distintos de `131030` | **Cambió.** El fallo por la ventana de 24 h lo produce Chatwoot antes de Meta: `status: "failed"` y `external_error` en español **sin** código numérico. `131026` no se pudo provocar (un número ficticio falla antes por la ventana): su fixture está construida desde el formato de `131030` y marcada como «no capturada». El catálogo de la sección 9 se ajustó |
+| 7 | Reglas de resolución automática | **Verificado.** No hay reglas de automatización y `auto_resolve_after` es nulo |
+| 8 | `flush_interval -1` en Caddy para el stream y claim `exp` en el JWT (`security.py:26-38`) | Pendiente (B4) |
+| 9 | `can_reply` equivale a la ventana de 24 h del último mensaje entrante | Pendiente: ya presente en las fixtures; falta confirmar el borde |
 
-**Contingencias si una verificación falla:**
-* **Punto 2 (`update_last_seen`):** si no reinicia `unread_count`, el contador se calcula en EventPro: columna `conversation_links.last_read_at` y conteo de mensajes entrantes posteriores en la primera página de mensajes. Cambia la migración, el caso de uso 6.8 y el ítem de la bandeja; el contrato de API no cambia.
-* **Punto 3 (`data_url`):** si no es alcanzable desde la red interna aun reescribiendo el host, se descarga con el token de agente en la cabecera `api_access_token`; si tampoco funciona, el hilo muestra «Adjunto no disponible» con nombre y tipo, y la vista de adjuntos entrantes pasa a seguimiento.
+**Fuera de alcance de las capturas:** el *payload* de webhook del Agent Bot y el borde de `can_reply` quedan sin verificar; `131047` exige esperar más de 24 h y se cubre con el caso real sin código.
+
+**Contingencias previstas (descartadas por las verificaciones 2 y 3, que salieron bien):**
+* **Punto 2 (`update_last_seen`)** — si no reinicia `unread_count`, el contador se calcula en EventPro: columna `conversation_links.last_read_at` y conteo de mensajes entrantes posteriores en la primera página de mensajes. Cambia la migración, el caso de uso 6.8 y el ítem de la bandeja; el contrato de API no cambia.
+* **Punto 3 (`data_url`)** — si no es alcanzable desde la red interna aun reescribiendo el host, se descarga con el token de agente en la cabecera `api_access_token`; si tampoco funciona, el hilo muestra «Adjunto no disponible» con nombre y tipo, y la vista de adjuntos entrantes pasa a seguimiento.
 
 **Límites conocidos:** tope de 500 conversaciones leídas; contador de no leídos compartido; sin reenvío de eventos perdidos; si Chatwoot falla durante la derivación, la reconciliación pendiente es quien corrige; la auditoría de una intervención puede fallar tras el cambio de Chatwoot.
 

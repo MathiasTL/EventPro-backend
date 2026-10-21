@@ -36,10 +36,16 @@ _ACCOUNT_PREFIX = f"/api/v1/accounts/{ACCOUNT_ID}"
 _CONVERSATION_PATH = re.compile(r"/conversations/(\d+)")
 _MESSAGES_PATH = re.compile(r"/conversations/(\d+)/messages")
 _MESSAGES_PER_PAGE = 20
-_FILES_URL = "https://files.example.org/storage"
+# Anfitrión público con el que Chatwoot firma las URL de los adjuntos (`data_url`).
+PUBLIC_HOST = "chat.example.test"
+_BLOB_PREFIX = "/rails/active_storage/"
+_UPDATE_LAST_SEEN_PATH = re.compile(r"/conversations/(\d+)/update_last_seen")
+_INCOMING_TYPE = 0
+_OUTGOING_TYPE = 1
+_ACTIVITY_TYPE = 2
+_DEFAULT_SENDERS = {_INCOMING_TYPE: "contact", _OUTGOING_TYPE: "agent_bot"}
 _TOGGLE_STATUS_PATH = re.compile(r"/conversations/(\d+)/toggle_status")
 _CONVERSATIONS_PER_PAGE = 25
-_OUTGOING_TYPE = 1
 
 
 @dataclass
@@ -47,6 +53,26 @@ class FakeContact:
     id: int
     name: str
     phone_number: str | None
+
+
+@dataclass
+class FakeAttachment:
+    id: int
+    token: str
+    filename: str
+    content_type: str
+    data: bytes
+    host: str = PUBLIC_HOST
+
+    @property
+    def file_type(self) -> str:
+        return "image" if self.content_type.startswith("image/") else "file"
+
+    @property
+    def data_url(self) -> str:
+        return (
+            f"https://{self.host}{_BLOB_PREFIX}blobs/redirect/{self.token}/{quote(self.filename)}"
+        )
 
 
 @dataclass
@@ -58,6 +84,10 @@ class FakeMessage:
     message_type: int = _OUTGOING_TYPE
     private: bool = False
     attachment_url: str | None = None
+    sender_type: str | None = None
+    status: str = "sent"
+    external_error: str | None = None
+    attachments: list[FakeAttachment] = field(default_factory=list)
 
 
 @dataclass
@@ -69,6 +99,8 @@ class FakeConversation:
     status: str = "pending"
     messages: list[FakeMessage] = field(default_factory=list)
     last_activity_at: int | None = FIRST_EPOCH
+    unread_count: int = 0
+    assignee_name: str | None = None
 
 
 class FakeChatwootServer:
@@ -90,6 +122,13 @@ class FakeChatwootServer:
         # Registro de lo recibido: (método, ruta sin el prefijo de la cuenta, tipo de token).
         self.log: list[tuple[str, str, str]] = []
         self.requests: list[httpx.Request] = []
+        # Descargas de adjuntos: (anfitrión pedido, encabezado Host, ruta), y escenarios hostiles.
+        self.downloads: list[tuple[str, str, str]] = []
+        self.blob_redirect: str | None = None
+        self.blob_status = 200
+        self.last_blob_headers: dict[str, str] = {}
+        self._attachments: dict[str, FakeAttachment] = {}
+        self._next_attachment_id = 1
         self._epoch = FIRST_EPOCH
         self._next_message_id = 1
 
@@ -134,8 +173,16 @@ class FakeChatwootServer:
         message_type: int = _OUTGOING_TYPE,
         private: bool = False,
         attachment_url: str | None = None,
+        sender_type: str | None = None,
+        status: str = "sent",
+        external_error: str | None = None,
+        attachment: tuple[bytes, str, str] | None = None,
     ) -> FakeMessage:
-        """Mensaje existente; sin `created_at` avanza el reloj simulado un segundo."""
+        """Mensaje existente; sin `created_at` avanza el reloj simulado un segundo.
+
+        Un entrante público suma un no leído, como en Chatwoot, y reabre una resuelta como
+        pendiente; `attachment` es `(datos, nombre, tipo)`.
+        """
 
         conversation = self.conversations[conversation_id]
         if created_at is None:
@@ -149,11 +196,32 @@ class FakeChatwootServer:
             message_type=message_type,
             private=private,
             attachment_url=attachment_url,
+            sender_type=sender_type or _DEFAULT_SENDERS.get(message_type),
+            status=status,
+            external_error=external_error,
         )
+        if attachment is not None:
+            message.attachments.append(self._new_attachment(*attachment))
         self._next_message_id += 1
         conversation.messages.append(message)
         conversation.last_activity_at = created_at
+        if message_type == _INCOMING_TYPE and not private:
+            conversation.unread_count += 1
+            if conversation.status == cw.STATUS_RESOLVED:
+                conversation.status = cw.STATUS_PENDING
         return message
+
+    def _new_attachment(self, data: bytes, filename: str, content_type: str) -> FakeAttachment:
+        attachment = FakeAttachment(
+            self._next_attachment_id,
+            f"FAKETOKEN{self._next_attachment_id}",
+            filename,
+            content_type,
+            data,
+        )
+        self._next_attachment_id += 1
+        self._attachments[attachment.token] = attachment
+        return attachment
 
     def client(self) -> ChatwootClient:
         http = httpx.AsyncClient(transport=httpx.MockTransport(self.handler), base_url=BASE_URL)
@@ -165,6 +233,8 @@ class FakeChatwootServer:
         if self.down:
             raise httpx.ConnectError("Chatwoot simulado caído", request=request)
         path = request.url.path
+        if path.startswith(_BLOB_PREFIX):
+            return self._serve_blob(request, path)
         if not path.startswith(f"{_ACCOUNT_PREFIX}/"):
             return httpx.Response(404)
         relative = path.removeprefix(_ACCOUNT_PREFIX)
@@ -187,6 +257,8 @@ class FakeChatwootServer:
             return self._create_conversation(request)
         if method == "GET" and path == "/conversations":
             return self._list_conversations(request)
+        if method == "POST" and (match := _UPDATE_LAST_SEEN_PATH.fullmatch(path)):
+            return self._update_last_seen(int(match.group(1)))
         if method == "POST" and (match := _TOGGLE_STATUS_PATH.fullmatch(path)):
             return self._toggle_status(request, int(match.group(1)))
         if method == "GET" and (match := _CONVERSATION_PATH.fullmatch(path)):
@@ -289,6 +361,33 @@ class FakeChatwootServer:
         rendered = [self._conversation_json(item, include_can_reply=True) for item in page]
         return httpx.Response(200, json={cw.DATA_KEY: {cw.PAYLOAD_KEY: rendered}})
 
+    def _update_last_seen(self, conversation_id: int) -> httpx.Response:
+        conversation = self.conversations.get(conversation_id)
+        if conversation is None:
+            return httpx.Response(404)
+        conversation.unread_count = 0
+        return httpx.Response(
+            200, json=self._conversation_json(conversation, include_can_reply=True)
+        )
+
+    def _serve_blob(self, request: httpx.Request, path: str) -> httpx.Response:
+        """Redirección firmada de ActiveStorage a una ruta de disco, y luego el archivo."""
+
+        self.downloads.append((request.url.netloc.decode(), request.headers.get("host", ""), path))
+        self.last_blob_headers = dict(request.headers)
+        if self.blob_status != 200:
+            return httpx.Response(self.blob_status)
+        parts = path.removeprefix(_BLOB_PREFIX).split("/")
+        if parts[0] == "blobs":
+            location = self.blob_redirect or f"{_BLOB_PREFIX}disk/{parts[2]}/{parts[3]}"
+            return httpx.Response(302, headers={"location": location})
+        attachment = self._attachments.get(parts[1])
+        if attachment is None:
+            return httpx.Response(404)
+        return httpx.Response(
+            200, content=attachment.data, headers={"content-type": attachment.content_type}
+        )
+
     def _toggle_status(self, request: httpx.Request, conversation_id: int) -> httpx.Response:
         conversation = self.conversations.get(conversation_id)
         if conversation is None:
@@ -309,14 +408,20 @@ class FakeChatwootServer:
     def _conversation_json(
         self, conversation: FakeConversation, *, include_can_reply: bool
     ) -> dict[str, Any]:
+        meta: dict[str, Any] = {
+            cw.SENDER_KEY: self._contact_json(self.contacts[conversation.contact_id])
+        }
+        if conversation.assignee_name is not None:
+            meta[cw.ASSIGNEE_KEY] = {cw.ID_KEY: 1, cw.NAME_KEY: conversation.assignee_name}
+        visible = [m for m in conversation.messages if m.message_type != _ACTIVITY_TYPE]
         rendered: dict[str, Any] = {
             cw.ID_KEY: conversation.id,
             cw.INBOX_ID_KEY: conversation.inbox_id,
             cw.STATUS_KEY: conversation.status,
+            cw.UNREAD_COUNT_KEY: conversation.unread_count,
             cw.MESSAGES_KEY: [self._embedded_message_json(m) for m in conversation.messages[-1:]],
-            cw.META_KEY: {
-                cw.SENDER_KEY: self._contact_json(self.contacts[conversation.contact_id])
-            },
+            cw.LAST_NON_ACTIVITY_KEY: self._list_item_json(visible[-1]) if visible else None,
+            cw.META_KEY: meta,
         }
         if conversation.last_activity_at is not None:
             rendered[cw.LAST_ACTIVITY_AT_KEY] = conversation.last_activity_at
@@ -349,7 +454,7 @@ class FakeChatwootServer:
         message = self.add_message(
             conversation_id,
             self._message_content(request),
-            attachment_url=self._attachment_url(request),
+            attachment=self._attachment(request),
         )
         return httpx.Response(200, json=self._message_json(message))
 
@@ -364,13 +469,13 @@ class FakeChatwootServer:
         return content if isinstance(content, str) else None
 
     @staticmethod
-    def _attachment_url(request: httpx.Request) -> str | None:
+    def _attachment(request: httpx.Request) -> tuple[bytes, str, str] | None:
         if not request.headers.get("content-type", "").startswith("multipart/"):
             return None
-        filename = next(
-            (part.filename for part in parse_multipart(request) if part.filename is not None), None
-        )
-        return f"{_FILES_URL}/{quote(filename)}" if filename is not None else None
+        part = next((p for p in parse_multipart(request) if p.filename is not None), None)
+        if part is None or part.filename is None:
+            return None
+        return part.data, part.filename, part.content_type or "application/octet-stream"
 
     def _list_messages(self, request: httpx.Request, conversation_id: int) -> httpx.Response:
         conversation = self.conversations.get(conversation_id)
@@ -383,17 +488,35 @@ class FakeChatwootServer:
 
     @staticmethod
     def _list_item_json(message: FakeMessage) -> dict[str, Any]:
-        item = {
+        item: dict[str, Any] = {
             cw.ID_KEY: message.id,
             cw.CONVERSATION_ID_KEY: message.conversation_id,
             cw.MESSAGE_TYPE_KEY: message.message_type,
             cw.PRIVATE_KEY: message.private,
             cw.CONTENT_KEY: message.content,
+            cw.CONTENT_TYPE_KEY: "text",
+            cw.STATUS_KEY: message.status,
             cw.CREATED_AT_KEY: message.created_at,
         }
+        if message.external_error is not None:
+            item[cw.CONTENT_ATTRIBUTES_KEY] = {cw.EXTERNAL_ERROR_KEY: message.external_error}
+        if message.sender_type is not None:
+            item[cw.SENDER_KEY] = {cw.NAME_KEY: "Remitente", cw.TYPE_KEY: message.sender_type}
         # Como en las capturas reales: sin adjuntos no hay clave `attachments`.
         if message.attachment_url is not None:
-            item[cw.ATTACHMENTS_KEY] = [{cw.DATA_URL_KEY: message.attachment_url}]
+            item[cw.ATTACHMENTS_KEY] = [{cw.ID_KEY: 900, cw.DATA_URL_KEY: message.attachment_url}]
+        if message.attachments:
+            item[cw.ATTACHMENTS_KEY] = [
+                {
+                    cw.ID_KEY: a.id,
+                    cw.FILE_TYPE_KEY: a.file_type,
+                    cw.EXTENSION_KEY: a.filename.rsplit(".", 1)[-1],
+                    cw.CONTENT_TYPE_KEY: a.content_type,
+                    cw.FILE_SIZE_KEY: len(a.data),
+                    cw.DATA_URL_KEY: a.data_url,
+                }
+                for a in message.attachments
+            ]
         return item
 
     @staticmethod

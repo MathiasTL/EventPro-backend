@@ -12,18 +12,22 @@ Todos tienen la misma forma:
 ```
 
 - `provisional`: `true` mientras el archivo se haya redactado a mano a partir del código fuente de
-  Chatwoot; `false` cuando provenga de una captura real ya saneada (todos lo son hoy).
+  Chatwoot o de la referencia de Meta (**no capturado**); `false` cuando provenga de una captura
+  real ya saneada.
 - `headers`: solo los nombres y valores inocuos de los encabezados. Nunca una firma real: el valor de
   `X-Chatwoot-Signature` es siempre `REDACTED`. Las pruebas firman el cuerpo con un secreto propio.
 - `body`: el JSON tal como lo entrega Chatwoot.
 
 ## Estado actual
 
-Los 12 archivos son **capturas reales saneadas** del 2026-10-19, tomadas de una instancia de
-Chatwoot v4.18.0 (`"provisional": false`). El saneamiento sustituyó teléfonos, nombres, correos,
-tokens, identificadores de WhatsApp (`wamid`) y firmas por valores inventados y estables. Los
-adjuntos no se capturaron: su forma (`attachments[].data_url`) sigue el código de Chatwoot y las
-pruebas la arman a mano.
+Hay 19 archivos **capturas reales saneadas** (`"provisional": false`) y 1 **construido**
+(`"provisional": true`). Todas las capturas provienen de instancias de Chatwoot v4.18.0 y se
+tomaron el 2026-10-19 (los 12 primeros archivos de la tabla) y el 2026-10-20 (bandeja de E1, los 7
+siguientes). El saneamiento sustituyó teléfonos, nombres, correos, tokens, identificadores de
+WhatsApp (`wamid`) y firmas por valores inventados y estables. En los adjuntos, `data_url` y
+`thumb_url` usan el anfitrión `https://chat.example.test` con el identificador firmado de
+ActiveStorage reemplazado por `FAKETOKEN`, conservando la forma de la ruta
+(`/rails/active_storage/blobs/redirect/<token>/File.jpg`).
 
 Hallazgos de las capturas que el código ya recoge:
 
@@ -33,6 +37,15 @@ Hallazgos de las capturas que el código ya recoge:
 - En la API, un mensaje sin adjuntos no trae la clave `attachments`, y una conversación recién
   creada trae `messages: []`.
 - Las plantillas llevan `additional_attributes.template_params`.
+- Un mensaje del Agent Bot trae `message_type: 1` y `sender.type: "agent_bot"`; el del cliente,
+  `message_type: 0` y `sender.type: "contact"`; la actividad, `message_type: 2` y sin `sender`.
+- `last_non_activity_message` y `unread_count` vienen poblados en el listado de conversaciones.
+- `POST /conversations/{id}/update_last_seen` con el token de agente devuelve la conversación con
+  `unread_count: 0`.
+- Un adjunto trae `file_type`, `extension`, `content_type`, `file_size`, `data_url` y `thumb_url`;
+  `data_url` usa el anfitrión público y redirige (302) al archivo.
+- El fallo por ventana de 24 h lo produce Chatwoot antes de Meta: `status: "failed"` y un
+  `external_error` en español **sin** código numérico de Meta.
 
 | Archivo | Origen |
 | --- | --- |
@@ -41,6 +54,13 @@ Hallazgos de las capturas que el código ya recoge:
 | `api_contact_search`, `api_contact_created` | `POST /contacts/search`, `POST /contacts` |
 | `api_conversation_created`, `api_conversation_list` | `POST /conversations`, `GET /conversations` |
 | `api_message_created`, `api_message_list` | `POST` y `GET /conversations/{id}/messages` |
+| `api_inbox_conversation_list` | `GET /conversations` con no leídos, vista previa y asignado (2026-10-20) |
+| `api_inbox_message_list` | `GET /conversations/{id}/messages`: cliente, Agent Bot, actividad y un adjunto de imagen (2026-10-20) |
+| `api_message_list_window_failed`, `api_message_created_by_agent` | Mensaje fallido por la ventana de 24 h (texto de Chatwoot, sin código de Meta) y su creación con el token de agente (2026-10-20) |
+| `api_update_last_seen` | `POST /conversations/{id}/update_last_seen` (2026-10-20) |
+| `api_conversation_reopened` | `GET /conversations/{id}` tras escribir el cliente a una `resolved`: queda `pending` (2026-10-20) |
+| `api_toggle_status_resolved` | `POST /conversations/{id}/toggle_status` a `resolved` (2026-10-20) |
+| `message_updated_failed_131026` | **No capturado**: construido desde `message_updated_failed` con el formato `(#131026) ...` de la referencia de Meta; el código no se pudo provocar con un número ficticio, que falla antes por la ventana |
 
 ## Pasos de captura
 
@@ -79,7 +99,8 @@ Antes de que un archivo entre al repositorio, reemplazar o eliminar:
       `password` en el nombre.
 - [ ] Secreto del webhook y valor de `X-Chatwoot-Signature` (dejar `REDACTED`).
 - [ ] URLs de adjuntos firmadas (`X-Amz-*`, `Signature=`, `Expires=`) y nombres de host reales:
-      usar `https://files.example.org/...`.
+      usar `https://files.example.org/...` o, para los adjuntos de la
+      bandeja, `https://chat.example.test/rails/active_storage/...` con `FAKETOKEN` como identificador.
 - [ ] Identificadores largos o aleatorios (por ejemplo, el identificador firmado de ActiveStorage).
 - [ ] Identificadores de cuenta y de bandeja: opcionales, no son sensibles.
 - [ ] Cambiar `"provisional"` a `false` y conservar los nombres de los encabezados capturados

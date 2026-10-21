@@ -6,11 +6,11 @@ tenga activo `lock_to_single_conversation`. Los textos de error y los logs no ll
 mensajes, códigos ni teléfonos.
 """
 
-from collections.abc import Iterator, Mapping, Sequence
-from datetime import datetime
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from typing import Any
 
 from app.application.dtos.messaging_dto import (
+    AttachmentContent,
     ConversationMessage,
     ConversationStatus,
     ConversationSummary,
@@ -22,6 +22,7 @@ from app.domain.exceptions.messaging_exceptions import (
     MessagingUnavailableError,
     ServiceWindowClosedError,
 )
+from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.adapters.secondary.external_services.chatwoot import chatwoot_payloads as cw
 from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_client import (
@@ -118,10 +119,11 @@ class ChatwootMessagingAdapter:
         self,
         *,
         status: ConversationStatus | None = None,
+        include_resolved: bool = False,
         page: int = 1,
         page_size: int = 25,
     ) -> Sequence[ConversationSummary]:
-        """Conversaciones pendientes y abiertas, de la más reciente a la más antigua.
+        """Conversaciones pendientes y abiertas (y resueltas si se pide), la más reciente primero.
 
         Chatwoot pagina de 25 en 25 y el puerto pide `page`/`page_size` sobre la secuencia ya
         filtrada, así que se recorren las páginas de Chatwoot hasta cubrir el tramo pedido.
@@ -138,11 +140,17 @@ class ChatwootMessagingAdapter:
                 "/conversations",
                 token=ChatwootToken.AGENT,
                 operation="list_conversations",
-                params=cw.build_conversation_list_params(self._inbox_id, status, chatwoot_page),
+                params=cw.build_conversation_list_params(
+                    self._inbox_id, status, chatwoot_page, include_resolved=include_resolved
+                ),
                 required_keys=(cw.DATA_KEY,),
             )
             items = cw.conversation_items(body)
-            collected.extend(self._summaries(items))
+            collected.extend(
+                summary
+                for summary in self._summaries(items, include_resolved)
+                if status is None or summary.status is status
+            )
             if len(collected) >= last or len(items) < CONVERSATIONS_PAGE_SIZE:
                 return tuple(collected[first:last])
         get_logger("chatwoot").warning(
@@ -152,21 +160,85 @@ class ChatwootMessagingAdapter:
         )
         return tuple(collected[first:last])
 
+    async def get_conversation(self, conversation_id: int) -> ConversationSummary:
+        body = await self._client.request(
+            "GET",
+            f"/conversations/{conversation_id}",
+            token=ChatwootToken.AGENT,
+            operation="get_conversation",
+            not_found_is_missing=True,
+            required_keys=(cw.ID_KEY,),
+        )
+        summary = cw.parse_conversation_summary(body, include_resolved=True)
+        if summary is None:
+            raise ResourceNotFoundError(f"La conversación {conversation_id} no es de WhatsApp")
+        return summary
+
     async def list_messages(
         self,
         conversation_id: int,
         *,
-        before: datetime | None = None,
+        before_id: int | None = None,
         limit: int = 50,
     ) -> Sequence[ConversationMessage]:
-        """Los `limit` mensajes más recientes anteriores a `before`, en orden cronológico.
+        """Los `limit` mensajes más recientes con id menor que `before_id`, en orden cronológico.
 
-        Chatwoot entrega 20 por llamada con un cursor por id, y `before` del puerto es una hora:
-        se pagina hacia atrás desde el más reciente y se descartan los que no son anteriores.
+        Chatwoot entrega 20 por llamada con el mismo cursor por id (D16): se pagina hacia atrás
+        hasta reunir `limit` mensajes, sin descartar nada por hora.
         """
 
         newest_first: list[ConversationMessage] = []
-        cursor: int | None = None
+        async for items in self._message_pages(conversation_id, before_id):
+            if limit < 1:
+                return ()
+            for item in reversed(items):
+                message = cw.parse_conversation_message(item)
+                if message is not None:
+                    newest_first.append(message)
+            if len(newest_first) >= limit:
+                break
+        return tuple(reversed(newest_first[:limit]))
+
+    async def mark_conversation_read(self, conversation_id: int) -> None:
+        await self._client.request(
+            "POST",
+            f"/conversations/{conversation_id}/update_last_seen",
+            token=ChatwootToken.AGENT,
+            operation="mark_conversation_read",
+            not_found_is_missing=True,
+            required_keys=(cw.ID_KEY,),
+        )
+
+    async def get_attachment(self, conversation_id: int, attachment_id: int) -> AttachmentContent:
+        """Busca el adjunto entre los mensajes de la conversación y lo descarga (D17).
+
+        Chatwoot no lee un adjunto por id: recorrer solo esta conversación valida la pertenencia.
+        """
+
+        async for items in self._message_pages(conversation_id, None):
+            found = cw.find_attachment(items, attachment_id)
+            if found is not None:
+                attachment, url = found
+                break
+        else:
+            raise ResourceNotFoundError(f"El adjunto {attachment_id} no existe en la conversación")
+        file = await self._client.download(url, operation="get_attachment")
+        extension = f".{attachment.extension}" if attachment.extension else ""
+        return AttachmentContent(
+            data=file.data,
+            content_type=file.content_type or attachment.content_type or "application/octet-stream",
+            filename=attachment.filename or f"adjunto-{attachment_id}{extension}",
+        )
+
+    async def _message_pages(
+        self, conversation_id: int, before_id: int | None
+    ) -> AsyncIterator[Sequence[Mapping[str, Any]]]:
+        """Páginas de mensajes sin procesar, de la más reciente a la más antigua.
+
+        Termina en una página corta (historial agotado) o tras `MAX_MESSAGE_PAGES`, que se avisa.
+        """
+
+        cursor = before_id
         for _ in range(MAX_MESSAGE_PAGES):
             body = await self._client.request(
                 "GET",
@@ -177,28 +249,24 @@ class ChatwootMessagingAdapter:
                 not_found_is_missing=True,
                 required_keys=(cw.PAYLOAD_KEY,),
             )
-            if limit < 1:
-                return ()
             items = cw.message_items(body)
-            for item in reversed(items):
-                message = cw.parse_conversation_message(item)
-                if message is not None and (before is None or message.sent_at < before):
-                    newest_first.append(message)
-            if len(newest_first) >= limit or len(items) < MESSAGES_PAGE_SIZE:
-                return tuple(reversed(newest_first[:limit]))
+            yield items
+            if len(items) < MESSAGES_PAGE_SIZE:
+                return
             cursor = cw.oldest_message_id(items)
         get_logger("chatwoot").warning(
             "chatwoot_scan_truncated", operation="list_messages", pages=MAX_MESSAGE_PAGES
         )
-        return tuple(reversed(newest_first[:limit]))
 
     @staticmethod
-    def _summaries(items: Sequence[Mapping[str, Any]]) -> Iterator[ConversationSummary]:
+    def _summaries(
+        items: Sequence[Mapping[str, Any]], include_resolved: bool
+    ) -> Iterator[ConversationSummary]:
         for item in items:
-            summary = cw.parse_conversation_summary(item)
+            summary = cw.parse_conversation_summary(item, include_resolved=include_resolved)
             if summary is not None:
                 yield summary
-            elif cw.has_listable_status(item):
+            elif cw.has_listable_status(item, include_resolved=include_resolved):
                 get_logger("chatwoot").warning(
                     "chatwoot_conversation_skipped",
                     conversation_id=item.get(cw.ID_KEY),

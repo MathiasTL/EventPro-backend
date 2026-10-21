@@ -120,7 +120,7 @@ async def test_successful_dispatch_stores_the_chatwoot_identifiers() -> None:
     stored = store.messages[message.id]
     assert stored.status is OutboxStatus.SENT
     assert stored.sent_at == NOW
-    assert stored.external_message_id == "fake-1"
+    assert stored.external_message_id == "1"
     assert stored.conversation_id == 1
     assert stored.attempts == 0
 
