@@ -324,6 +324,68 @@ async def test_pdf_generation_accepts_untrusted_text_and_produces_pdf():
         assert len(data) > 1000
 
 
+async def test_manual_pdf_adapts_to_e2_without_losing_identity_or_notes(monkeypatch):
+    from app.infrastructure.adapters.secondary.storage.contract_pdf import ReportLabContractPdf
+
+    renderer = AsyncMock(return_value=b"%PDF-e2")
+    monkeypatch.setattr(ReportLabContractPdf, "render", renderer)
+    row = booking(
+        dni="12345678",
+        ruc="20123456789",
+        observations="  Acceso lateral\nNo recortar esta nota  ",
+        extras=("Globos x 2: S/ 20.00",),
+        total_amount=Decimal("150.00"),
+        mobility_amount=Decimal("50.00"),
+        pending_balance=Decimal("140.00"),
+    )
+    assert await contract_pdf(row, "CTR-2026-0001") == b"%PDF-e2"
+    contract, data = renderer.await_args.args
+    assert contract.contract_number == "CTR-2026-0001"
+    assert contract.is_manual_mode
+    assert data.dni == row.dni and data.ruc == row.ruc
+    assert data.observations == row.observations
+    assert data.extras == row.extras
+    assert data.end_time == time(1, 0)
+    assert data.services == Decimal("100.00")
+    assert data.total - data.advance == Decimal("140.00")
+
+
+def test_manual_and_quote_schemas_preserve_literal_observations():
+    from app.infrastructure.adapters.primary.web.schemas.quote_schemas import CreateQuoteRequest
+
+    notes = "  Entrada lateral\nConservar espacios  "
+    _, _, request = budget_setup()
+    payload = {
+        "client_name": request.client_name,
+        "event_date": request.event_date,
+        "start_time": request.start_time,
+        "address": request.address,
+        "package_id": request.package_id,
+        "phone": "999999999",
+        "district": "Lima",
+        "payment_method": "YAPE",
+        "paid_amount": "10",
+        "quote_id": uuid4(),
+        "client_provides_transport": True,
+        "observations": notes,
+    }
+    assert ManualRequest(**payload).observations == notes
+    quote = CreateQuoteRequest(
+        package_id=request.package_id,
+        event_date=request.event_date,
+        event_time=request.start_time,
+        location_address=request.address,
+        location_district="Lima",
+        client_id=uuid4(),
+        observations=notes,
+    )
+    assert quote.to_input().observations == notes
+    with pytest.raises(ValueError):
+        ManualRequest(**{**payload, "observations": "x" * 5001})
+    with pytest.raises(ValueError):
+        CreateQuoteRequest.model_validate({**quote.model_dump(), "observations": "x" * 5001})
+
+
 @pytest.mark.parametrize("phone", ["999999999", "51999999999", "+51999999999"])
 def test_phone_normalization(phone):
     _, _, request = budget_setup()

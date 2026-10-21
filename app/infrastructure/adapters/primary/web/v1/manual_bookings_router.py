@@ -124,6 +124,9 @@ async def register_manual_booking(
     try:
         data = await receipt_file.read(storage.max_bytes() + 1)
         canonical = payload.model_dump(mode="json", exclude={"quote_id"})
+        # Conserva la huella de las solicitudes previas a la incorporación de observaciones.
+        if payload.observations is None:
+            canonical.pop("observations", None)
         canonical["extra_ids"] = sorted(canonical["extra_ids"])
         canonical["paid_amount"] = f"{payload.paid_amount:.2f}"
         canonical["manual_mobility_amount"] = f"{payload.manual_mobility_amount:.2f}"
@@ -147,6 +150,7 @@ async def register_manual_booking(
                     payload.client_provides_transport,
                     payload.manual_mobility_amount,
                     payload.mobility_override_reason,
+                    observations=payload.observations,
                 ),
                 phone=payload.phone,
                 district=payload.district,

@@ -123,8 +123,8 @@ class SqlAlchemyManualBookingStore:
               q.event_date, q.event_time,
               q.package_id, q.services_subtotal, q.total_amount, q.advance_amount,
               q.pending_balance, q.final_mobility_amount, q.status,
-              q.manual_request_hash, q.expires_at,
-              c.full_name, c.phone, p.name AS package_name, p.duration_minutes,
+              q.manual_request_hash, q.expires_at, q.observations,
+              c.full_name, c.phone, c.dni, c.ruc, p.name AS package_name, p.duration_minutes,
               t.name AS theme_name, pay.id AS payment_id, pay.validation_status,
               pay.evidence_path, pay.amount AS paid_amount, pay.registered_by_user_id,
               e.id AS event_id, e.event_code, co.id AS contract_id,
@@ -151,7 +151,7 @@ class SqlAlchemyManualBookingStore:
             (
                 await self._session.execute(
                     text("""
-            SELECT qe.quote_id, x.name, qe.subtotal FROM quote_extras qe
+            SELECT qe.quote_id, x.name, qe.quantity, qe.subtotal FROM quote_extras qe
             JOIN extras x ON x.id=qe.extra_id WHERE qe.quote_id=ANY(:ids) ORDER BY qe.id
         """),
                     {"ids": [row["id"] for row in rows]},
@@ -202,6 +202,13 @@ class SqlAlchemyManualBookingStore:
             pdf_path=row["pdf_storage_path"],
             client_id=row["client_id"],
             event_code=row["event_code"],
+            dni=row["dni"],
+            ruc=row["ruc"],
+            observations=row["observations"],
+            extras=tuple(
+                f"{entry['name']} x {entry['quantity']}: S/ {entry['subtotal']:.2f}"
+                for entry in extras
+            ),
         )
 
     async def _stage(
@@ -257,6 +264,7 @@ class SqlAlchemyManualBookingStore:
             now=now,
             deadline_hours=self._deadline_hours,
             manual_request_hash=request_hash,
+            observations=budget.request.observations,
             mobility_overridden=not budget.request.client_provides_transport,
             mobility_override_reason=budget.request.mobility_override_reason,
         )
@@ -328,6 +336,7 @@ class SqlAlchemyManualBookingStore:
                 final_total_amount=booking.total_amount,
                 advance_paid=booking.advance_amount,
                 status="AWAITING_SIGNATURE",
+                client_observations=booking.observations,
             )
         )
         await self._session.flush()

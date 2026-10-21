@@ -43,6 +43,10 @@ class ManualBooking:
     pdf_path: str | None = None
     client_id: UUID | None = None
     event_code: str | None = None
+    dni: str | None = None
+    ruc: str | None = None
+    observations: str | None = None
+    extras: tuple[str, ...] = ()
 
 
 class IManualBookingStore(Protocol):
