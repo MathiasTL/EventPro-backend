@@ -45,8 +45,9 @@ from app.infrastructure.adapters.secondary.persistence.repositories import (
 
 
 class SqlAlchemyManualBookingStore:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, commit_confirmation: bool = True) -> None:
         self._session = session
+        self._commit_confirmation = commit_confirmation
 
     async def stage(
         self,
@@ -76,6 +77,8 @@ class SqlAlchemyManualBookingStore:
                 raise ResourceInUseError(
                     "Estos datos ya tienen una solicitud activa; reutiliza su referencia"
                 ) from exc
+            if "quotes_pkey" in str(exc.orig):
+                raise ResourceInUseError("La referencia ya pertenece a otra cotización") from exc
             raise
 
     async def get(self, quote_id: UUID, *, lock: bool = False) -> ManualBooking | None:
@@ -104,14 +107,16 @@ class SqlAlchemyManualBookingStore:
             (
                 await self._session.execute(
                     text("""
-            SELECT q.id, q.location_address, q.location_district, q.event_date, q.event_time,
+            SELECT q.id, q.client_id, q.location_address, q.location_district,
+              q.event_date, q.event_time,
               q.package_id, q.services_subtotal, q.total_amount, q.advance_amount,
               q.pending_balance, q.final_mobility_amount, q.status,
               q.manual_request_hash, q.expires_at,
               c.full_name, c.phone, p.name AS package_name, p.duration_minutes,
               t.name AS theme_name, pay.id AS payment_id, pay.validation_status,
               pay.evidence_path, pay.amount AS paid_amount, pay.registered_by_user_id,
-              e.id AS event_id, co.id AS contract_id, co.contract_number, co.pdf_storage_path
+              e.id AS event_id, e.event_code, co.id AS contract_id,
+              co.contract_number, co.pdf_storage_path
             FROM quotes q JOIN clients c ON c.id=q.client_id
             JOIN packages p ON p.id=q.package_id
             LEFT JOIN themes t ON t.id=q.theme_id
@@ -183,6 +188,8 @@ class SqlAlchemyManualBookingStore:
             contract_id=row["contract_id"],
             contract_number=row["contract_number"],
             pdf_path=row["pdf_storage_path"],
+            client_id=row["client_id"],
+            event_code=row["event_code"],
         )
 
     async def _stage(
@@ -295,7 +302,8 @@ class SqlAlchemyManualBookingStore:
         result = await self.get(quote_id)
         if result is None:
             raise ValidationError("La solicitud no se pudo recuperar antes de confirmar")
-        await self._session.commit()
+        if self._commit_confirmation:
+            await self._session.commit()
         return result
 
     async def finalize(
@@ -305,10 +313,12 @@ class SqlAlchemyManualBookingStore:
         event_id: UUID,
         contract_id: UUID,
         contract_number: str,
-        pdf_path: str,
+        pdf_path: str | None,
         window: TimeWindow,
         requirements: tuple[InventoryRequirementDTO, ...],
         override_reason: str | None = None,
+        *,
+        draft: bool = False,
     ) -> ManualBooking:
         self._session.add(
             EventModel(
@@ -390,9 +400,15 @@ class SqlAlchemyManualBookingStore:
             text("""
             INSERT INTO contracts
               (id,contract_number,event_id,pdf_storage_path,status,is_manual_mode)
-            VALUES (:id,:number,:event,:path,'ISSUED',true)
+            VALUES (:id,:number,:event,:path,:status,true)
         """),
-            {"id": contract_id, "number": contract_number, "event": event_id, "path": pdf_path},
+            {
+                "id": contract_id,
+                "number": contract_number,
+                "event": event_id,
+                "path": pdf_path,
+                "status": "DRAFT" if draft else "ISSUED",
+            },
         )
         await self._session.execute(
             text("""
@@ -410,7 +426,10 @@ class SqlAlchemyManualBookingStore:
         result = await self.get(booking.quote_id)
         if result is None:
             raise ValidationError("La solicitud no se pudo recuperar antes de confirmar")
-        await self._session.commit()
+        if self._commit_confirmation:
+            await self._session.commit()
+        else:
+            await self._session.flush()
         return result
 
     async def require_approval(self, booking: ManualBooking, user_id: UUID) -> ManualBooking:
@@ -436,7 +455,10 @@ class SqlAlchemyManualBookingStore:
         result = await self.get(booking.quote_id)
         if result is None:
             raise ValidationError("Solicitud no encontrada")
-        await self._session.commit()
+        if self._commit_confirmation:
+            await self._session.commit()
+        else:
+            await self._session.flush()
         return result
 
     async def refund(

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from app.application.dtos.availability_dto import AvailabilityRequest
 from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
+from app.application.ports.output.contract_port import IContractIssuer
 from app.application.ports.output.manual_booking_port import (
     IBookingDocuments,
     IManualBookingStore,
@@ -29,12 +30,16 @@ class ConfirmManualBookingUseCase:
         availability: IAvailabilityPort,
         documents: IBookingDocuments,
         render_contract: Callable[[ManualBooking, str], Awaitable[bytes]],
+        contracts: IContractIssuer | None = None,
+        allocate_number: Callable[[int], Awaitable[str]] | None = None,
     ) -> None:
         self._store = store
         self._catalog = catalog
         self._availability = availability
         self._documents = documents
         self._render = render_contract
+        self._contracts = contracts
+        self._allocate_number = allocate_number
 
     async def execute(
         self,
@@ -55,6 +60,8 @@ class ConfirmManualBookingUseCase:
             raise ResourceNotFoundError("Solicitud manual no encontrada")
         contract_id = uuid5(NAMESPACE_URL, f"eventpro:manual-contract:{quote_id}")
         number = "CTR-" + contract_id.hex[:20].upper()
+        if preview.event_id is None and self._allocate_number is not None:
+            number = await self._allocate_number(datetime.now(UTC).year)
         pdf = await self._render(preview, number) if preview.event_id is None else b""
         booking = await self._store.get(quote_id, lock=True)
         if booking is None:
@@ -115,7 +122,7 @@ class ConfirmManualBookingUseCase:
         )
         # Documento y reserva comparten la transacción: rollback elimina ambos;
         # no se borra un PDF durable ante un resultado de commit incierto.
-        return await self._store.finalize(
+        result = await self._store.finalize(
             booking,
             user_id,
             event_id,
@@ -128,3 +135,6 @@ class ConfirmManualBookingUseCase:
             requirements,
             self_verification_reason,
         )
+        if self._contracts is not None:
+            await self._contracts.issue_for_event(event_id, user_id)
+        return result

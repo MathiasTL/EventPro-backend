@@ -14,10 +14,13 @@ from app.infrastructure.adapters.primary.web.v1 import (
     audit_logs_router,
     budgets_router,
     catalog_router,
+    contract_signing_router,
+    contracts_router,
     crew_router,
     events_router,
     financial_router,
     manual_bookings_router,
+    manual_contracts_router,
     overrides_router,
     payments_router,
     users_router,
@@ -61,6 +64,9 @@ def create_app() -> FastAPI:
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         response = await call_next(request)
+        if "/contracts/sign/" in request.url.path:
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
         for header, value in SECURITY_HEADERS.items():
             response.headers[header] = value
         return response
@@ -70,6 +76,9 @@ def create_app() -> FastAPI:
     application.include_router(health_router.router)
     application.include_router(auth_router.router, prefix=settings.api_v1_prefix)
     application.include_router(users_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(manual_contracts_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(contract_signing_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(contracts_router.router, prefix=settings.api_v1_prefix)
     application.include_router(events_router.router, prefix=settings.api_v1_prefix)
     application.include_router(financial_router.router, prefix=settings.api_v1_prefix)
     application.include_router(catalog_router.router, prefix=settings.api_v1_prefix)

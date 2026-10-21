@@ -38,7 +38,10 @@ from app.infrastructure.adapters.primary.web.schemas.manual_booking_schemas impo
     ManualRequest,
     RefundRequest,
 )
-from app.infrastructure.adapters.secondary.persistence.database import get_session
+from app.infrastructure.adapters.secondary.persistence.database import (
+    get_contract_write_session,
+    get_session,
+)
 from app.infrastructure.di.containers import (
     get_availability_port,
     get_booking_documents,
@@ -173,6 +176,7 @@ async def confirm_booking(
     quote_id: UUID,
     payload: ConfirmRequest,
     context: Staff,
+    transaction: Annotated[AsyncSession, Depends(get_contract_write_session, scope="function")],
     use_case: Annotated[ConfirmManualBookingUseCase, Depends(get_confirm_manual_booking_use_case)],
 ) -> BookingResponse:
     if not payload.receipt_verified:
