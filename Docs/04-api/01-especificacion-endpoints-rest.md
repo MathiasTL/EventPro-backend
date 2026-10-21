@@ -1408,7 +1408,7 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
     }
   }
   ```
-* **Request multipart:** campos `attachment` (archivo, obligatorio) y `content` (texto opcional que acompaña al adjunto). Aplican las reglas de subida de archivos de la sección 1: máximo 5 MB, validación por contenido y tipos JPEG, PNG, WebP o PDF.
+* **Request multipart:** campos `attachment` (archivo, obligatorio) y `content` (texto opcional que acompaña al adjunto). Aplican las reglas de subida de archivos de la sección 1: máximo 5 MB, validación por contenido y tipos JPEG, PNG, WebP o PDF. El multipart se acota antes de leerlo: exige el encabezado `Content-Length` (sin él responde `422` `validation-error`), rechaza con `422` `invalid-file` un cuerpo que supere 5 MB más 64 KiB de sobrecarga, y admite un solo archivo y como máximo 4 campos (texto de hasta 4096 caracteres). El adjunto viaja como `DOCUMENT`.
 * **Response `202 Accepted`:**
   ```json
   {

@@ -19,6 +19,8 @@ erDiagram
     CLIENTS ||--o{ CONVERSATION_LINKS : converses
     QUOTES |o--o{ CONVERSATION_LINKS : current_quote
     USERS |o--o{ CONVERSATION_LINKS : takes_over
+    USERS |o--o{ CONVERSATION_LINKS : marks_event_done
+    USERS |o--o{ OUTBOX_MESSAGES : authors
 
     PACKAGES ||--o{ PACKAGE_THEMES : contains
     THEMES ||--o{ PACKAGE_THEMES : defines
@@ -302,17 +304,23 @@ erDiagram
         timestamptz delivered_at "NULL"
         timestamptz read_at "NULL"
         boolean redact_after_send "default false"
+        uuid author_user_id FK "NULL; FK (users.id), INDEX; nulo en mensajes del bot"
+        text retried_external_message_id "NULL; INDEX; id de Chatwoot previo a un reintento"
     }
 
     CONVERSATION_LINKS {
         uuid id PK "default gen_random_uuid()"
         bigint chatwoot_conversation_id UK "UNIQUE"
-        uuid client_id FK "FK (clients.id), INDEX"
+        uuid client_id FK "NULL; FK (clients.id), INDEX"
         uuid quote_id FK "NULL; FK (quotes.id), INDEX"
         uuid assigned_user_id FK "NULL; FK (users.id); partial INDEX"
         varchar(30) handoff_reason "NULL; CHECK in (CLIENT_REQUEST, BOT_NOT_UNDERSTOOD, MANUAL_TAKEOVER, BOT_ERROR)"
         text handoff_summary "NULL"
         timestamptz handed_off_at "NULL"
+        timestamptz last_client_message_at "NULL"
+        timestamptz event_done_at "NULL"
+        uuid event_done_by_user_id FK "NULL; FK (users.id), INDEX"
+        timestamptz lead_cycle_started_at "NULL"
         timestamptz created_at "default CURRENT_TIMESTAMP"
         timestamptz updated_at "default CURRENT_TIMESTAMP"
     }
@@ -369,9 +377,11 @@ Restricciones compuestas, parciales o de varias columnas que no se pueden expres
   * `INDEX(status, next_attempt_at)` para el despachador de mensajes pendientes.
   * `UNIQUE(external_message_id)`: un aviso de entrega corresponde a un único mensaje; admite varios valores nulos.
   * `CHECK (delivery_status IN ('DELIVERED', 'READ', 'FAILED'))`: el valor nulo (sin aviso todavía) es válido.
+  * `INDEX(author_user_id)` e `INDEX(retried_external_message_id)` para resolver la autoría de los mensajes de un hilo.
 * **`conversation_links`**
   * `UNIQUE(chatwoot_conversation_id)`: una conversación de Chatwoot se vincula a un único cliente.
-  * `INDEX(client_id)`
+  * `INDEX(client_id)` (`client_id` admite nulo: el vínculo no crea clientes).
+  * `INDEX(event_done_by_user_id)`.
   * `CREATE INDEX ix_conversation_links_assigned_user ON conversation_links (assigned_user_id) WHERE assigned_user_id IS NOT NULL` para el filtro «asignadas a mí» de la bandeja.
   * Solo guarda el vínculo de negocio; los mensajes, medios, estados de entrega y el estado de la conversación viven en Chatwoot (ADR-10).
 
@@ -382,5 +392,5 @@ Restricciones compuestas, parciales o de varias columnas que no se pueden expres
 * Los tipos se escriben como en el diccionario; las precisiones `NUMERIC(p,s)` se representan `numeric(p_s)` por limitación de la sintaxis de Mermaid.
 * El comentario de cada atributo indica `NULL` (si admite nulos), el valor por defecto y las restricciones. Los atributos sin la marca `NULL` son `NOT NULL`.
 * `payments.quote_id` es obligatorio y `payments.event_id` es opcional: el adelanto se registra antes de que exista el evento.
-* `conversation_links` no almacena mensajes: Chatwoot es la fuente de verdad de la conversación. `quote_id` apunta a la cotización vigente y `assigned_user_id` al encargado que tomó la conversación; ambos son opcionales.
+* `conversation_links` no almacena mensajes: Chatwoot es la fuente de verdad de la conversación. `quote_id` apunta a la cotización vigente y `assigned_user_id` al encargado que tomó la conversación; ambos son opcionales. `last_client_message_at`, `event_done_at`, `event_done_by_user_id` y `lead_cycle_started_at` sostienen la ventana de 24 h y el estado comercial de la conversación (spec 09).
 * Un evento puede tener varios contratos a lo largo del tiempo, pero solo uno no anulado (`VOIDED`) simultáneamente (índice único parcial).

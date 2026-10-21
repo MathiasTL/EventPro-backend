@@ -2,7 +2,7 @@
 
 * **Estado:** Propuesto (pendiente de revisión).
 * **Fecha:** 2026-10-03.
-* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). El bot de WhatsApp ya existe (`app/application/use_cases/bot/`, [spec 08](08-spec-e1-contrato-cotizacion.md)); la bandeja, la persistencia del traspaso y el SSE siguen pendientes y se especifican en el [documento 09](09-spec-e1-bandeja-conversaciones.md). Los payloads se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19, tarea 7.1 del cambio); la excepción son los adjuntos, que no se capturaron. La prueba de extremo a extremo con el número de prueba de Meta pasó el 2026-10-19 (tarea 7.3): `EnqueueMessage` (TEXT) → *worker* → Chatwoot (token del bot) → WhatsApp → webhook de cuenta `message_updated` firmado → API → fila del *outbox* con `status=SENT`, `delivery_status=READ`, `delivered_at` y `read_at`.
+* **Implementación E1:** `ChatwootMessagingAdapter` y el webhook firmado de avisos de entrega (cambio `e1-chatwoot-gateway`). El bot de WhatsApp ya existe (`app/application/use_cases/bot/`, [spec 08](08-spec-e1-contrato-cotizacion.md)); la bandeja de conversaciones, la persistencia del traspaso, la autoría de los mensajes y el puente SSE se implementaron en el cambio `e1-conversation-inbox` y se especifican en el [documento 09](09-spec-e1-bandeja-conversaciones.md). Los payloads se conciliaron con capturas reales de Chatwoot v4.18.0 (2026-10-19, tarea 7.1 del cambio); la excepción son los adjuntos, que no se capturaron. La prueba de extremo a extremo con el número de prueba de Meta pasó el 2026-10-19 (tarea 7.3): `EnqueueMessage` (TEXT) → *worker* → Chatwoot (token del bot) → WhatsApp → webhook de cuenta `message_updated` firmado → API → fila del *outbox* con `status=SENT`, `delivery_status=READ`, `delivered_at` y `read_at`.
 * **Decisión asociada:** ADR-10 (por registrar en [`04-adr-decisiones-arquitectura.md`](04-adr-decisiones-arquitectura.md)); reemplaza la parte de WhatsApp de ADR-05. La parte de Google Maps de ADR-05 sigue vigente.
 
 ---
@@ -80,18 +80,21 @@ Las credenciales de Meta (token de *system user*, ID del número, ID de la cuent
 | Campo | Descripción |
 |---|---|
 | `chatwoot_conversation_id` | Identificador de la conversación en Chatwoot (único). |
-| `client_id` | FK a `clients` (teléfono de WhatsApp como clave natural). |
+| `client_id` | FK opcional a `clients` (teléfono de WhatsApp como clave natural); nulo mientras el contacto no es un cliente registrado, porque el vínculo no crea clientes. |
 | `quote_id` | FK opcional a la cotización vigente. |
 | `assigned_user_id` | FK opcional al encargado que tomó la conversación. |
 | `handoff_reason` | `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR` o nulo. |
 | `handoff_summary` | Resumen generado al derivar (datos capturados, cotización vigente). |
+| `handed_off_at` | Fecha y hora de la última derivación. |
+| `last_client_message_at` | Último mensaje entrante del cliente; define cuándo vence la ventana de 24 h. |
+| `event_done_at`, `event_done_by_user_id`, `lead_cycle_started_at` | Marca manual de «Evento realizado» y reinicio del ciclo comercial (documento 09, D25). |
 
 No se duplican mensajes en la base de datos de EventPro.
 
 ### 3.2 Identidades en Chatwoot (invisibles)
 
 * **Agent Bot** asignado a la bandeja de WhatsApp: hace que las conversaciones nuevas nazcan en `pending` y firma los mensajes del bot. Funciona sin `outgoing_url` (verificado el 2026-10-19); el panel de Chatwoot 4.18 exige esa URL, por lo que el bot se crea desde la consola de Rails.
-* **Agente de servicio único:** su token resuelve contactos y conversaciones y cambia el estado. Los mensajes, tanto los del bot como los que escriben los encargados desde EventPro, se crean con el token del bot (tabla siguiente); por eso Chatwoot no los distingue. El autor real queda en `audit_logs` y en `outbox_messages.author_user_id` (ver [documento 09](09-spec-e1-bandeja-conversaciones.md), sección 4.3).
+* **Agente de servicio único:** su token resuelve contactos y conversaciones y cambia el estado. Los mensajes, tanto los del bot como los que escriben los encargados desde EventPro, se crean con el token del bot (tabla siguiente); por eso Chatwoot no los distingue. El autor real queda en `audit_logs` y en `outbox_messages.author_user_id`; la autoría que ve la bandeja se resuelve primero por el *outbox* y solo después por el remitente de Chatwoot: `AGENT` (encargado, con su nombre), `BOT` o `CLIENT`. Los avisos de actividad de Chatwoot (`message_type: 2`, sin remitente) se exponen como `ACTIVITY`, nunca como `BOT` (ver [documento 09](09-spec-e1-bandeja-conversaciones.md), sección 4.3).
 
 Token por operación del adaptador (cabecera `api_access_token`):
 
@@ -112,12 +115,14 @@ Los tokens no aparecen en logs ni en mensajes de error. Los logs omiten el conte
 2. Descarta duplicados por `X-Chatwoot-Delivery` (Redis, TTL de 7 días, clave `eventpro:chatwoot:webhook:{id}`). Si la cabecera falta, usa como identificador el resumen de la firma ya verificada y registra `chatwoot_webhook_delivery_id_missing`. **`X-Chatwoot-Delivery` no forma parte de la firma:** un reenvío con esa cabecera alterada pasa la deduplicación dentro de la ventana de 5 minutos; el efecto es nulo hoy porque `RecordDeliveryStatus` es idempotente y la ruta es interna.
 3. Encola el evento en arq con una espera de 2 s (para que el despachador alcance a confirmar `SENT`) y responde `200 {"status": "EVENT_RECEIVED"}` sin esperar al procesamiento. Si la deduplicación o el encolado fallan responde `503` (`event-queue-unavailable`) y libera la clave para que un reenvío manual pueda procesarse.
 
-El worker (`process_gateway_event`) enruta. En esta etapa se procesan los **avisos de entrega** y los **mensajes entrantes** (que van al bot):
+El worker (`process_gateway_event`) enruta. Se procesan los **avisos de entrega**, los **mensajes** (entrantes y salientes) y los **mensajes entrantes en `pending`** (que van al bot):
 
 * **Aviso de entrega (`message_updated` de un mensaje saliente):** se aplica a `RecordDeliveryStatus` (ver el documento 07, §5). El `status` y la hora de actualización del mensaje no están en el nivel superior del cuerpo: viajan en la copia incrustada `conversation.messages[]` (la entrada con el mismo `id`). Si esa copia no trae `status`, el worker lo consulta a la API.
-* **Cualquier otro evento** (ecos de mensajes salientes, `conversation_*`, notas privadas, eventos desconocidos): solo se registra (nombre del evento e identificadores, nunca contenido, teléfonos ni URL de adjuntos) y se reconoce sin cambiar datos.
+* **Mensaje (`message_created`, no privado):** asegura el vínculo en `conversation_links`, registra `last_client_message_at` si es entrante (y reinicia el ciclo comercial si el estado era `EVENT_DONE`) y publica `message.created` y `conversation.updated` por Redis *pub/sub* hacia el SSE. Un saliente sin fila de *outbox* se trata como `UNKNOWN_MESSAGE` y reutiliza el reintento acotado (el eco puede llegar antes de que el despachador confirme `SENT`). La suscripción del webhook no cambia (`message_created` y `message_updated`).
+* **Aviso de entrega aplicado:** además de actualizar el *outbox*, publica `message.updated` con el motivo de falla ya traducido.
+* **Cualquier otro evento** (`conversation_*`, notas privadas, eventos desconocidos): solo se registra (nombre del evento e identificadores, nunca contenido, teléfonos ni URL de adjuntos) y se reconoce sin cambiar datos.
 * **Mensaje entrante en `pending`:** se entrega al bot (`HandleIncomingMessage`, estado conversacional en Redis por `conversation_id`). Con la conversación en `open`, el bot no responde.
-* **Pendiente (bandeja):** el procesamiento de un comprobante adjunto (RF-11), la persistencia del traspaso en `conversation_links` y la publicación por SSE a la web se especifican en el [documento 09](09-spec-e1-bandeja-conversaciones.md).
+* **Bot e inbox:** el bot responde solo en `pending` (modo `BOT`); con `open` (modo `HUMAN`) atiende un encargado. Al derivar, el bot persiste motivo, resumen e instante en `conversation_links` y emite `handoff.requested`. El procesamiento de un comprobante adjunto (RF-11) sigue en el flujo del bot. Detalle en el [documento 09](09-spec-e1-bandeja-conversaciones.md), secciones 6.1 y 6.2.
 
 El endpoint **no se expone a internet**: el proxy lo bloquea y solo es accesible por la red interna de Docker.
 
@@ -127,10 +132,14 @@ Roles `ENCARGADO` y `SUPERADMIN`:
 
 | Método y ruta | Descripción |
 |---|---|
-| `GET /conversations` | Bandeja con filtros: bot, humano, asignadas al usuario. |
-| `GET /conversations/{id}/messages` | Mensajes de la conversación (consultados a Chatwoot). |
+| `GET /conversations` | Bandeja con filtros: modo, asignación, encargado (`SUPERADMIN`), búsqueda `q` y resueltas. |
+| `GET /conversations/{id}` | Una conversación, con el formato de un ítem de la bandeja. |
+| `GET /conversations/{id}/messages` | Mensajes de la conversación (consultados a Chatwoot), con autoría y la lista `unsent` del *outbox*. |
 | `GET /conversations/{id}/attachments/{attachment_id}` | Sirve un adjunto de la conversación a través de EventPro (proxy hacia Chatwoot); sus URL no se exponen al navegador. |
 | `POST /conversations/{id}/messages` | Envía texto o adjuntos como el agente de servicio. |
+| `POST /conversations/{id}/messages/{outbox_id}/retry` | Reencola la misma fila del *outbox* de un mensaje fallido. |
+| `POST /conversations/{id}/read` | Marca la conversación como leída (reinicia `unread_count`). |
+| `POST /conversations/{id}/lead/event-done` | Marca a mano la etapa comercial «Evento realizado». |
 | `POST /conversations/{id}/takeover` | Pasa a `open`, asigna al encargado; el bot deja de responder. |
 | `POST /conversations/{id}/release` | Vuelve a `pending`; responde el bot. |
 | `GET /conversations/stream` | Eventos en tiempo real (SSE). |
@@ -138,8 +147,8 @@ Roles `ENCARGADO` y `SUPERADMIN`:
 ### 3.5 Traspaso
 
 * **Disparadores:** el cliente lo solicita (opción «Hablar con un encargado» o texto equivalente), el bot no entiende dos veces consecutivas, o un encargado ejecuta `takeover`.
-* **Al derivar:** el bot avisa al cliente («Te comunico con un encargado»), registra `handoff_reason` y `handoff_summary`, y la conversación pasa a `open` sin asignar, con aviso en tiempo real en la bandeja.
-* **Retorno al bot:** el encargado ejecuta `release`. Si la conversación se resuelve y el cliente vuelve a escribir, se debe verificar en la implementación que se reabra en `pending`; si no, se documenta el retorno manual.
+* **Al derivar:** el bot avisa al cliente («Te comunico con un encargado»), registra `handoff_reason`, `handoff_summary` y `handed_off_at` en `conversation_links`, y la conversación pasa a `open` sin asignar, con el evento `handoff.requested` en tiempo real en la bandeja. Si Chatwoot no acepta el cambio de estado, no se registra la derivación (la reconciliación pendiente lo corrige, sección 4).
+* **Retorno al bot:** el encargado ejecuta `release`. Verificado el 2026-10-20: si la conversación se resuelve y el cliente vuelve a escribir, se reabre en `pending` y responde el bot.
 * **Decisiones de negocio** (aprobación del adelanto, sobrecupo, rechazo de comprobante) se mantienen en el panel de EventPro; no se toman desde la conversación.
 
 ### 3.6 Ventana de 24 horas

@@ -328,7 +328,7 @@ Query nuevos: `q` (texto, mínimo 2 caracteres) y `assigned_user_id` (UUID; un `
 | `assigned_user_name` | texto o `null` | Para el *chip* del encargado |
 | `unread_count` | entero | Ver D13 |
 | `quote_status` | `QuoteStatus` o `null` | Estado de la cotización vinculada |
-| `lead_status` | `QUOTING`, `QUOTE_SENT`, `PAYMENT_STARTED`, `CONVERTED`, `QUOTE_CLOSED` | Sección 4.2; nunca nulo |
+| `lead_status` | `QUOTING`, `QUOTE_SENT`, `PAYMENT_STARTED`, `CONVERTED`, `QUOTE_CLOSED`, `EVENT_DONE` | Sección 4.2 (D25); nunca nulo |
 
 ```json
 {
@@ -440,7 +440,7 @@ Se reutilizan los tipos del catálogo de la sección 3 de la especificación RES
 | `validation-error` | `422` | Cuerpo vacío, `q` de menos de 2 caracteres, archivo inválido |
 | `forbidden` | `403` | `OPERADOR`, o `assigned_user_id` enviado por un `ENCARGADO` |
 | `messaging-gateway-unavailable` | `503` | Chatwoot no responde en una operación síncrona |
-| `event-queue-unavailable` | `503` | Redis no disponible al abrir el stream |
+| ~~`event-queue-unavailable`~~ | — | No se usa: el stream valida solo `401`/`403` antes de abrir; si Redis falla, el stream termina y el cliente reconecta (sección 8) |
 
 > **Decisión de diseño D10.** `MessagingUnavailableError` (código interno `messaging-unavailable`, `messaging_exceptions.py:12`) se traduce a `503 messaging-gateway-unavailable` en el router de conversaciones, con un detalle fijo («La mensajería no está disponible temporalmente.»), y `ResourceNotFoundError` de Chatwoot a `404 not-found`. *Por qué:* el nombre público del tipo difiere del interno, y un manejador global alteraría a otros módulos; ni el detalle ni los registros devueltos al navegador mencionan a Chatwoot.
 
@@ -609,13 +609,15 @@ D1 vínculo por *upsert* sin crear clientes; D2 derivación persistente y mapa d
 
 ## 18. Impacto en la documentación
 
-| Documento | Cambio |
-| :--- | :--- |
-| `04-api/01-especificacion-endpoints-rest.md` | Módulo 2.14: parámetros `q` y `assigned_user_id`; campos de 7.2 y 7.3; endpoints `GET /conversations/{id}`, `.../retry`, `.../read` y `.../lead/event-done`; filas `invalid-outbox-state` e `invalid-lead-transition` en el catálogo (se hace en este cambio) |
-| `02-arquitectura/05-spec-chatwoot-gateway.md` | Estado de bot y bandeja, eventos procesados y autoría de los mensajes (se hace en este cambio); enlace a esta especificación |
-| `03-datos/02-diccionario-de-datos.md` | `conversation_links.client_id` nulo y `last_client_message_at`; `outbox_messages.author_user_id` |
-| `01-requisitos/04-reglas-de-negocio-y-control.md` | Tabla 3.5: bloque «Estado comercial de la conversación» con los cinco valores de 4.2 |
-| `01-requisitos/02-requerimientos-funcionales.md` | RF-31 paso 6: el reintento reencola la fila (no un `POST` nuevo); RF-31: búsqueda, no leídos y estado comercial |
-| `01-requisitos/05-historias-de-usuario.md` | US-30: búsqueda, no leídos, filtro por encargado y estado comercial |
-| `02-arquitectura/03-frontend-arquitectura-fsd.md` | Slices de 12.1 y reintento por `retry` |
-| `Docs/README.md` | Índice con esta especificación |
+Estado al cierre de B10 (2026-10-21): todas las filas están aplicadas.
+
+| Documento | Cambio | Estado |
+| :--- | :--- | :---: |
+| `04-api/01-especificacion-endpoints-rest.md` | Módulo 2.14: parámetros `q` y `assigned_user_id`; campos de 7.2 y 7.3; endpoints `GET /conversations/{id}`, `.../retry`, `.../read` y `.../lead/event-done`; requisitos del envío multipart (`Content-Length`, límites); filas `invalid-outbox-state` e `invalid-lead-transition` en el catálogo | Hecho |
+| `02-arquitectura/05-spec-chatwoot-gateway.md` | Estado de bot y bandeja, eventos procesados, autoría de los mensajes (`AGENT`, `BOT`, `CLIENT`, `ACTIVITY`) y campos de `conversation_links`; enlace a esta especificación | Hecho |
+| `03-datos/02-diccionario-de-datos.md` y `03-datos/01-diagrama-entidad-relacion.md` | `conversation_links.client_id` nulo, `last_client_message_at`, `event_done_at`, `event_done_by_user_id`, `lead_cycle_started_at`; `outbox_messages.author_user_id` y `retried_external_message_id`; índices | Hecho |
+| `01-requisitos/04-reglas-de-negocio-y-control.md` | Tabla 3.5: bloque «Estado comercial de la conversación» con los seis valores de 4.2 y sus reglas (D25) | Hecho |
+| `01-requisitos/02-requerimientos-funcionales.md` | RF-30: persistencia del traspaso; RF-31: el reintento reencola la fila (no un `POST` nuevo), búsqueda, no leídos, estado comercial, filtro por encargado y sin plantillas | Hecho |
+| `01-requisitos/05-historias-de-usuario.md` | US-30: búsqueda, no leídos, filtro por encargado, estado comercial y marca manual «Evento realizado»; US-28: sin plantillas | Hecho |
+| `02-arquitectura/03-frontend-arquitectura-fsd.md` | Slices de 12.1 y reintento por `retry` | Hecho |
+| `Docs/README.md` | Índice con esta especificación | Hecho |
