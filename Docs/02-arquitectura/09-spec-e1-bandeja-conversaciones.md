@@ -242,7 +242,7 @@ Puerto de lectura nuevo `IInboxLookupPort` con tres consultas por lote: `client_
 2. Si ya está `open` y asignada al mismo usuario, responde `200` sin cambios.
 3. Si está asignada a otro: `ENCARGADO` recibe `409 conversation-taken-by-other`; `SUPERADMIN` sigue como reasignación (6.6).
 4. `claim(conversation, user, expected_assignee)`. Si pierde, `409 conversation-taken-by-other`.
-5. Si el estado no es `open`: `set_conversation_status(HUMAN)`. Si falla, **compensa** (`release` con el asignado esperado = el usuario) y responde `503`.
+5. Tras ganar el `claim`, siempre `set_conversation_status(HUMAN)` (idempotente, porque la lectura del paso 1 pudo quedar vieja). Si falla, **compensa** (`release` con el asignado esperado = el usuario) y responde `503`.
 6. Si estaba en modo `BOT` (`pending` o `resolved`): `handoff_reason = MANUAL_TAKEOVER` y `handed_off_at`. Si ya era una derivación sin asignar, conserva el motivo original.
 7. Si estaba en modo `BOT`, limpia la sesión del bot en Redis (D23), de mejor esfuerzo: una falla se registra y no revierte la toma.
 8. Publica `conversation.updated` y responde `200` con la fila actualizada.
@@ -263,7 +263,7 @@ Puerto de lectura nuevo `IInboxLookupPort` con tres consultas por lote: `client_
 
 1. Si ya está en `pending` (o `resolved` sin asignado), responde `200` sin cambios.
 2. Autoriza: el asignado o `SUPERADMIN`; otro `ENCARGADO`, `409 conversation-taken-by-other`.
-3. `release` con el asignado esperado y luego `set_conversation_status(BOT)`; si Chatwoot falla, restituye la asignación y responde `503`.
+3. Primero `set_conversation_status(BOT)` con la asignación aún vigente; si Chatwoot falla, `503` sin cambios. Luego `release` con el asignado esperado; si pierde (un `SUPERADMIN` reasignó entretanto), se registra y se responde con la fila vigente sin revertir Chatwoot. Mientras tanto, la toma de otro encargado recibe `409 conversation-taken-by-other`.
 4. `handoff_reason` y `handed_off_at` se conservan como historial.
 5. Si un `SUPERADMIN` devolvió una conversación asignada a otro, audita `OVERRIDE_CONVERSATION_ASSIGNMENT` (D9).
 6. Publica `conversation.updated`. El bot retoma **desde el saludo**, porque su sesión se limpió al derivar.

@@ -93,6 +93,7 @@ class FakeMessagingAdapter:
         self.sent: list[SentMessage] = []
         self.service_window_open = True
         self.unavailable = False
+        self.status_update_fails = False
 
     async def send_text(self, to: PhoneNumber, body: str) -> MessageReceipt:
         receipt = self._deliver(to, requires_window=True, body=body)
@@ -145,6 +146,8 @@ class FakeMessagingAdapter:
         self, conversation_id: int, status: ConversationStatus
     ) -> None:
         conversation = self._conversation(conversation_id)
+        if self.status_update_fails:
+            raise MessagingUnavailableError("El gateway de mensajería no responde.")
         conversation.status = status
         conversation.resolved = False
 

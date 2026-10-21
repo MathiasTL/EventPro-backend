@@ -2,7 +2,7 @@
 
 import time
 from collections.abc import Iterator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import jwt
@@ -64,9 +64,9 @@ def app(subscriber: OneEventSubscriber) -> Iterator[FastAPI]:
     auth_support.set_role(Role.SUPERADMIN)
 
 
-def _token(*, expires_minutes: int = 60) -> str:
+def _token(*, expires_minutes: int = 60, subject: UUID | None = None) -> str:
     return create_access_token(
-        subject=str(uuid4()),
+        subject=str(subject or uuid4()),
         role="ENCARGADO",
         secret_key=get_settings().secret_key,
         expires_minutes=expires_minutes,

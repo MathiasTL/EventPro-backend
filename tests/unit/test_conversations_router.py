@@ -1,13 +1,19 @@
 """Router de lectura de la bandeja: RBAC, filtros, 503/404 y orden de rutas (spec 09, 7 y 10)."""
 
 from collections.abc import Iterator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport
 
+from app.application.dtos.messaging_dto import ConversationStatus
+from app.application.services.audit_service import AuditService
+from app.application.use_cases.messaging.conversation_assignment import (
+    ReleaseConversation,
+    TakeoverConversation,
+)
 from app.application.use_cases.messaging.conversation_views import ConversationViewBuilder
 from app.application.use_cases.messaging.list_conversation_messages import (
     ListConversationMessages,
@@ -22,6 +28,9 @@ from app.domain.entities.conversation_link import ConversationLink
 from app.domain.entities.quote import QuoteStatus
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.role import Role
+from app.infrastructure.adapters.secondary.cache.in_memory_conversation_session_adapter import (
+    InMemoryConversationSessionAdapter,
+)
 from app.infrastructure.adapters.secondary.events.in_memory_conversation_event_publisher import (
     InMemoryConversationEventPublisher,
 )
@@ -31,6 +40,7 @@ from app.infrastructure.adapters.secondary.external_services.fake_messaging_adap
 from app.infrastructure.di import containers
 from app.main import create_app
 from tests import auth_support
+from tests.application.assignment_support import InMemoryAuditPort, InMemoryLinkUnitOfWork
 from tests.application.conversation_link_support import InMemoryConversationLinkRepository
 from tests.application.inbox_read_support import FakeInboxLookup
 from tests.application.outbox_support import NOW, FixedClock, InMemoryOutboxStore
@@ -57,6 +67,18 @@ class _Env:
         self.event_done = MarkEventDone(
             self.messaging, self.links, views, self.publisher, FixedClock()
         )
+        self.audit = InMemoryAuditPort()
+        assignment_args = (
+            self.messaging,
+            InMemoryLinkUnitOfWork(self.links),
+            views,
+            InMemoryConversationSessionAdapter(),
+            AuditService(self.audit),
+            self.publisher,
+            FixedClock(),
+        )
+        self.takeover = TakeoverConversation(*assignment_args)
+        self.release = ReleaseConversation(*assignment_args)
 
     def link_quote(self, status: QuoteStatus) -> None:
         quote_id = uuid4()
@@ -81,14 +103,19 @@ def app(env: _Env) -> Iterator[FastAPI]:
     overrides[containers.get_list_conversation_messages_use_case] = lambda: env.messages
     overrides[containers.get_mark_conversation_read_use_case] = lambda: env.read
     overrides[containers.get_mark_event_done_use_case] = lambda: env.event_done
+    overrides[containers.get_takeover_conversation_use_case] = lambda: env.takeover
+    overrides[containers.get_release_conversation_use_case] = lambda: env.release
     overrides[containers.get_conversation_event_subscriber] = lambda: OneEventSubscriber()
     auth_support.set_role(Role.ENCARGADO)
     yield application
     auth_support.set_role(Role.SUPERADMIN)
 
 
-async def _request(app: FastAPI, method: str, path: str, **kwargs: object) -> httpx.Response:
-    headers = {"Authorization": f"Bearer {_token()}"}
+async def _request(
+    app: FastAPI, method: str, path: str, *, user: UUID | None = None, **kwargs: object
+) -> httpx.Response:
+    token = _token() if user is None else _token(subject=user)
+    headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
         return await client.request(method, f"{BASE}{path}", headers=headers, **kwargs)  # type: ignore[arg-type]
 
@@ -148,6 +175,8 @@ async def test_search_and_filters_apply(app: FastAPI) -> None:
         ("GET", "/1"),
         ("GET", "/1/messages"),
         ("POST", "/1/read"),
+        ("POST", "/1/takeover"),
+        ("POST", "/1/release"),
     ],
 )
 async def test_operador_is_forbidden(app: FastAPI, method: str, path: str) -> None:
@@ -304,3 +333,86 @@ async def test_event_done_is_forbidden_for_an_operator(app: FastAPI, env: _Env) 
 
     assert response.status_code == 403
     assert 1 not in {k for k, v in env.links.links.items() if v.event_done_at}
+
+
+# --- takeover y release (B6) ----------------------------------------------------------------
+
+
+async def test_takeover_returns_the_updated_item_and_publishes(app: FastAPI, env: _Env) -> None:
+    response = await _request(app, "POST", "/1/takeover")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["status"], body["mode"]) == ("open", "HUMAN")
+    assert body["assigned_user_id"] == str(env.links.links[1].assigned_user_id)
+    assert body["handoff_reason"] == "MANUAL_TAKEOVER"
+    assert [e.data["status"] for e in env.publisher.events] == ["open"]
+
+
+async def test_takeover_of_another_encargados_conversation_is_a_409_with_the_assignee(
+    app: FastAPI, env: _Env
+) -> None:
+    owner = uuid4()
+    await env.messaging.set_conversation_status(1, ConversationStatus.HUMAN)
+    env.links.put(ConversationLink.create(chatwoot_conversation_id=1, now=NOW))
+    await env.links.claim(1, owner, None)
+
+    response = await _request(app, "POST", "/1/takeover")
+
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"].endswith("/conversation-taken-by-other")
+    assert response.json()["assigned_user_id"] == str(owner)
+
+
+async def test_takeover_with_the_gateway_down_is_a_503_and_not_found_is_a_404(
+    app: FastAPI, env: _Env
+) -> None:
+    missing = await _request(app, "POST", "/999/takeover")
+    env.messaging.status_update_fails = True
+    failed = await _request(app, "POST", "/1/takeover")
+
+    assert missing.status_code == 404
+    assert missing.json()["type"].endswith("/not-found")
+    assert failed.status_code == 503
+    assert failed.json()["type"].endswith("/messaging-gateway-unavailable")
+    assert failed.json()["detail"] == FIXED_DETAIL
+    assert env.links.links[1].assigned_user_id is None
+
+
+async def test_release_returns_the_item_in_bot_mode(app: FastAPI, env: _Env) -> None:
+    user = uuid4()
+    await _request(app, "POST", "/1/takeover", user=user)
+
+    response = await _request(app, "POST", "/1/release", user=user)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["status"], body["mode"], body["assigned_user_id"]) == ("pending", "BOT", None)
+    assert body["handoff_reason"] == "MANUAL_TAKEOVER"
+
+
+async def test_release_of_an_unassigned_open_conversation_is_a_409_not_taken(
+    app: FastAPI, env: _Env
+) -> None:
+    await env.messaging.set_conversation_status(1, ConversationStatus.HUMAN)
+
+    response = await _request(app, "POST", "/1/release")
+
+    assert response.status_code == 409
+    assert response.json()["type"].endswith("/conversation-not-taken")
+
+
+async def test_superadmin_reassignment_through_the_endpoint_is_audited(
+    app: FastAPI, env: _Env
+) -> None:
+    owner = uuid4()
+    await env.messaging.set_conversation_status(1, ConversationStatus.HUMAN)
+    env.links.put(ConversationLink.create(chatwoot_conversation_id=1, now=NOW))
+    await env.links.claim(1, owner, None)
+    auth_support.set_role(Role.SUPERADMIN)
+
+    response = await _request(app, "POST", "/1/takeover")
+
+    assert response.status_code == 200
+    assert [e.action for e in env.audit.entries] == ["OVERRIDE_CONVERSATION_ASSIGNMENT"]

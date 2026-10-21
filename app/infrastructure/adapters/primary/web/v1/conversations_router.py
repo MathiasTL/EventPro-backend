@@ -23,6 +23,10 @@ from app.application.dtos.messaging_dto import ConversationStatus
 from app.application.ports.output.conversation_event_subscriber_port import (
     IConversationEventSubscriberPort,
 )
+from app.application.use_cases.messaging.conversation_assignment import (
+    ReleaseConversation,
+    TakeoverConversation,
+)
 from app.application.use_cases.messaging.list_conversation_messages import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -35,6 +39,8 @@ from app.application.use_cases.messaging.list_conversations import (
 from app.application.use_cases.messaging.mark_conversation_read import MarkConversationRead
 from app.application.use_cases.messaging.mark_event_done import MarkEventDone
 from app.domain.exceptions.messaging_exceptions import (
+    ConversationNotTakenError,
+    ConversationTakenByOtherError,
     InvalidLeadTransitionError,
     MessagingUnavailableError,
 )
@@ -200,4 +206,50 @@ async def mark_event_done(
             view = await use_case.execute(conversation_id, user_id=context.user_id)
     except InvalidLeadTransitionError as exc:
         raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
+    return ConversationResponse.from_view(view)
+
+
+@contextmanager
+def _assignment_conflicts() -> Iterator[None]:
+    """409 de tomar y devolver (sección 10); ``taken-by-other`` incluye al asignado vigente."""
+
+    try:
+        yield
+    except ConversationTakenByOtherError as exc:
+        raise ProblemError(
+            409,
+            exc.code,
+            "Conflicto",
+            str(exc),
+            assigned_user_id=str(exc.assigned_user_id) if exc.assigned_user_id else None,
+        ) from exc
+    except ConversationNotTakenError as exc:
+        raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
+
+
+@router.post("/{conversation_id}/takeover", response_model=ConversationResponse)
+async def takeover_conversation(
+    conversation_id: ConversationId,
+    context: InboxUser,
+    use_case: Annotated[
+        TakeoverConversation, Depends(containers.get_takeover_conversation_use_case)
+    ],
+) -> ConversationResponse:
+    """Toma la conversación; un ``SUPERADMIN`` sobre la de otro la reasigna (6.3, 6.6)."""
+
+    with _assignment_conflicts(), _gateway_errors():
+        view = await use_case.execute(conversation_id, user_id=context.user_id, role=context.role)
+    return ConversationResponse.from_view(view)
+
+
+@router.post("/{conversation_id}/release", response_model=ConversationResponse)
+async def release_conversation(
+    conversation_id: ConversationId,
+    context: InboxUser,
+    use_case: Annotated[ReleaseConversation, Depends(containers.get_release_conversation_use_case)],
+) -> ConversationResponse:
+    """Devuelve la conversación al bot; la llama el asignado o un ``SUPERADMIN`` (6.5)."""
+
+    with _assignment_conflicts(), _gateway_errors():
+        view = await use_case.execute(conversation_id, user_id=context.user_id, role=context.role)
     return ConversationResponse.from_view(view)

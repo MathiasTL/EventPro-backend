@@ -71,6 +71,10 @@ from app.application.use_cases.event.register_event_extension import RegisterEve
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
+from app.application.use_cases.messaging.conversation_assignment import (
+    ReleaseConversation,
+    TakeoverConversation,
+)
 from app.application.use_cases.messaging.conversation_views import ConversationViewBuilder
 from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
@@ -200,6 +204,9 @@ from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_f
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_bot_unit_of_work import (
     SqlAlchemyBotUnitOfWork,
+)
+from app.infrastructure.adapters.secondary.persistence.sqlalchemy_conversation_link_unit_of_work import (  # noqa: E501
+    SqlAlchemyConversationLinkUnitOfWork,
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
     SQLAlchemyHealthAdapter,
@@ -484,6 +491,42 @@ def get_mark_event_done_use_case(
     return MarkEventDone(
         get_messaging_port(), links, views, get_conversation_event_publisher(), get_clock_port()
     )
+
+
+def _assignment_args(
+    views: ConversationViewBuilder,
+) -> tuple[
+    IMessagingPort,
+    SqlAlchemyConversationLinkUnitOfWork,
+    ConversationViewBuilder,
+    IConversationSessionPort,
+    AuditService,
+    IConversationEventPublisherPort,
+    IClockPort,
+]:
+    return (
+        get_messaging_port(),
+        SqlAlchemyConversationLinkUnitOfWork(get_sessionmaker()),
+        views,
+        get_conversation_session_port(),
+        get_audit_service(),
+        get_conversation_event_publisher(),
+        get_clock_port(),
+    )
+
+
+def get_takeover_conversation_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> TakeoverConversation:
+    """Cada tramo de escritura abre su transacción corta: ninguna sigue abierta durante Chatwoot."""
+
+    return TakeoverConversation(*_assignment_args(views))
+
+
+def get_release_conversation_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> ReleaseConversation:
+    return ReleaseConversation(*_assignment_args(views))
 
 
 def get_mark_conversation_read_use_case(
