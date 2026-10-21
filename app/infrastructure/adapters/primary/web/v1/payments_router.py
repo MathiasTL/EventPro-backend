@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, Form, Query, Response, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.dtos.payment_dto import (
     AuditPaymentInput,
@@ -47,6 +48,7 @@ from app.infrastructure.adapters.primary.web.schemas.payment_schemas import (
     PaymentVerifyRequest,
     PaymentVerifyResponse,
 )
+from app.infrastructure.adapters.secondary.persistence.database import get_contract_write_session
 from app.infrastructure.adapters.secondary.storage.local_evidence_storage import (
     LocalEvidenceStorage,
 )
@@ -169,6 +171,7 @@ async def get_payment_evidence(
 async def verify_payment(
     payment_id: UUID,
     payload: Annotated[PaymentVerifyRequest, Body()],
+    transaction: Annotated[AsyncSession, Depends(get_contract_write_session, scope="function")],
     context: Annotated[AuthContext, Depends(require_role(Role.ENCARGADO, Role.SUPERADMIN))],
     use_case: Annotated[VerifyPaymentUseCase, Depends(containers.get_verify_payment_use_case)],
 ) -> PaymentVerifyResponse:
@@ -188,6 +191,8 @@ async def verify_payment(
     except ValidationError as exc:
         raise _map_validation(exc) from exc
     except InvalidPaymentStateError as exc:
+        raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
+    except ResourceInUseError as exc:
         raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
 
 

@@ -2,9 +2,10 @@
 
 from datetime import date, time
 from decimal import Decimal
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.application.dtos.quote_dto import ClientInput, CreateQuoteInput, QuoteExtraInput
 from app.domain.entities.quote import QuoteSource
@@ -38,7 +39,9 @@ class CreateQuoteRequest(BaseModel):
     client_provides_mobility: bool = False
     latitude: Decimal | None = Field(default=None, ge=-90, le=90, decimal_places=7)
     longitude: Decimal | None = Field(default=None, ge=-180, le=180, decimal_places=7)
-    observations: str | None = None
+    observations: (
+        Annotated[str, StringConstraints(strip_whitespace=False, max_length=5000)] | None
+    ) = None
     source: QuoteSource = QuoteSource.WHATSAPP
 
     def to_input(self) -> CreateQuoteInput:

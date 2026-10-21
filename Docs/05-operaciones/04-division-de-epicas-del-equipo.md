@@ -236,6 +236,8 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 
 ## 4. Contratos entre épicas
 
+**Integración con E2:** la [guía de coordinación E2](coordinaciones-e2/README.md) describe las conexiones backend por integrante. E1/E3/E4/E5/E6 adaptan sus módulos a los puertos, DTO y estados existentes de E2. Las diferencias de formato se resuelven en los adaptadores de cada módulo, manteniendo estable la interfaz de E2.
+
 Estos son los puntos donde una épica consume a otra. Cada contrato se define como **puerto** en el backend y se acuerda entre los dos dueños antes de implementarlo.
 
 | Consumidor | Proveedor | Contrato | Cuándo se usa |
@@ -263,6 +265,7 @@ Estos son los puntos donde una épica consume a otra. Cada contrato se define co
 | Ramas y commits | Seguir [`03-gobernanza-git-y-calidad-dod.md`](03-gobernanza-git-y-calidad-dod.md). Una rama por historia con prefijo de tipo de commit (`feat/`, `fix/`, `docs/`, `build/`, `chore/`), por ejemplo `feat/us-08-capacidad-elencos`. |
 | Migraciones de Alembic | Hacer *rebase* sobre la rama principal antes de generar una migración. Debe existir **un solo `head`**; si aparecen dos, se resuelve antes del merge. |
 | Zonas compartidas | `app/core/` (backend) y `shared/` (frontend) se modifican con revisión de Diego. |
+| Fronteras backend E2 | Seguir la [guía de coordinación](coordinaciones-e2/README.md): adaptar el módulo del integrante a los contratos existentes de E2, reutilizar firma, contratos, seguridad y auditoría, y documentar la compatibilidad en el PR. |
 | Regla de FSD | Respetar la dirección de importación: una feature nunca importa otra feature. Ver [`02-arquitectura/03-frontend-arquitectura-fsd.md`](../02-arquitectura/03-frontend-arquitectura-fsd.md). |
 | Regla hexagonal | El dominio no importa FastAPI, SQLAlchemy ni clientes externos. Ver [`02-arquitectura/02-backend-arquitectura-hexagonal.md`](../02-arquitectura/02-backend-arquitectura-hexagonal.md). |
 | Revisión de código | Cada PR lo revisa al menos un integrante de **otra** épica, para compartir el conocimiento del sistema. |

@@ -14,6 +14,7 @@ from app.application.dtos.override_dto import (
     ApproveOverbookedInput,
     OverbookedDecision,
 )
+from app.application.ports.output.contract_port import IContractIssuer
 from app.application.ports.output.event_repository_port import IEventRepositoryPort
 from app.application.ports.output.payment_repository_port import IPaymentRepositoryPort
 from app.application.services.audit_service import AuditService
@@ -24,11 +25,16 @@ class ApproveOverbookedPaymentUseCase:
     """Aprueba o rechaza el sobrecupo de un adelanto."""
 
     def __init__(
-        self, payments: IPaymentRepositoryPort, audit: AuditService, events: IEventRepositoryPort
+        self,
+        payments: IPaymentRepositoryPort,
+        audit: AuditService,
+        events: IEventRepositoryPort,
+        contracts: IContractIssuer | None = None,
     ) -> None:
         self._payments = payments
         self._audit = audit
         self._events = events
+        self._contracts = contracts
 
     async def execute(self, dto: ApproveOverbookedInput) -> ApproveOverbookedDTO:
         payment = await self._payments.get_by_id(dto.payment_id)
@@ -43,6 +49,8 @@ class ApproveOverbookedPaymentUseCase:
                 raise ValidationError("event_id es obligatorio para aprobar el sobrecupo")
             if await self._events.get_by_id_for_update(dto.event_id) is None:
                 raise ResourceNotFoundError("Evento no encontrado")
+            if self._contracts is not None:
+                await self._contracts.prepare_payment_event(dto.event_id, payment.quote_id)
             payment.approve_overbooked(
                 verified_by_user_id=dto.decided_by_user_id,
                 event_id=dto.event_id,
@@ -54,6 +62,12 @@ class ApproveOverbookedPaymentUseCase:
             action = "REJECT_OVERBOOKED_PAYMENT"
 
         await self._payments.save(payment)
+        if (
+            dto.decision is OverbookedDecision.APPROVE
+            and self._contracts is not None
+            and dto.event_id is not None
+        ):
+            await self._contracts.issue_for_event(dto.event_id, dto.decided_by_user_id)
         await self._audit.record(
             action=action,
             entity_name="payments",

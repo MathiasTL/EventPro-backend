@@ -17,6 +17,7 @@ from app.application.ports.output.manual_booking_port import (
     IManualBookingStore,
     ManualBooking,
 )
+from app.application.use_cases.contract.manage_contracts import ManageContracts
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
 from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
 from app.application.use_cases.quote.register_manual_booking import (
@@ -25,6 +26,7 @@ from app.application.use_cases.quote.register_manual_booking import (
 )
 from app.domain.exceptions.payment_exceptions import InvalidPaymentStateError
 from app.domain.exceptions.resource_exceptions import (
+    DomainError,
     ResourceInUseError,
     ResourceNotFoundError,
     ValidationError,
@@ -38,13 +40,18 @@ from app.infrastructure.adapters.primary.web.schemas.manual_booking_schemas impo
     ManualRequest,
     RefundRequest,
 )
-from app.infrastructure.adapters.secondary.persistence.database import get_session
+from app.infrastructure.adapters.primary.web.v1.contracts_router import problem as contract_problem
+from app.infrastructure.adapters.secondary.persistence.database import (
+    get_contract_write_session,
+    get_session,
+)
 from app.infrastructure.di.containers import (
     get_availability_port,
     get_booking_documents,
     get_booking_receipts,
     get_catalog_read_port,
     get_confirm_manual_booking_use_case,
+    get_contract_use_case,
     get_manual_booking_store,
     get_refund_manual_booking_use_case,
     get_register_manual_booking_use_case,
@@ -117,6 +124,9 @@ async def register_manual_booking(
     try:
         data = await receipt_file.read(storage.max_bytes() + 1)
         canonical = payload.model_dump(mode="json", exclude={"quote_id"})
+        # Conserva la huella de las solicitudes previas a la incorporación de observaciones.
+        if payload.observations is None:
+            canonical.pop("observations", None)
         canonical["extra_ids"] = sorted(canonical["extra_ids"])
         canonical["paid_amount"] = f"{payload.paid_amount:.2f}"
         canonical["manual_mobility_amount"] = f"{payload.manual_mobility_amount:.2f}"
@@ -140,6 +150,7 @@ async def register_manual_booking(
                     payload.client_provides_transport,
                     payload.manual_mobility_amount,
                     payload.mobility_override_reason,
+                    observations=payload.observations,
                 ),
                 phone=payload.phone,
                 district=payload.district,
@@ -173,6 +184,7 @@ async def confirm_booking(
     quote_id: UUID,
     payload: ConfirmRequest,
     context: Staff,
+    transaction: Annotated[AsyncSession, Depends(get_contract_write_session, scope="function")],
     use_case: Annotated[ConfirmManualBookingUseCase, Depends(get_confirm_manual_booking_use_case)],
 ) -> BookingResponse:
     if not payload.receipt_verified:
@@ -206,12 +218,18 @@ async def confirm_booking(
 
 @router.get("/{quote_id}/contract")
 async def download_contract(
-    quote_id: UUID, context: Staff, store: Store, storage: Documents
+    quote_id: UUID,
+    context: Staff,
+    store: Store,
+    contracts: Annotated[ManageContracts, Depends(get_contract_use_case)],
 ) -> dict[str, str]:
     booking = await store.get(quote_id)
-    if booking is None or booking.pdf_path is None:
+    if booking is None or booking.contract_id is None:
         raise ProblemError(404, "not-found", "No encontrado", "Todavía no hay contrato emitido.")
-    data = await storage.open(booking.pdf_path)
+    try:
+        data = await contracts.pdf(booking.contract_id)
+    except DomainError as exc:
+        raise contract_problem(exc) from exc
     return {
         "filename": (booking.contract_number or "contrato") + ".pdf",
         "pdf_base64": base64.b64encode(data).decode("ascii"),

@@ -17,8 +17,9 @@ from app.infrastructure.adapters.secondary.persistence.models.payment_model impo
 
 
 class SqlAlchemyPaymentRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, commit_on_save: bool = True) -> None:
         self._session = session
+        self._commit_on_save = commit_on_save
 
     async def save(self, payment: Payment) -> Payment:
         existing = await self._session.get(PaymentModel, payment.id)
@@ -41,11 +42,17 @@ class SqlAlchemyPaymentRepository:
             existing.audited_by_user_id = payment.audited_by_user_id
             existing.audited_at = payment.audited_at
             existing.audit_notes = payment.audit_notes
-        await self._session.commit()
+        if self._commit_on_save:
+            await self._session.commit()
+        else:
+            await self._session.flush()
         return payment
 
     async def get_by_id(self, payment_id: UUID) -> Payment | None:
-        row = await self._session.get(PaymentModel, payment_id)
+        query = select(PaymentModel).where(PaymentModel.id == payment_id)
+        if not self._commit_on_save:
+            query = query.with_for_update()
+        row = await self._session.scalar(query.execution_options(populate_existing=True))
         return payment_to_domain(row) if row is not None else None
 
     def _apply_filters(self, stmt: Select[Any], filters: PaymentFilters) -> Select[Any]:

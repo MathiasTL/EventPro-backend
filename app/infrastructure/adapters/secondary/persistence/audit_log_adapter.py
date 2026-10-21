@@ -50,10 +50,30 @@ class SessionAuditRecorder:
 
 
 class SQLAlchemyAuditLogAdapter:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
         self._session_factory = session_factory
+        self._transaction_session = session
 
     async def record(self, entry: AuditLog) -> None:
+        if self._transaction_session is not None:
+            self._transaction_session.add(
+                AuditLogModel(
+                    id=entry.id,
+                    user_id=entry.user_id,
+                    action=entry.action,
+                    entity_name=entry.entity_name,
+                    entity_id=entry.entity_id,
+                    old_values=entry.old_values,
+                    new_values=entry.new_values,
+                )
+            )
+            await self._transaction_session.flush()
+            return
         async with self._session_factory() as session:
             session.add(
                 AuditLogModel(

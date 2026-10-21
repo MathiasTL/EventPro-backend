@@ -69,6 +69,9 @@ from app.application.use_cases.bot.agent_engine import ConversationAgent
 from app.application.use_cases.bot.bot_handoff import BotHandoffRecorder
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
+from app.application.use_cases.contract.create_manual_contract import CreateManualContract
+from app.application.use_cases.contract.manage_contracts import ManageContracts
+from app.application.use_cases.contract.sign_contract import SignContract
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
 from app.application.use_cases.event.get_event_schedule import GetEventScheduleUseCase
 from app.application.use_cases.event.register_event_extension import RegisterEventExtensionUseCase
@@ -200,6 +203,9 @@ from app.infrastructure.adapters.secondary.persistence.database import (
 from app.infrastructure.adapters.secondary.persistence.manual_booking_repository import (
     SqlAlchemyManualBookingStore,
 )
+from app.infrastructure.adapters.secondary.persistence.manual_contract_repository import (
+    SqlAlchemyManualContractStore,
+)
 from app.infrastructure.adapters.secondary.persistence.refresh_token_repository import (
     SQLAlchemyRefreshTokenRepository,
 )
@@ -211,6 +217,9 @@ from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_outbox_repository,
     sqlalchemy_payment_repository,
     sqlalchemy_quote_repository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_contract_repository import (  # noqa: E501
+    SqlAlchemyContractRepository,
 )
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
     SqlAlchemyFinancialRepository,
@@ -233,7 +242,11 @@ from app.infrastructure.adapters.secondary.persistence.user_repository import (
 from app.infrastructure.adapters.secondary.queue.arq_gateway_event_queue import (
     ArqGatewayEventQueue,
 )
+from app.infrastructure.adapters.secondary.signature.pades_signature_adapter import (
+    PadesSignatureAdapter,
+)
 from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
+from app.infrastructure.adapters.secondary.storage.contract_pdf import ReportLabContractPdf
 from app.infrastructure.adapters.secondary.storage.document_source_adapter import (
     StorageDocumentSource,
 )
@@ -746,7 +759,10 @@ def get_register_advance_payment_use_case(
 def get_verify_payment_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> VerifyPaymentUseCase:
-    return VerifyPaymentUseCase(get_payment_repository(session))
+    return VerifyPaymentUseCase(
+        sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session, commit_on_save=False),
+        get_contract_use_case(session),
+    )
 
 
 def get_audit_payment_use_case(
@@ -830,9 +846,10 @@ def get_approve_overbooked_payment_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ApproveOverbookedPaymentUseCase:
     return ApproveOverbookedPaymentUseCase(
-        get_payment_repository(session),
-        get_audit_service(),
+        sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session, commit_on_save=False),
+        AuditService(SQLAlchemyAuditLogAdapter(get_sessionmaker(), session=session)),
         sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+        get_contract_use_case(session),
     )
 
 
@@ -932,12 +949,82 @@ def get_prepare_budget_use_case(
 
 
 def get_confirm_manual_booking_use_case(
-    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
     catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
     availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
     documents: Annotated[IBookingDocuments, Depends(get_booking_documents)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ConfirmManualBookingUseCase:
-    return ConfirmManualBookingUseCase(store, catalog, availability, documents, contract_pdf)
+    return ConfirmManualBookingUseCase(
+        SqlAlchemyManualBookingStore(
+            session,
+            deadline_hours=get_settings().advance_deadline_hours,
+            commit_confirmation=False,
+        ),
+        catalog,
+        availability,
+        documents,
+        contract_pdf,
+        get_contract_use_case(session),
+        SqlAlchemyContractRepository(session).next_number,
+    )
+
+
+def get_contract_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ManageContracts:
+    settings = get_settings()
+    return ManageContracts(
+        SqlAlchemyContractRepository(session),
+        PostgresBookingDocuments(session),
+        ReportLabContractPdf(),
+        get_enqueue_message_use_case(session),
+        get_clock_port(),
+        frontend_url=settings.contract_frontend_url,
+        link_ttl_hours=settings.signature_link_ttl_hours,
+    )
+
+
+def get_sign_contract_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> SignContract:
+    settings = get_settings()
+    return SignContract(
+        SqlAlchemyContractRepository(session),
+        PostgresBookingDocuments(session),
+        PostgresBookingDocuments(session, purpose="signatures"),
+        PadesSignatureAdapter(
+            settings.signature_pkcs12_path,
+            settings.signature_pkcs12_password.get_secret_value(),
+            settings.signature_tsa_url,
+        ),
+        get_enqueue_message_use_case(session),
+        get_clock_port(),
+        secret=settings.secret_key,
+        otp_minutes=settings.signature_otp_ttl_minutes,
+        max_attempts=settings.signature_otp_max_attempts,
+        proof_minutes=settings.signature_otp_proof_ttl_minutes,
+    )
+
+
+def get_create_manual_contract_use_case(
+    catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CreateManualContract:
+    return CreateManualContract(
+        SqlAlchemyManualContractStore(
+            session,
+            deadline_hours=get_settings().advance_deadline_hours,
+            commit_confirmation=False,
+        ),
+        SqlAlchemyContractRepository(session),
+        catalog,
+        availability,
+        PostgresBookingDocuments(session, purpose="receipts"),
+        get_contract_use_case(session),
+        get_clock_port(),
+        get_settings().advance_percent,
+    )
 
 
 def get_register_manual_booking_use_case(

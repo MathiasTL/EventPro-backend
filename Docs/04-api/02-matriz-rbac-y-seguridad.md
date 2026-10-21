@@ -118,6 +118,8 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | Endpoint | SUPERADMIN | ENCARGADO | OPERADOR | CLIENTE (Token) | Notas |
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | `GET /contracts` | Sí | Sí | - | - | |
+| `POST /contracts` | Sí | Sí | - | - | Emite o recupera contrato para un evento con adelanto verificado. Audita `CONTRACT_ISSUED`. |
+| `PATCH /contracts/{id}/observations` | Sí | Sí | - | - | Antes de firma; actualiza cronograma y PDF. Audita `CONTRACT_REGENERATED`. |
 | `GET /contracts/{id}` | Sí | Sí | - | - | |
 | `GET /contracts/{id}/pdf` | Sí | Sí | - | - | PDF sellado si el contrato está `SIGNED`. |
 | `POST /contracts/manual` | Sí | Sí | - | - | Crea cotización `MANUAL`, evento y contrato; audita `MANUAL_CONTRACT`. |
