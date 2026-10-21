@@ -1496,3 +1496,18 @@ Fachada transaccional de PC-05. Las rutas `/quotes`, `/quotes/{id}/pay-advance` 
 Todas requieren JWT de cuenta activa ENCARGADO/SUPERADMIN. Errores: 401 sin sesión, 403 rol insuficiente, 422 validación. Autoverificación requiere SUPERADMIN y motivo; sin excepción retorna 422. ADVANCE_PERCENT aplica solo a servicios. Comprobante máximo 5 MiB y validación por contenido.
 
 Campos y estados completos: [Flujo administrativo](03-flujo-manual-entregable.md). Contrato ISSUED queda pendiente de firma; no representa una transferencia ni envío automático al cliente.
+
+
+### Observaciones de cotización (US-03, spec 08)
+
+`POST /api/v1/quotes` acepta `observations: string | null` opcional y
+`GET /api/v1/quotes/{id}` devuelve el mismo campo. Se conserva el texto recibido;
+no se interpreta como HTML. Requiere Alembic `0006_quote_observations`.
+
+Los tres endpoints de creación, listado y detalle usan los DTOs de la spec 08,
+con acceso `ENCARGADO` o `SUPERADMIN`; `OPERADOR` obtiene 403. El listado filtra
+por `status`, `client_id`, `from_date`, `to_date` (fecha del evento), `page` y
+`page_size` (máximo 100), ordenando por `sent_at` e id descendentes.
+Los importes JSON son cadenas decimales. El detalle conserva los precios vendidos
+aunque se modifique posteriormente el catálogo. El evento usa fecha/hora local de
+Lima; `sent_at` y `expires_at` son instantes UTC.

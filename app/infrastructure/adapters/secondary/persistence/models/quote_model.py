@@ -95,6 +95,7 @@ class QuoteModel(Base):
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
     manual_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    observations: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     extras: Mapped[list["QuoteExtraModel"]] = relationship(
         lazy="selectin",

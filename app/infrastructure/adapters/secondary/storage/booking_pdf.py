@@ -47,8 +47,8 @@ async def contract_pdf(booking: ManualBooking, number: str) -> bytes:
             f"Total servicios: S/ {booking.total_amount - booking.mobility_amount:.2f}",
             f"Movilidad acordada: S/ {booking.mobility_amount:.2f}.",
             f"Adelanto validado: S/ {booking.advance_amount:.2f}",
-            f"Saldo de servicios pendiente: S/ {booking.pending_balance:.2f}. "
-            f"Movilidad pendiente: S/ {booking.mobility_amount:.2f}.",
+            f"Saldo pendiente: S/ {booking.pending_balance:.2f}. "
+            f"Movilidad incluida en el total: S/ {booking.mobility_amount:.2f}.",
             "El cliente deberá cancelar el saldo antes de iniciar el servicio. "
             "El tiempo adicional requiere acuerdo y registro del cobro correspondiente.",
             "El adelanto validado registra la reserva del evento y del inventario requerido. "

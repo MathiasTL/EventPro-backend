@@ -26,18 +26,22 @@ class SqlAlchemyClientRepository:
         row = await self._find_row(PhoneNumber.parse(phone))
         return client_to_domain(row) if row is not None else None
 
-    async def get_or_create(self, phone: str, full_name: str) -> Client:
+    async def get_or_create(
+        self, phone: str, full_name: str, *, dni: str | None = None, ruc: str | None = None
+    ) -> Client:
         number = PhoneNumber.parse(phone)
         existing = await self._find_row(number)
         if existing is not None:
             return client_to_domain(existing)
-        candidate = Client(phone=number, full_name=full_name)
+        candidate = Client(phone=number, full_name=full_name, dni=dni, ruc=ruc)
         await self._session.execute(
             pg_insert(ClientModel)
             .values(
                 id=uuid4(),
                 phone=candidate.phone.value,
                 full_name=candidate.full_name,
+                dni=candidate.dni,
+                ruc=candidate.ruc,
                 created_at=candidate.created_at,
             )
             .on_conflict_do_nothing(index_elements=["phone"])

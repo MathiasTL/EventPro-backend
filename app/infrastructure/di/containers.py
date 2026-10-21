@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated
 
@@ -78,6 +79,10 @@ from app.application.use_cases.payment.refund_payment import RefundPaymentUseCas
 from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
+from app.application.use_cases.quote.create_quote import CreateQuoteUseCase
+from app.application.use_cases.quote.expire_due_quotes import ExpireDueQuotesUseCase
+from app.application.use_cases.quote.get_quote import GetQuoteUseCase
+from app.application.use_cases.quote.list_quotes import ListQuotesUseCase
 from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
 from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
 from app.application.use_cases.quote.register_manual_booking import RegisterManualBookingUseCase
@@ -90,7 +95,7 @@ from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
 from app.domain.services.financial_engine import FinancialEngine
 from app.domain.services.inventory_availability import InventoryAvailabilityService
 from app.domain.services.travel_interval_service import TravelIntervalService
-from app.domain.value_objects.mobility import MobilityTariff
+from app.domain.value_objects.mobility import MobilityTariff, RouteLocation
 from app.infrastructure.adapters.secondary.availability.availability_adapter import (
     AvailabilityAdapter,
 )
@@ -121,12 +126,8 @@ from app.infrastructure.adapters.secondary.external_services.fake_messaging_adap
 )
 from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
     FakeCancelQuote,
-    FakeCreateQuote,
-    FakeExpireDueQuotes,
     FakeFindClients,
     FakeGetClient,
-    FakeGetQuote,
-    FakeListQuotes,
     FakePayAdvance,
     FakeQuoteStore,
 )
@@ -140,6 +141,7 @@ from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapt
 from app.infrastructure.adapters.secondary.external_services.openai.openai_language_model_adapter import (  # noqa: E501
     OpenAILanguageModelAdapter,
 )
+from app.infrastructure.adapters.secondary.mobility.district_zones import zone_for_district
 from app.infrastructure.adapters.secondary.mobility.tariff import build_mobility_tariff
 from app.infrastructure.adapters.secondary.persistence import (
     SqlAlchemyAvailabilityRepository,
@@ -706,7 +708,9 @@ async def shutdown_infrastructure() -> None:
 def get_manual_booking_store(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> IManualBookingStore:
-    return SqlAlchemyManualBookingStore(session)
+    return SqlAlchemyManualBookingStore(
+        session, deadline_hours=get_settings().advance_deadline_hours
+    )
 
 
 def get_booking_documents(
@@ -771,24 +775,50 @@ def get_fake_quote_store() -> FakeQuoteStore:
 # --- E1 contrato: cotizacion (Brenis) ---
 
 
-@lru_cache
-def get_create_quote_use_case() -> ICreateQuotePort:
-    return FakeCreateQuote(get_fake_quote_store(), clock=get_clock_port())
+async def get_quote_write_session() -> AsyncIterator[AsyncSession]:
+    """Confirma antes de responder; revierte errores de caso de uso o de serialización."""
+    async with get_sessionmaker()() as session, session.begin():
+        yield session
 
 
-@lru_cache
-def get_quote_use_case() -> IGetQuotePort:
-    return FakeGetQuote(get_fake_quote_store(), clock=get_clock_port())
+def build_create_quote_use_case(session: AsyncSession) -> ICreateQuotePort:
+    settings = get_settings()
+    return CreateQuoteUseCase(
+        get_quote_repository(session),
+        get_client_repository(session),
+        get_catalog_read_port(session),
+        get_availability_port(session),
+        get_route_estimator(),
+        get_financial_engine(),
+        get_clock_port(),
+        RouteLocation(
+            latitude=settings.promotora_base_latitude, longitude=settings.promotora_base_longitude
+        ),
+        zone_for_district,
+        settings.advance_deadline_hours,
+    )
 
 
-@lru_cache
-def get_list_quotes_use_case() -> IListQuotesPort:
-    return FakeListQuotes(get_fake_quote_store(), clock=get_clock_port())
+def get_create_quote_use_case(
+    session: Annotated[AsyncSession, Depends(get_quote_write_session, scope="function")],
+) -> ICreateQuotePort:
+    return build_create_quote_use_case(session)
 
 
-@lru_cache
-def get_expire_due_quotes_use_case() -> IExpireDueQuotesPort:
-    return FakeExpireDueQuotes(get_fake_quote_store(), clock=get_clock_port())
+def get_quote_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IGetQuotePort:
+    return GetQuoteUseCase(get_quote_repository(session))
+
+
+def get_list_quotes_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IListQuotesPort:
+    return ListQuotesUseCase(get_quote_repository(session))
+
+
+def get_expire_due_quotes_use_case(session: AsyncSession) -> IExpireDueQuotesPort:
+    return ExpireDueQuotesUseCase(get_quote_repository(session), get_clock_port())
 
 
 # --- E1 contrato: cotizacion (Christian) ---
@@ -833,13 +863,12 @@ def get_bot_lock() -> ICacheLockPort:
 def build_bot_transaction(session: AsyncSession) -> BotTransaction:
     """Casos de uso del bot sobre la sesión de un turno (spec 08, sección 6, pregunta 5).
 
-    ``CreateQuote`` y ``PayAdvance`` salen de los proveedores de arriba, hoy fakes sin sesión.
-    Cuando un responsable entregue su caso de uso real, cambia solo su línea aquí y en el
-    proveedor, y le pasa ``session`` para que comparta la transacción con ``EnqueueMessage``.
+    CreateQuote real y EnqueueMessage comparten sesión y commit de la unidad de trabajo.
+    PayAdvance conserva la implementación de Christian; su integración no cambia este puerto.
     """
 
     return BotTransaction(
-        create_quote=get_create_quote_use_case(),
+        create_quote=build_create_quote_use_case(session),
         pay_advance=get_pay_advance_use_case(),
         enqueue_message=get_enqueue_message_use_case(session),
         catalog=get_catalog_read_port(session),

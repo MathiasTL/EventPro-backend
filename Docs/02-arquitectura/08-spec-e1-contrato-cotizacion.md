@@ -379,3 +379,19 @@ Cada responsable trabaja en **una sola rama** desde `develop`; los commits van e
 | `04-api/01-especificacion-endpoints-rest.md` | Campo `observations` en `POST /quotes` y `GET /quotes/{id}` (lo hace Brenis en su PR). |
 | `01-requisitos/04-reglas-de-negocio-y-control.md` | Resolución de la regla de comprobante tardío (lo hace Christian). |
 | `README.md` de `Docs/` | Enlace a esta especificación. |
+
+
+## Entrega local de Brenis
+
+Implementaciones reales: CreateQuote, GetQuote, ListQuotes y ExpireDueQuotes,
+routers REST, migración 0006, proveedores por sesión y creación real dentro de
+build_bot_transaction. Se mantienen las firmas de los puertos de entrada, DTOs,
+errores y suites compartidas. El repositorio de cotizaciones añade consultas de
+detalle/listado, búsqueda bloqueada de vencibles y comprobación de pagos en revisión.
+`get_or_create` admite DNI/RUC opcionales para nuevos clientes, conservando
+compatibilidad con sus llamadas existentes y sin sobrescribir clientes registrados.
+Estas ampliaciones de puertos de salida requieren revisión de Mathias y coordinación
+con Nicolas; la configuración de coordenadas de origen requiere revisión de Diego.
+
+El frontend incorpora bandeja y detalle, con filtros/paginación y API real. No
+implementa las acciones PayAdvance/CancelQuote ni los endpoints de clientes.
