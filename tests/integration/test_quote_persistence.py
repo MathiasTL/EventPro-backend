@@ -12,10 +12,15 @@ import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.application.dtos.override_dto import OverrideMobilityInput
+from app.application.services.audit_service import AuditService
+from app.application.use_cases.quote.override_mobility import OverrideQuoteMobilityUseCase
+from app.domain.entities.audit_log import AuditLog
 from app.domain.entities.quote import QuoteSource, QuoteStatus
+from app.domain.exceptions.quote_exceptions import InvalidQuoteStateError
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
 from app.domain.value_objects.mobility import RouteEstimate
 from app.infrastructure.adapters.secondary.persistence.database import build_engine
@@ -26,10 +31,16 @@ from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_c
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_quote_repository import (  # noqa: E501
     SqlAlchemyQuoteRepository,
 )
-from tests.domain.financial_support import pen
+from tests.domain.financial_support import default_engine, pen
 from tests.domain.quote_support import NOW, make_quote
 
 from ._support import run_migrations
+
+
+class _NoopAuditPort:
+    async def record(self, entry: AuditLog) -> None:
+        return None
+
 
 pytestmark = pytest.mark.integration
 
@@ -384,3 +395,104 @@ async def test_orm_models_match_the_alembic_schema(engine: AsyncEngine) -> None:
     async with engine.connect() as connection:
         differences = await connection.run_sync(diff)
     assert differences == []
+
+
+async def test_override_mobility_persists_recalculated_liquidation(
+    engine: AsyncEngine, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """RF-21 / US-19: contra PostgreSQL real, el override persiste y conserva el adelanto."""
+
+    package_id, [extra_id] = await _seed_catalog(engine)
+    quote = make_quote(
+        client_id=await _new_client(factory), package_id=package_id, extra_id=extra_id
+    )
+    async with factory() as session:
+        await SqlAlchemyQuoteRepository(session).add(quote)
+        await session.commit()
+    original_advance = quote.liquidation.advance_amount
+
+    async with factory() as session:
+        use_case = OverrideQuoteMobilityUseCase(
+            SqlAlchemyQuoteRepository(session), default_engine(), AuditService(_NoopAuditPort())
+        )
+        result = await use_case.execute(
+            OverrideMobilityInput(
+                quote_id=quote.id,
+                manual_mobility_amount=Decimal("95.00"),
+                reason="Peajes no computados",
+                decided_by_user_id=uuid4(),
+            )
+        )
+        await session.commit()
+
+    assert result.mobility_amount == Decimal("95.00")
+    assert result.advance_amount == original_advance.amount
+
+    async with factory() as session:
+        reloaded = await SqlAlchemyQuoteRepository(session).get_by_id(quote.id)
+    assert reloaded is not None
+    assert reloaded.mobility_overridden is True
+    assert reloaded.mobility_override_reason == "Peajes no computados"
+    assert reloaded.liquidation.mobility_amount == pen("95.00")
+    assert reloaded.liquidation.advance_amount == original_advance
+
+
+async def test_override_mobility_on_converted_quote_raises_without_persisting(
+    engine: AsyncEngine, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    package_id, [extra_id] = await _seed_catalog(engine)
+    quote = make_quote(
+        client_id=await _new_client(factory), package_id=package_id, extra_id=extra_id
+    )
+    quote.start_payment(NOW)
+    quote.convert()
+    async with factory() as session:
+        await SqlAlchemyQuoteRepository(session).add(quote)
+        await session.commit()
+
+    async with factory() as session:
+        use_case = OverrideQuoteMobilityUseCase(
+            SqlAlchemyQuoteRepository(session), default_engine(), AuditService(_NoopAuditPort())
+        )
+        with pytest.raises(InvalidQuoteStateError):
+            await use_case.execute(
+                OverrideMobilityInput(
+                    quote_id=quote.id,
+                    manual_mobility_amount=Decimal("95.00"),
+                    reason="Peajes no computados",
+                    decided_by_user_id=uuid4(),
+                )
+            )
+        await session.rollback()
+
+    async with factory() as session:
+        reloaded = await SqlAlchemyQuoteRepository(session).get_by_id(quote.id)
+    assert reloaded is not None
+    assert reloaded.mobility_overridden is False
+    assert reloaded.liquidation.mobility_amount == quote.liquidation.mobility_amount
+
+
+async def test_get_by_id_for_update_takes_a_row_lock(
+    engine: AsyncEngine, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """La lectura con bloqueo impide que otra transacción tome la misma fila."""
+    package_id, [extra_id] = await _seed_catalog(engine)
+    quote = make_quote(
+        client_id=await _new_client(factory), package_id=package_id, extra_id=extra_id
+    )
+    async with factory() as session:
+        await SqlAlchemyQuoteRepository(session).add(quote)
+        await session.commit()
+
+    async with factory() as holder, holder.begin():
+        locked = await SqlAlchemyQuoteRepository(holder).get_by_id_for_update(quote.id)
+        assert locked == quote
+        async with factory() as other, other.begin():
+            with pytest.raises(DBAPIError):
+                await other.execute(
+                    text("SELECT id FROM quotes WHERE id = :id FOR UPDATE NOWAIT"),
+                    {"id": quote.id},
+                )
+
+    async with factory() as session:
+        assert await SqlAlchemyQuoteRepository(session).get_by_id_for_update(uuid4()) is None

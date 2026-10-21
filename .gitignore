@@ -20,6 +20,8 @@ ENV/
 uploads/
 *.pdf
 *.log
+# Previsualizaciones locales de documentos generados.
+/tmp/pdfs/
 
 # Docker y caches
 .docker/

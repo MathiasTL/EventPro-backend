@@ -32,11 +32,13 @@ def outbox_to_domain(row: OutboxMessageModel) -> OutboxMessage:
         delivery_error=row.delivery_error,
         delivered_at=row.delivered_at,
         read_at=row.read_at,
+        author_user_id=row.author_user_id,
+        retried_external_message_id=row.retried_external_message_id,
     )
 
 
 def apply_outbox_to_model(row: OutboxMessageModel, message: OutboxMessage) -> None:
-    """Copia el estado mutable del agregado; el destinatario, el tipo y el id no cambian."""
+    """Copia el estado mutable del agregado; destinatario, tipo, autor e id no cambian."""
 
     row.payload = copy.deepcopy(message.payload) if message.payload is not None else None
     row.redact_after_send = message.redact_after_send
@@ -52,6 +54,7 @@ def apply_outbox_to_model(row: OutboxMessageModel, message: OutboxMessage) -> No
     row.delivery_error = message.delivery_error
     row.delivered_at = message.delivered_at
     row.read_at = message.read_at
+    row.retried_external_message_id = message.retried_external_message_id
 
 
 def outbox_to_model(message: OutboxMessage) -> OutboxMessageModel:
@@ -60,6 +63,7 @@ def outbox_to_model(message: OutboxMessage) -> OutboxMessageModel:
         recipient_phone=message.recipient.value,
         message_type=message.message_type.value,
         created_at=message.created_at,
+        author_user_id=message.author_user_id,
     )
     apply_outbox_to_model(row, message)
     return row

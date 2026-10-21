@@ -1,10 +1,30 @@
 import logging
+import re
 from typing import cast
 
 import structlog
 
 
+class SignatureTokenFilter(logging.Filter):
+    """Evita que el access log de Uvicorn conserve credenciales de firma."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = re.sub(r"(/contracts/sign/)[^/\s?]+", r"\1[redacted]", record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                re.sub(r"(/contracts/sign/)[^/\s?]+", r"\1[redacted]", value)
+                if isinstance(value, str)
+                else value
+                for value in record.args
+            )
+        return True
+
+
 def configure_logging(log_level: str = "INFO") -> None:
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, SignatureTokenFilter) for f in access_logger.filters):
+        access_logger.addFilter(SignatureTokenFilter())
     logging.basicConfig(
         level=getattr(logging, log_level.upper(), logging.INFO),
         format="%(message)s",

@@ -17,11 +17,13 @@ from app.application.dtos.gateway_event_dto import GatewayEventOutcome
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
+from app.infrastructure.adapters.secondary.persistence.database import get_sessionmaker
 from app.infrastructure.adapters.secondary.queue.arq_gateway_event_queue import (
     PROCESS_GATEWAY_EVENT_JOB,
 )
 from app.infrastructure.di.containers import (
     get_dispatch_due_messages_use_case,
+    get_expire_due_quotes_use_case,
     get_process_gateway_event_use_case,
     shutdown_infrastructure,
 )
@@ -106,6 +108,15 @@ async def process_gateway_event(
     return outcome.value
 
 
+async def expire_due_quotes(ctx: dict[str, Any]) -> int:
+    """RN-09: un minuto; la transacción y el commit pertenecen al adaptador primario."""
+    async with get_sessionmaker()() as session, session.begin():
+        count = await get_expire_due_quotes_use_case(session).execute()
+    if count:
+        get_logger("worker").info("quotes_expired", count=count)
+    return count
+
+
 def _redis_settings() -> RedisSettings:
     settings = get_settings()
     return RedisSettings(
@@ -127,6 +138,7 @@ class WorkerSettings:
         )
     ]
     cron_jobs = [
+        cron(expire_due_quotes, name="expire_due_quotes", second=0, unique=True, max_tries=1),
         cron(
             dispatch_outbox,
             name="dispatch_outbox",
@@ -135,7 +147,7 @@ class WorkerSettings:
             unique=True,
             timeout=CYCLE_TIMEOUT_SECONDS,
             max_tries=1,
-        )
+        ),
     ]
     on_startup = startup
     on_shutdown = shutdown

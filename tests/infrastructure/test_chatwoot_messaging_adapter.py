@@ -10,6 +10,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from app.application.dtos.messaging_dto import (
+    ConversationLifecycle,
     ConversationStatus,
     ListRow,
     ListSection,
@@ -23,6 +24,7 @@ from app.domain.exceptions.messaging_exceptions import (
 )
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.adapters.secondary.external_services.chatwoot import chatwoot_client
 from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_messaging_adapter import (  # noqa: E501
     ChatwootMessagingAdapter,
 )
@@ -34,6 +36,7 @@ from tests.infrastructure.chatwoot_support import (
     BOT_TOKEN,
     FIRST_EPOCH,
     INBOX_ID,
+    PUBLIC_HOST,
     WAMID,
     FakeChatwootServer,
     parse_multipart,
@@ -792,7 +795,7 @@ def _fill(server: FakeChatwootServer, conversation_id: int, count: int) -> None:
         server.add_message(conversation_id, f"m{number}")
 
 
-async def test_list_messages_is_chronological_limited_and_exclusive_on_before(
+async def test_list_messages_is_chronological_limited_and_exclusive_on_before_id(
     server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
 ) -> None:
     first = await adapter.send_text(PHONE, "Uno")
@@ -801,7 +804,7 @@ async def test_list_messages_is_chronological_limited_and_exclusive_on_before(
 
     everything = await adapter.list_messages(first.conversation_id)
     newest_two = await adapter.list_messages(first.conversation_id, limit=2)
-    older = await adapter.list_messages(first.conversation_id, before=last.sent_at)
+    older = await adapter.list_messages(first.conversation_id, before_id=int(last.message_id))
 
     assert [m.body for m in everything] == ["Uno", "Dos", "Tres"]
     assert [m.body for m in newest_two] == ["Dos", "Tres"]
@@ -810,6 +813,8 @@ async def test_list_messages_is_chronological_limited_and_exclusive_on_before(
     assert everything[-1].sent_at == last.sent_at
     reads = [(m, t) for m, path, t in server.log if m == "GET" and path.endswith("/messages")]
     assert reads and {token for _, token in reads} == {"agent"}
+    older_request = _message_list_requests(server, first.conversation_id)[-1]
+    assert older_request.url.params["before"] == last.message_id
 
 
 @pytest.mark.parametrize(
@@ -860,7 +865,7 @@ async def test_list_messages_stops_after_an_empty_page_when_the_last_page_was_fu
     assert [r.url.params.get("before") for r in requests] == [None, "1"]
 
 
-async def test_list_messages_keeps_directions_and_attachments_and_drops_activity_and_notes(
+async def test_list_messages_keeps_directions_attachments_and_activity_and_drops_notes(
     server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
 ) -> None:
     conversation = server.add_conversation(PHONE)
@@ -877,6 +882,7 @@ async def test_list_messages_keeps_directions_and_attachments_and_drops_activity
 
     assert [(m.body, m.direction, m.attachment_filename) for m in result] == [
         ("Gracias", MessageDirection.INCOMING, None),
+        ("Cambio de estado", MessageDirection.ACTIVITY, None),
         ("Tu cotización", MessageDirection.OUTGOING, "cotizacion final.pdf"),
     ]
     assert all(m.conversation_id == conversation.id for m in result)
@@ -895,16 +901,14 @@ async def test_a_sent_attachment_is_listed_with_its_filename(
     assert message.message_id == receipt.message_id
 
 
-async def test_list_messages_before_an_older_instant_returns_nothing(
+async def test_list_messages_before_the_oldest_id_returns_nothing(
     server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
 ) -> None:
     conversation = server.add_conversation(PHONE)
     _fill(server, conversation.id, 3)
 
     assert await adapter.list_messages(conversation.id) != ()
-    assert (
-        await adapter.list_messages(conversation.id, before=datetime(2000, 1, 1, tzinfo=UTC)) == ()
-    )
+    assert await adapter.list_messages(conversation.id, before_id=1) == ()
 
 
 async def test_list_messages_of_an_unknown_conversation_is_not_found(
@@ -943,7 +947,7 @@ async def test_list_messages_scan_is_capped_and_logged(
     assert len(truncated) == 1
 
 
-async def test_same_second_messages_are_not_skipped_when_paging_with_before(
+async def test_same_second_messages_are_paged_by_id_without_gaps_or_duplicates(
     server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
 ) -> None:
     conversation = server.add_conversation(PHONE)
@@ -952,10 +956,10 @@ async def test_same_second_messages_are_not_skipped_when_paging_with_before(
     everything = await adapter.list_messages(conversation.id, limit=25)
 
     first_page = await adapter.list_messages(
-        conversation.id, before=everything[20].sent_at, limit=10
+        conversation.id, before_id=int(everything[20].message_id), limit=10
     )
     second_page = await adapter.list_messages(
-        conversation.id, before=first_page[0].sent_at, limit=10
+        conversation.id, before_id=int(first_page[0].message_id), limit=10
     )
 
     assert [m.body for m in first_page] == [f"m{n}" for n in range(11, 21)]
@@ -976,6 +980,191 @@ async def test_list_messages_failures_are_transient_and_leak_nothing(
     for output in (str(raised.value), repr(logs)):
         for secret in (PHONE.digits, BOT_TOKEN, AGENT_TOKEN, "Contenido"):
             assert secret not in output
+
+
+# ---------------------------------------------------------------------------
+# Bandeja: resueltas, resumen, lectura y adjuntos
+# ---------------------------------------------------------------------------
+
+JPEG = b"\xff\xd8jpeg"
+
+
+async def test_list_conversations_with_resolved_asks_for_all_and_filters_locally(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    server.add_conversation(PHONE, status="resolved")
+    server.add_conversation(OTHER_PHONE, status="open")
+    server.add_conversation(_phone(1), status="snoozed")
+
+    bots = await adapter.list_conversations(status=ConversationStatus.BOT, include_resolved=True)
+    everything = await adapter.list_conversations(include_resolved=True)
+
+    assert [item.phone for item in bots] == [PHONE]
+    assert {item.lifecycle for item in everything} == {
+        ConversationLifecycle.RESOLVED,
+        ConversationLifecycle.OPEN,
+    }
+    assert {r.url.params["status"] for r in _list_requests(server)} == {"all"}
+
+
+async def test_summary_exposes_contact_name_assignee_and_preview(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    conversation = server.add_conversation(PHONE, status="open")
+    conversation.assignee_name = "Encargado Prueba"
+    server.contacts[conversation.contact_id].name = "Cliente Prueba"
+    server.add_message(conversation.id, "Hola", message_type=0)
+
+    (summary,) = await adapter.list_conversations()
+
+    assert summary.contact_name == "Cliente Prueba"
+    assert summary.assignee_name == "Encargado Prueba"
+    assert summary.last_message_preview == "Hola"
+    assert summary.unread_count == 1
+
+
+async def test_get_conversation_of_a_snoozed_conversation_is_not_found(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    snoozed = server.add_conversation(PHONE, status="snoozed")
+
+    with pytest.raises(ResourceNotFoundError):
+        await adapter.get_conversation(snoozed.id)
+
+
+async def test_mark_conversation_read_posts_update_last_seen_with_the_agent_token(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    server.add_message(conversation.id, "Hola", message_type=0)
+
+    await adapter.mark_conversation_read(conversation.id)
+
+    assert server.log[-1] == ("POST", f"/conversations/{conversation.id}/update_last_seen", "agent")
+    assert conversation.unread_count == 0
+
+
+def _seed_image(server: FakeChatwootServer, conversation_id: int) -> int:
+    message = server.add_message(
+        conversation_id, None, message_type=0, attachment=(JPEG, "File.jpg", "image/jpeg")
+    )
+    return message.attachments[0].id
+
+
+async def test_attachment_download_goes_to_the_base_host_without_the_api_token(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+
+    content = await adapter.get_attachment(conversation.id, attachment_id)
+
+    assert content.data == JPEG
+    # Redirección interna seguida; siempre contra el anfitrión de `CHATWOOT_BASE_URL`.
+    assert {netloc for netloc, _, _ in server.downloads} == {"chatwoot.example.org"}
+    assert {host for _, host, _ in server.downloads} == {PUBLIC_HOST}
+    assert len(server.downloads) == 2
+    assert "api_access_token" not in {k.lower() for k in server.last_blob_headers}
+
+
+async def test_attachment_with_a_foreign_public_host_is_rewritten_to_the_base_host(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+    server.conversations[conversation.id].messages[-1].attachments[0].host = "evil.example.net"
+
+    content = await adapter.get_attachment(conversation.id, attachment_id)
+
+    assert content.data == JPEG
+    assert {netloc for netloc, _, _ in server.downloads} == {"chatwoot.example.org"}
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["https://evil.example.net/steal", "//evil.example.net/steal", "ftp://chat.example.test/x"],
+)
+async def test_attachment_redirect_to_another_host_is_rejected_and_not_followed(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter, location: str
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+    server.blob_redirect = location
+
+    with capture_logs() as logs, pytest.raises(ResourceNotFoundError) as raised:
+        await adapter.get_attachment(conversation.id, attachment_id)
+
+    assert len(server.downloads) == 1
+    assert "evil" not in str(raised.value) + repr(logs)
+
+
+async def test_attachment_redirect_to_the_public_host_is_followed_on_the_base_host(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+    server.blob_redirect = f"https://{PUBLIC_HOST}/rails/active_storage/disk/FAKETOKEN1/File.jpg"
+
+    content = await adapter.get_attachment(conversation.id, attachment_id)
+
+    assert content.data == JPEG
+    assert {netloc for netloc, _, _ in server.downloads} == {"chatwoot.example.org"}
+
+
+async def test_attachment_redirect_loop_is_cut_off(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+    server.blob_redirect = "/rails/active_storage/blobs/redirect/FAKETOKEN1/File.jpg"
+
+    with pytest.raises(ResourceNotFoundError):
+        await adapter.get_attachment(conversation.id, attachment_id)
+
+    assert len(server.downloads) == 4
+
+
+@pytest.mark.parametrize(
+    ("status", "error"), [(404, ResourceNotFoundError), (500, MessagingUnavailableError)]
+)
+async def test_attachment_download_failures_map_to_domain_errors(
+    server: FakeChatwootServer,
+    adapter: ChatwootMessagingAdapter,
+    status: int,
+    error: type[Exception],
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+    server.blob_status = status
+
+    with pytest.raises(error):
+        await adapter.get_attachment(conversation.id, attachment_id)
+
+
+async def test_attachment_larger_than_the_limit_is_rejected(
+    server: FakeChatwootServer,
+    adapter: ChatwootMessagingAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(chatwoot_client, "MAX_DOWNLOAD_BYTES", 3)
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+
+    with pytest.raises(MessagingUnavailableError):
+        await adapter.get_attachment(conversation.id, attachment_id)
+
+
+async def test_attachment_is_found_by_walking_older_message_pages(
+    server: FakeChatwootServer, adapter: ChatwootMessagingAdapter
+) -> None:
+    conversation = server.add_conversation(PHONE)
+    attachment_id = _seed_image(server, conversation.id)
+    _fill(server, conversation.id, 45)
+
+    content = await adapter.get_attachment(conversation.id, attachment_id)
+
+    assert content.filename == "File.jpg"
+    assert len(_message_list_requests(server, conversation.id)) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -1002,6 +1191,28 @@ class TestChatwootMessagingAdapter(MessagingPortContract):
 
     def make_unavailable(self, adapter: IMessagingPort) -> None:
         self._server.down = True
+
+    def receive_text(self, adapter: IMessagingPort, sender: PhoneNumber, body: str) -> None:
+        self._server.add_message(self._conversation_of(sender), body, message_type=0)
+
+    def receive_attachment(
+        self, adapter: IMessagingPort, sender: PhoneNumber, data: bytes, name: str, kind: str
+    ) -> None:
+        self._server.add_message(
+            self._conversation_of(sender), None, message_type=0, attachment=(data, name, kind)
+        )
+
+    def add_activity(self, adapter: IMessagingPort, conversation_id: int, text: str) -> None:
+        self._server.add_message(conversation_id, text, message_type=2)
+
+    def resolve(self, adapter: IMessagingPort, conversation_id: int) -> None:
+        self._server.conversations[conversation_id].status = "resolved"
+
+    def _conversation_of(self, phone: PhoneNumber) -> int:
+        contact = next(
+            c.id for c in self._server.contacts.values() if c.phone_number == phone.value
+        )
+        return next(c.id for c in self._server.conversations.values() if c.contact_id == contact)
 
 
 def _field_paths(value: Any, prefix: str = "") -> set[str]:
@@ -1047,6 +1258,7 @@ def _simulated_responses() -> dict[str, Any]:
         "Tu cotización",
         attachment_url="https://files.example.org/storage/cotizacion.pdf",
     )
+    server.add_message(conversation["id"], "Hola", message_type=0)
     return {
         "api_contact_search": call("GET", "/contacts/search", params={"q": PHONE.digits}),
         "api_contact_created": created_contact,
@@ -1056,27 +1268,40 @@ def _simulated_responses() -> dict[str, Any]:
             "GET", "/conversations", params={"inbox_id": INBOX_ID, "status": "all"}
         ),
         "api_message_list": call("GET", f"/conversations/{conversation['id']}/messages"),
+        "api_update_last_seen": call(
+            "POST", f"/conversations/{conversation['id']}/update_last_seen"
+        ),
+        "api_conversation_reopened": call("GET", f"/conversations/{conversation['id']}"),
     }
 
 
-# Los adjuntos no se capturaron: su forma (`attachments[].data_url`) sigue el código de Chatwoot.
-_UNCAPTURED_PATHS = {"payload[].attachments", "payload[].attachments[].data_url"}
+# Los adjuntos sí se capturaron, pero no dentro de `last_non_activity_message` del listado: ahí
+# llevan la misma forma que en el listado de mensajes.
+_LAST_MESSAGE_ATTACHMENTS = "data.payload[].last_non_activity_message.attachments"
+_UNCAPTURED_PATHS = {
+    _LAST_MESSAGE_ATTACHMENTS,
+    f"{_LAST_MESSAGE_ATTACHMENTS}[].id",
+    f"{_LAST_MESSAGE_ATTACHMENTS}[].data_url",
+}
+# Fixtures con los que se contrasta cada respuesta del simulador (capturas del 19 y 20 de octubre).
+_PARITY_FIXTURES = {
+    "api_contact_search": ("api_contact_search",),
+    "api_contact_created": ("api_contact_created",),
+    "api_conversation_created": ("api_conversation_created",),
+    "api_message_created": ("api_message_created",),
+    "api_conversation_list": ("api_conversation_list", "api_inbox_conversation_list"),
+    "api_message_list": ("api_message_list", "api_inbox_message_list"),
+    "api_update_last_seen": ("api_update_last_seen",),
+    "api_conversation_reopened": ("api_conversation_reopened",),
+}
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "api_contact_search",
-        "api_contact_created",
-        "api_conversation_created",
-        "api_message_created",
-        "api_conversation_list",
-        "api_message_list",
-    ],
-)
+@pytest.mark.parametrize("name", sorted(_PARITY_FIXTURES))
 def test_every_field_the_simulator_renders_exists_in_the_matching_fixture(name: str) -> None:
     simulated = _field_paths(_simulated_responses()[name])
-    captured = _field_paths(load_fixture(name)["body"])
+    captured: set[str] = set()
+    for fixture in _PARITY_FIXTURES[name]:
+        captured |= _field_paths(load_fixture(fixture)["body"])
 
     assert simulated
     assert simulated - captured - _UNCAPTURED_PATHS == set()

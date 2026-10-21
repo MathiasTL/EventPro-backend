@@ -48,7 +48,7 @@ src/
 │   ├── event-card-with-observations/     # Tarjeta de evento con extracto destacado de observaciones
 │   ├── financial-kpi-summary/            # Tarjetas de ingresos, costos directos y utilidad neta
 │   ├── quote-calculator-widget/          # Widget interactivo de cálculo de paquete + extras + movilidad
-│   ├── conversation-inbox/               # Lista de conversaciones con filtros (modo, asignadas, sin asignar), avisos de derivación y estado de la ventana de 24 h
+│   ├── conversation-inbox/               # Lista de conversaciones con búsqueda, filtros (modo, asignadas, sin asignar, encargado para SUPERADMIN), avisos de derivación y estado de la ventana de 24 h
 │   └── conversation-thread/              # Hilo de mensajes con estados de entrega, adjuntos y compositor de respuesta
 │
 ├── features/                             # CAPA 4: Interacciones y acciones con valor para el usuario
@@ -71,7 +71,7 @@ src/
 │   ├── package/                          # Entidad Paquete: card de paquete, selector de temática
 │   ├── extra/                            # Entidad Extra: selector de muñeco gigante, extras de show
 │   ├── crew/                             # Entidad Elenco: disponibilidad de artistas freelance
-│   ├── conversation/                     # Entidad Conversación: ítem de bandeja, badges de modo (BOT / HUMAN) y motivo de traspaso, indicador de ventana de 24 h
+│   ├── conversation/                     # Entidad Conversación: ítem de bandeja, badges de modo (BOT / HUMAN), motivo de traspaso y estado comercial, contador de no leídos, chip del encargado, indicador de ventana de 24 h
 │   └── message/                          # Entidad Mensaje: burbuja por autor (CLIENT / BOT / AGENT), estado de entrega, motivo de falla y adjunto vía proxy
 │
 └── shared/                               # CAPA 6: Recursos transversales sin lógica de dominio
@@ -152,17 +152,17 @@ Este widget compone la entidad `event` (`@/entities/event`) y le añade una aler
 ---
 
 ### 4.3 Caso: Bandeja de Conversaciones y Traspaso Bot ↔ Encargado (`pages/conversations`)
-La bandeja ([RF-30 a RF-32](../01-requisitos/02-requerimientos-funcionales.md), endpoints del módulo 2.14 de la [especificación REST](../04-api/01-especificacion-endpoints-rest.md)) es una vista **exclusiva del encargado** (y `SUPERADMIN`), escritorio primero y responsiva. **El navegador nunca referencia Chatwoot** (ADR-10): todo pasa por `/api/v1/conversations/*` de EventPro.
+La bandeja ([RF-30 a RF-32](../01-requisitos/02-requerimientos-funcionales.md), endpoints del módulo 2.14 de la [especificación REST](../04-api/01-especificacion-endpoints-rest.md)) es una vista **exclusiva del encargado** (y `SUPERADMIN`), escritorio primero y responsiva. **El navegador nunca referencia Chatwoot** (ADR-10): todo pasa por `/api/v1/conversations/*` de EventPro. El detalle de disposición, estados y reconexión del slice está en la [especificación 09](09-spec-e1-bandeja-conversaciones.md), sección 12.
 
 | Slice | Capa | Responsabilidad |
 | :--- | :--- | :--- |
-| `entities/conversation` | entities | Tipos, hooks de consulta (`GET /conversations`) y componentes atómicos: ítem de bandeja, badge de modo (`BOT` → «Atendida por el bot», `HUMAN` → «Atendida por un encargado»), badge del motivo de traspaso con las etiquetas de la tabla 3.5 de [RN](../01-requisitos/04-reglas-de-negocio-y-control.md) e indicador de la ventana de 24 h. |
-| `entities/message` | entities | Tipos y consulta paginada por cursor (`GET /conversations/{id}/messages`, parámetros `before` y `limit`); burbuja por autor, estado de entrega y motivo legible de falla. |
-| `features/conversation-takeover` | features | Acciones «Tomar» y «Devolver al bot» (`POST .../takeover` y `.../release`); manejo de `conversation-taken-by-other` y confirmación de reasignación para `SUPERADMIN`. |
-| `features/send-message` | features | Compositor consciente de la ventana de 24 h: con la ventana abierta permite texto y adjuntos; con la ventana cerrada deshabilita el texto libre y muestra el selector de plantillas. Exige conversación tomada por el usuario (`conversation-not-taken`). Muestra `QUEUED` como estado inicial y ofrece «Reintentar» (nuevo `POST .../messages`) en mensajes `FAILED`. |
+| `entities/conversation` | entities | Tipos del ítem (`GET /conversations` y `GET /conversations/{id}`), hooks de consulta y componentes atómicos: ítem de bandeja, badge de modo (`BOT` → «Atendida por el bot», `HUMAN` → «Atendida por un encargado»), badge del motivo de traspaso y badge del **estado comercial** (`lead_status`) con las etiquetas de la tabla 3.5 de [RN](../01-requisitos/04-reglas-de-negocio-y-control.md), contador de **no leídos**, *chip* del encargado e indicador de la ventana de 24 h. |
+| `entities/message` | entities | Tipos y consulta paginada por cursor (`GET /conversations/{id}/messages`, parámetros `before` y `limit`); burbuja por autor (etiqueta «Bot» en las del bot, nombre en las de encargado), marcas de entrega, motivo legible de falla y carga de adjuntos como `blob:`. |
+| `features/conversation-takeover` | features | Acciones «Tomar» y «Devolver al bot» (`POST .../takeover` y `.../release`); manejo de `conversation-taken-by-other` y confirmación de reasignación para `SUPERADMIN`. La marca manual «Evento realizado» (`POST .../lead/event-done`) la ofrece el hilo cuando el estado comercial es `CONVERTED`. |
+| `features/send-message` | features | Compositor consciente de la ventana de 24 h: con la ventana abierta permite texto y adjuntos; con la ventana cerrada deshabilita el compositor con el aviso «Han pasado más de 24 h; el cliente debe escribir primero» (sin plantillas en esta versión, [spec 09, D20](09-spec-e1-bandeja-conversaciones.md)). Exige conversación tomada por el usuario (`conversation-not-taken`). Muestra `QUEUED` como estado inicial y ofrece «Reintentar» en mensajes `retryable` mediante `POST .../messages/{outbox_id}/retry`, que reencola la misma fila del *outbox* (no un envío nuevo). |
 | `features/conversation-stream` | features | Conexión `EventSource` a `GET /conversations/stream?access_token=...` (el token viaja en la consulta porque `EventSource` no admite cabeceras). Aplica los eventos `conversation.updated`, `message.created`, `message.updated` y `handoff.requested` al caché de TanStack Query. Al reconectar, o al cerrar el servidor el stream por vencimiento del token, renueva la sesión (`POST /auth/refresh`) e invalida la consulta de la bandeja para volver a solicitarla completa (no hay búfer de reenvío). |
-| `widgets/conversation-inbox` | widgets | Lista filtrable (modo, asignadas a mí, sin asignar, incluir resueltas) con aviso destacado de nuevas derivaciones. |
-| `widgets/conversation-thread` | widgets | Hilo de mensajes con carga de historial por cursor, cabecera con las acciones de traspaso y el compositor. |
+| `widgets/conversation-inbox` | widgets | Lista con búsqueda por nombre o teléfono, filtros (modo, asignadas a mí, sin asignar, incluir resueltas, selector de encargado solo para `SUPERADMIN`) y aviso destacado de nuevas derivaciones. |
+| `widgets/conversation-thread` | widgets | Hilo de mensajes con carga de historial por cursor, lista `unsent` de mensajes aún no entregados a Chatwoot, cabecera con las acciones de traspaso y el compositor. |
 | `pages/conversations` | pages | Orquesta ambos widgets y la suscripción al stream; guard de rol (`ENCARGADO` y `SUPERADMIN`). |
 
 * **Adjuntos:** las imágenes y documentos se cargan únicamente desde `/api/v1/conversations/{id}/attachments/{attachment_id}` (la ruta que ya devuelve `attachments[].url`). Como el endpoint exige autenticación y `<img>` no envía cabeceras, el slice `entities/message` los obtiene con el cliente de `@/shared/api` (JWT) y los muestra mediante un `blob:` URL. No se usan URL de Chatwoot.

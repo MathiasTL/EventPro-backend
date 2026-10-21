@@ -412,6 +412,14 @@ Los clientes se crean o actualizan automáticamente al generar una cotización (
 * **Descripción:** Lista paginada de clientes, con búsqueda por teléfono o nombre.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Query Params:** `q=carlos` o `phone=+51999888777`, `page`, `page_size`.
+* **Implementación:** consulta PostgreSQL mediante `FindClients` real. `q` busca fragmentos
+  literales de nombre (sin distinguir mayúsculas) o teléfono; `%` y `_` no actúan como
+  comodines. `phone` usa `PhoneNumber`, admite formato local, internacional y separadores,
+  y reconoce los formatos antiguos almacenados sin modificarlos. Al combinar `q` y `phone`
+  se aplican ambos filtros. El teléfono de salida se normaliza a E.164.
+* **Paginación:** `page >= 1`, `1 <= page_size <= 100` (20 por defecto), con `total` antes
+  de paginar. Orden descendente por creación e ID para evitar empates entre páginas.
+* **Errores:** 401 sin sesión, 403 para `OPERADOR`, 422 para teléfono o paginación inválidos.
 * **Response `200 OK`:**
   ```json
   {
@@ -433,6 +441,11 @@ Los clientes se crean o actualizan automáticamente al generar una cotización (
 
 #### `GET /clients/{id}`
 * **Descripción:** Detalle del cliente con el resumen de sus cotizaciones.
+  Usa `GetClient` real; el historial se lee de `quotes`, ordenado por fecha del evento e ID
+  descendentes. Incluye todos los estados y devuelve `quotes: []` si no hay historial.
+  Un cliente inexistente devuelve 404; un identificador mal formado, 422. Los importes
+  `Decimal` se serializan como cadenas para conservar precisión. No hay altas ni cambios
+  de datos mediante estos endpoints.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Response `200 OK`:**
   ```json
@@ -768,6 +781,21 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
 
 ### 2.10 Módulo: Contratos y Firma Electrónica (`/contracts`)
 
+**Estado de implementación E2:** emisión PDF, gestión administrativa, contingencia `POST /contracts/manual` y API pública `/contracts/sign/*` implementadas localmente en backend; pendientes pruebas de Diego, revisión y despliegue. Véase [especificación E2](../02-arquitectura/09-spec-e2-contratos-pdf.md). La verificación genérica recibe un evento existente de E5 mediante `event_id`; la contingencia manual sí crea y reserva su evento. El frontend está fuera del alcance de esta entrega.
+
+#### `POST /contracts`
+* **Descripción:** Emisión administrativa idempotente o recuperación para un evento con adelanto verificado; después de anular permite crear otro contrato vigente.
+* **Seguridad:** `ENCARGADO` o `SUPERADMIN`.
+* **Request:** `{"event_id":"<uuid>"}`.
+* **Respuesta:** `200 OK`, detalle del contrato con `contract_id`, `contract_number`, `event_id`, `status`, `is_manual_mode`, vigencia del enlace y metadatos. No devuelve el token en claro.
+* **Errores:** `404` evento inexistente; `409 invalid-contract-state` si falta el adelanto o el evento no admite emisión; `422` entrada inválida.
+
+#### `PATCH /contracts/{id}/observations`
+* **Descripción:** Cambia la nota del evento y regenera el PDF antes de firmar; audita valores previos/nuevos. Un contrato emitido rota el enlace y reinicia OTP; un borrador conserva `DRAFT` sin envío.
+* **Seguridad:** `ENCARGADO` o `SUPERADMIN`.
+* **Request:** `{"client_observations":"texto literal o null"}`; el campo es obligatorio y admite hasta 5000 caracteres. Para borrar la nota, enviar JSON `null`, no la cadena `"null"`.
+* **Respuesta:** `200 OK`, detalle actualizado. `404` inexistente; `409 invalid-contract-state` si está firmado/anulado o el evento no admite cambios; `422` validación.
+
 El contrato se crea automáticamente al validar el adelanto (RF-13): se compila el PDF, el contrato pasa a `ISSUED` y se envía por WhatsApp un enlace de firma de un solo uso (`/contracts/sign/{token}`). El `{token}` es un valor criptográfico aleatorio con expiración (`signature_token_expires_at`); solo se almacena su hash. Un token solo da acceso al contrato al que pertenece. La firma electrónica es un flujo propio (ADR-07): visualización, OTP por WhatsApp, firma manuscrita y sello PAdES.
 
 #### `GET /contracts`
@@ -821,6 +849,7 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
 * **Response `200 OK`:** Archivo binario `application/pdf`. **Errores:** `404` si el contrato está en `DRAFT` (aún no hay PDF).
 
 #### `POST /contracts/manual`
+* **Idempotencia:** cabecera obligatoria `Idempotency-Key: <UUID>`; se usa como `quote_id`. Mismos datos/evidencia y clave retornan el resultado existente con 200; clave usada con datos diferentes, 409. Primera creación, 201.
 * **Descripción:** Creación de un contrato en modo manual de contingencia, sin pasar por el bot de WhatsApp (RF-23, PC-05). En una sola operación atómica: crea o actualiza el cliente por teléfono, crea una cotización con `source = MANUAL` con los montos acordados, registra el adelanto como pago `ADVANCE` ya `VERIFIED` por el encargado (verificación autoritativa de disponibilidad con bloqueo Redis incluida), convierte la cotización a `CONVERTED`, crea el evento (`AWAITING_SIGNATURE`) con sus reservas de inventario y genera el contrato con `is_manual_mode = true`. Registra la acción `MANUAL_CONTRACT` en `audit_logs`.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Content-Type:** `multipart/form-data` con dos partes:
@@ -857,7 +886,7 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
     "issue_contract": true
   }
   ```
-  * `agreed_services_subtotal` y `agreed_mobility_amount` son opcionales: si se omiten, se calculan con el catálogo y el motor de movilidad. Si se envían, `agreed_services_reason` y `mobility_override_reason` son obligatorios respectivamente, y el adelanto se calcula como el 10% del subtotal de servicios acordado.
+  * `agreed_services_subtotal` y `agreed_mobility_amount` son opcionales: si se omiten, se calculan con el catálogo y la tarifa de contingencia por distrito de RN-03. Si se envían, `agreed_services_reason` y `mobility_override_reason` son obligatorios respectivamente, y el adelanto se calcula con `ADVANCE_PERCENT` (10% por defecto) sobre servicios acordados.
   * `advance.amount` debe ser exactamente el 10% del subtotal de servicios (`400` `invalid-advance-amount` en caso contrario). `advance.payment_method` admite `YAPE`, `PLIN`, `BANK_TRANSFER` o `CASH`.
   * `issue_contract`: si es `true` (por defecto), el contrato se compila y pasa a `ISSUED` con envío del enlace de firma por WhatsApp; si es `false`, queda en `DRAFT`.
 * **Response `201 Created`:**
@@ -960,10 +989,10 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
     "status": "SIGNED",
     "signed_at": "2026-09-23T21:05:00Z",
     "sealed_pdf_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-    "message": "Contrato firmado satisfactoriamente. Se ha enviado una copia a su WhatsApp."
+    "message": "Contrato firmado. Se ha encolado una copia para tu WhatsApp."
   }
   ```
-* **Errores:** `401` (`invalid-otp`, prueba de OTP ausente, inválida o vencida), `404` (`invalid-signature-token`), `410` (`signature-token-expired`), `409` (`invalid-contract-state`, ya firmado o anulado), `422` (`validation-error`, imagen inválida o términos no aceptados).
+* **Errores:** `401` (`invalid-otp`, prueba inválida o vencida), `404` (`invalid-signature-token`, incluye enlace consumido), `410` (`signature-token-expired`), `409` (`invalid-contract-state`), `422` (`validation-error`, prueba ausente, imagen inválida o términos no aceptados), `503` (`signature-unavailable`, certificado no disponible/fuera de vigencia o fallo del sello/TSA; sin consumir el enlace).
 
 ---
 
@@ -1289,14 +1318,16 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
 
 **Modo y estado de la conversación:** el `status` de Chatwoot se proyecta al `mode` de EventPro: `pending` → `BOT` (responde el bot), `open` → `HUMAN` (un encargado atiende) y `resolved` → `BOT` (si el cliente vuelve a escribir, la conversación se reabre en `pending`). Una conversación `open` sin `assigned_user_id` es una derivación pendiente de toma.
 
-**Ventana de servicio de 24 h:** `service_window_open` es `true` mientras no hayan pasado 24 horas desde el último mensaje entrante del cliente; `service_window_expires_at` es esa marca más 24 h (`null` si el cliente nunca escribió). Con la ventana cerrada solo se pueden enviar plantillas aprobadas.
+**Ventana de servicio de 24 h:** `service_window_open` refleja el `can_reply` de Chatwoot (verdadero mientras no hayan pasado 24 horas desde el último mensaje entrante del cliente); `service_window_expires_at` es `last_client_message_at` más 24 h ([especificación 09, D15](../02-arquitectura/09-spec-e1-bandeja-conversaciones.md)) (`null` si el cliente nunca escribió). Con la ventana cerrada solo se pueden enviar plantillas aprobadas.
 
 **Disponibilidad:** `GET /conversations`, `GET /conversations/{id}/messages`, `GET /conversations/{id}/attachments/{attachment_id}`, `takeover` y `release` consultan o modifican Chatwoot de forma síncrona; si no responde, devuelven `503` (`messaging-gateway-unavailable`). El envío de mensajes pasa por `outbox_messages` y tolera la caída de Chatwoot.
+
+**Extensiones de la bandeja:** búsqueda (`q`), filtro por encargado (`assigned_user_id`), contador de no leídos, `quote_status` y `lead_status`, autoría y motivos de falla, `GET /conversations/{id}`, `POST /conversations/{id}/read` y `POST /conversations/{id}/messages/{outbox_id}/retry` se definen en la [especificación 09](../02-arquitectura/09-spec-e1-bandeja-conversaciones.md) y se reflejan en este módulo.
 
 #### `GET /conversations`
 * **Descripción:** Bandeja de conversaciones, ordenada por `last_message_at` descendente. Por defecto excluye las conversaciones `resolved`.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
-* **Query Params:** `mode=HUMAN` (`BOT` | `HUMAN`), `assigned=me` (`me` = asignadas al usuario autenticado | `unassigned` = sin asignar), `include_resolved=false`, `page`, `page_size` (paginado).
+* **Query Params:** `mode=HUMAN` (`BOT` | `HUMAN`), `assigned=me` (`me` = asignadas al usuario autenticado | `unassigned` = sin asignar), `include_resolved=false`, `q` (texto, mínimo 2 caracteres; busca por nombre del cliente o dígitos del teléfono), `assigned_user_id` (UUID; filtra por encargado asignado; solo `SUPERADMIN`, un `ENCARGADO` recibe `403`), `page`, `page_size` (paginado).
 * **Response `200 OK`:**
   ```json
   {
@@ -1305,9 +1336,13 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
         "chatwoot_conversation_id": 57,
         "client": {"id": "c3d1a7f2-...", "name": "Carlos Ramírez", "phone": "+51999888777"},
         "quote_id": "q9c8a1b2-...",
+        "quote_status": "SENT",
+        "lead_status": "QUOTE_SENT",
         "status": "open",
         "mode": "HUMAN",
         "assigned_user_id": "b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a22",
+        "assigned_user_name": "María Torres",
+        "unread_count": 2,
         "handoff_reason": "CLIENT_REQUEST",
         "handed_off_at": "2026-10-03T16:40:12Z",
         "last_message_preview": "Quisiera cambiar la hora del show",
@@ -1321,8 +1356,14 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
     "total": 1
   }
   ```
-  `status` es `pending`, `open` o `resolved`; `handoff_reason` es `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR` o `null`; `quote_id`, `assigned_user_id` y `handed_off_at` son `null` cuando no aplican.
-* **Errores:** `503` (`messaging-gateway-unavailable`).
+  `status` es `pending`, `open` o `resolved`; `handoff_reason` es `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR` o `null`; `quote_id`, `quote_status`, `assigned_user_id`, `assigned_user_name` y `handed_off_at` son `null` cuando no aplican; `client.id` es `null` si el teléfono aún no corresponde a un cliente registrado (`client.name` cae al nombre del contacto o al teléfono). `quote_status` es el estado de la cotización vinculada. `lead_status` es un estado comercial **derivado y de solo lectura**, nunca nulo: `QUOTING` (sin cotización), `QUOTE_SENT` (`SENT`), `PAYMENT_STARTED`, `CONVERTED`, `QUOTE_CLOSED` (`EXPIRED` o `CANCELLED`) y `EVENT_DONE` (evento `SETTLED` o marca manual; especificación 09, D25). Salvo `EVENT_DONE`, que admite marca manual, no se escribe. `unread_count` es el contador de mensajes del cliente sin leer, compartido entre encargados. `assigned_user_id` solo se informa cuando `status` es `open`.
+* **Errores:** `403` (`forbidden`, `assigned_user_id` enviado por un `ENCARGADO`), `422` (`validation-error`, `q` de menos de 2 caracteres), `503` (`messaging-gateway-unavailable`).
+
+#### `GET /conversations/{id}`
+* **Descripción:** Una conversación, en el mismo formato que un ítem de `GET /conversations` (incluye `quote_status` y `lead_status`). Se usa para abrir un hilo por enlace directo o fuera de la página cargada.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Response `200 OK`:** un ítem de la bandeja.
+* **Errores:** `404` (`not-found`), `503` (`messaging-gateway-unavailable`).
 
 #### `GET /conversations/{id}/messages`
 * **Descripción:** Mensajes de la conversación, consultados a Chatwoot (EventPro no los almacena). Se devuelven del más reciente al más antiguo.
@@ -1336,10 +1377,14 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
         "id": 4830,
         "direction": "OUTGOING",
         "author_type": "AGENT",
+        "author_name": "María Torres",
         "content": "Claro, con gusto lo reprogramamos.",
         "attachments": [],
         "delivery_status": "READ",
         "failure_reason": null,
+        "failure_code": null,
+        "outbox_id": "ob-91c2...",
+        "retryable": false,
         "created_at": "2026-10-03T16:52:30Z"
       },
       {
@@ -1355,24 +1400,25 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
         "created_at": "2026-10-03T16:40:02Z"
       }
     ],
-    "has_more": true
+    "has_more": true,
+    "unsent": []
   }
   ```
-  `attachments[].url` es la ruta de EventPro del medio (`GET /conversations/{id}/attachments/{attachment_id}`); las URL de Chatwoot nunca se exponen al navegador. `direction` es `INCOMING` u `OUTGOING`; `author_type` es `CLIENT`, `BOT` o `AGENT`; `delivery_status` es `SENT`, `DELIVERED`, `READ` o `FAILED` (`null` en mensajes entrantes). Con `FAILED`, `failure_reason` es un texto legible en español (por ejemplo, «La ventana de 24 horas está cerrada» o «El número no está entre los destinatarios de prueba»).
+  `attachments[].url` es la ruta de EventPro del medio (`GET /conversations/{id}/attachments/{attachment_id}`); las URL de Chatwoot nunca se exponen al navegador. `direction` es `INCOMING`, `OUTGOING` o `ACTIVITY` (aviso del sistema, por ejemplo «La conversación fue reabierta»); `author_type` es `CLIENT`, `BOT` o `AGENT`, y `null` en los avisos `ACTIVITY`; `delivery_status` es `SENT`, `DELIVERED`, `READ` o `FAILED` (`null` en mensajes entrantes). Con `FAILED`, `failure_reason` es un texto legible en español (por ejemplo, «La ventana de 24 horas está cerrada» o «El número no está entre los destinatarios de prueba»); `failure_code` es el código numérico del rechazo cuando existe. `author_type` se resuelve por el *outbox* (mensajes enviados desde EventPro o por el bot) y, si no hay fila, por el remitente de Chatwoot; `author_name` solo se informa para `AGENT`. `outbox_id` es la fila del *outbox* del mensaje y `retryable` indica si puede reintentarse (`POST /conversations/{id}/messages/{outbox_id}/retry`). `unsent` solo viene cuando no se envía `before` y lista los mensajes de la conversación que aún no existen en Chatwoot (estado `QUEUED` o `FAILED` por envío agotado), con `outbox_id`, `author_type`, `author_name`, `message_type`, `content`, `delivery_status`, `failure_reason`, `retryable` y `created_at`.
 * **Errores:** `404` (`not-found`, la conversación no existe), `503` (`messaging-gateway-unavailable`).
 
 #### `GET /conversations/{id}/attachments/{attachment_id}`
-* **Descripción:** Proxy de los medios de la conversación (imágenes, comprobantes, documentos). El backend obtiene el archivo de Chatwoot por la red interna y lo transmite al cliente con el `Content-Type` original y `Content-Disposition: inline; filename=...`. Valida que el adjunto pertenezca a la conversación indicada. Las URL de Chatwoot nunca se exponen al navegador.
+* **Descripción:** Proxy de los medios de la conversación (imágenes, comprobantes, documentos). El backend obtiene el archivo de Chatwoot por la red interna y lo transmite al cliente con el `Content-Type` original y `Content-Disposition: inline; filename=...`. Valida que el adjunto pertenezca a la conversación indicada. La respuesta añade `Cache-Control: private, no-store`, `X-Content-Type-Options: nosniff` y `Content-Security-Policy: default-src 'none'; sandbox`, para que un medio ajeno no ejecute contenido activo. Las URL de Chatwoot nunca se exponen al navegador.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`. La lectura no exige que la conversación esté tomada.
 * **Response `200 OK`:** el contenido binario del archivo.
 * **Errores:** `404` (`not-found`, el adjunto no existe o no pertenece a la conversación), `503` (`messaging-gateway-unavailable`).
 * **Nota:** este endpoint sirve los medios del chat. Si el bot ya almacenó un comprobante de pago en el almacenamiento de EventPro (RF-11), la fuente para la revisión del pago sigue siendo `GET /payments/{id}/evidence`.
 
 #### `POST /conversations/{id}/messages`
-* **Descripción:** Envía un mensaje al cliente como el agente de servicio de Chatwoot. El autor real (el usuario autenticado) se registra en `audit_logs` con la acción `SEND_CONVERSATION_MESSAGE`. El envío pasa por `outbox_messages` con reintentos (ver especificación del gateway, sección 4): el mensaje se acepta y se entrega de forma asíncrona. Si agota los reintentos queda `FAILED` y el encargado puede reenviarlo con una nueva petición.
+* **Descripción:** Envía un mensaje al cliente como el agente de servicio de Chatwoot. El autor real (el usuario autenticado) se registra en `audit_logs` con la acción `SEND_CONVERSATION_MESSAGE`. El envío pasa por `outbox_messages` con reintentos (ver especificación del gateway, sección 4): el mensaje se acepta y se entrega de forma asíncrona. Si agota los reintentos queda `FAILED` y el encargado puede reintentarlo con `POST /conversations/{id}/messages/{outbox_id}/retry`, que reencola la misma fila del *outbox*.
 * **Reglas:**
   * La conversación debe estar tomada por el usuario autenticado: `status = open` y `assigned_user_id` igual al usuario. No se puede escribir en una conversación en modo `BOT`; hay que ejecutar antes `POST /conversations/{id}/takeover`.
-  * Si la ventana de 24 h está cerrada, solo se admite una plantilla aprobada (objeto `template`); con texto libre responde `422` (`service-window-closed`). Con la ventana abierta, el objeto `template` también es válido.
+  * Si la ventana de 24 h está cerrada responde `422` (`service-window-closed`). **El envío de plantillas (objeto `template`) queda fuera de la primera versión** ([especificación 09, D20](../02-arquitectura/09-spec-e1-bandeja-conversaciones.md)): mientras no haya plantillas aprobadas por Meta, el objeto `template` responde `422` (`validation-error`). El cuerpo de plantilla de abajo queda reservado para cuando se habiliten.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Content-Type:** `application/json` (texto o plantilla) o `multipart/form-data` (adjunto).
 * **Request Body (texto):**
@@ -1391,7 +1437,7 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
     }
   }
   ```
-* **Request multipart:** campos `attachment` (archivo, obligatorio) y `content` (texto opcional que acompaña al adjunto). Aplican las reglas de subida de archivos de la sección 1: máximo 5 MB, validación por contenido y tipos JPEG, PNG, WebP o PDF.
+* **Request multipart:** campos `attachment` (archivo, obligatorio) y `content` (texto opcional que acompaña al adjunto). Aplican las reglas de subida de archivos de la sección 1: máximo 5 MB, validación por contenido y tipos JPEG, PNG, WebP o PDF. El multipart se acota antes de leerlo: exige el encabezado `Content-Length` (sin él responde `422` `validation-error`), rechaza con `422` `invalid-file` un cuerpo que supere 5 MB más 64 KiB de sobrecarga, y admite un solo archivo y como máximo 4 campos (texto de hasta 4096 caracteres). El adjunto viaja como `DOCUMENT`.
 * **Response `202 Accepted`:**
   ```json
   {
@@ -1402,6 +1448,29 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
   ```
   `QUEUED` es el estado previo a la aceptación por Chatwoot; una vez enviado, el mensaje aparece en `GET /conversations/{id}/messages` y el avance de su estado (`SENT`, `DELIVERED`, `READ` o `FAILED`) llega por el evento `message.updated` del stream.
 * **Errores:** `404` (`not-found`), `409` (`conversation-not-taken`, la conversación no está `open` o no está asignada; `conversation-taken-by-other`, está asignada a otro usuario), `422` (`service-window-closed`; `invalid-file`; `validation-error`, por ejemplo cuerpo sin `content`, `attachment` ni `template`).
+
+#### `POST /conversations/{id}/messages/{outbox_id}/retry`
+* **Descripción:** Reintenta un mensaje cuyo envío se agotó (`FAILED` en el *outbox*) o cuya entrega rechazó WhatsApp. Reencola la **misma fila** del *outbox* (se reinician los intentos); el mensaje rechazado original permanece en el hilo y el nuevo aparece al enviarse. Se audita como `SEND_CONVERSATION_MESSAGE` con `retry_of`.
+* **Reglas:** mismas precondiciones que el envío: la conversación debe estar tomada por el usuario autenticado. Con la ventana de 24 h cerrada el reintento responde `422` (`service-window-closed`).
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Request Body:** vacío.
+* **Response `202 Accepted`:** igual que `POST /conversations/{id}/messages` (`delivery_status: "QUEUED"`).
+* **Errores:** `404` (`not-found`), `409` (`conversation-not-taken`, `conversation-taken-by-other`, `invalid-outbox-state`: la fila no está fallida o su contenido ya se anuló), `422` (`service-window-closed`).
+
+#### `POST /conversations/{id}/lead/event-done`
+* **Descripción:** Marca a mano la etapa comercial «Evento realizado» (`lead_status = EVENT_DONE`). Es solo un cambio de estado: no cierra la conversación ni cambia su modo, su asignación o su estado en Chatwoot. La etapa también se calcula sola cuando el evento de la cotización está `SETTLED`. Cuando el cliente vuelve a escribir, el ciclo comercial se reinicia a `QUOTING` en la misma conversación ([especificación 09, D25](../02-arquitectura/09-spec-e1-bandeja-conversaciones.md)).
+* **Reglas:** solo desde `lead_status = CONVERTED`; idempotente si ya está en `EVENT_DONE`; no exige haber tomado la conversación.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Request Body:** vacío.
+* **Response `200 OK`:** el ítem de la conversación actualizado (misma forma que `GET /conversations/{id}`); se publica `conversation.updated`.
+* **Errores:** `404` (`not-found`), `409` (`invalid-lead-transition`: el estado comercial no es `CONVERTED`).
+
+#### `POST /conversations/{id}/read`
+* **Descripción:** Marca la conversación como leída (reinicia `unread_count`). La interfaz lo llama al abrir un hilo atendido por un encargado.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Request Body:** vacío.
+* **Response `204 No Content`.**
+* **Errores:** `404` (`not-found`), `503` (`messaging-gateway-unavailable`).
 
 #### `POST /conversations/{id}/takeover`
 * **Descripción:** Un encargado toma la conversación: pasa a `open` en Chatwoot, se asigna al usuario autenticado (`assigned_user_id`) y el bot deja de responder. Si la conversación estaba en modo `BOT` registra `handoff_reason = MANUAL_TAKEOVER` y `handed_off_at`; si ya había sido derivada (`open` sin asignar), conserva el motivo original. Es idempotente: si ya está tomada por el mismo usuario, responde `200` sin cambios.
@@ -1476,7 +1545,9 @@ Todos los errores usan `Content-Type: application/problem+json` con los campos `
 | `service-window-closed` | `422` | La ventana de servicio de 24 h de WhatsApp está cerrada y el mensaje no es una plantilla aprobada. Incluye `service_window_expires_at`. |
 | `conversation-not-taken` | `409` | La conversación no está tomada por un humano (`status` distinto de `open`) o está abierta sin asignar; hay que ejecutar `takeover` antes de enviar mensajes. |
 | `conversation-taken-by-other` | `409` | La conversación está asignada a otro encargado. Incluye `assigned_user_id`. |
-| `messaging-gateway-unavailable` | `503` | Chatwoot no responde y la operación requiere una consulta o un cambio de estado síncrono (bandeja, mensajes, `takeover`, `release`). |
+| `invalid-outbox-state` | `409` | Se intentó reintentar un mensaje que no está fallido o cuyo contenido se anuló tras el envío (`POST /conversations/{id}/messages/{outbox_id}/retry`). |
+| `invalid-lead-transition` | `409` | Se intentó marcar «Evento realizado» cuando el estado comercial de la conversación no es `CONVERTED` (`POST /conversations/{id}/lead/event-done`). |
+| `messaging-gateway-unavailable` | `503` | Chatwoot no responde y la operación requiere una consulta o un cambio de estado síncrono (bandeja, mensajes, `takeover`, `release`, `read`). |
 
 
 ## Flujo administrativo manual implementado (PR #22)
@@ -1496,3 +1567,18 @@ Fachada transaccional de PC-05. Las rutas `/quotes`, `/quotes/{id}/pay-advance` 
 Todas requieren JWT de cuenta activa ENCARGADO/SUPERADMIN. Errores: 401 sin sesión, 403 rol insuficiente, 422 validación. Autoverificación requiere SUPERADMIN y motivo; sin excepción retorna 422. ADVANCE_PERCENT aplica solo a servicios. Comprobante máximo 5 MiB y validación por contenido.
 
 Campos y estados completos: [Flujo administrativo](03-flujo-manual-entregable.md). Contrato ISSUED queda pendiente de firma; no representa una transferencia ni envío automático al cliente.
+
+
+### Observaciones de cotización (US-03, spec 08)
+
+`POST /api/v1/quotes` acepta `observations: string | null` opcional y
+`GET /api/v1/quotes/{id}` devuelve el mismo campo. Se conserva el texto recibido;
+no se interpreta como HTML. Requiere Alembic `0006_quote_observations`.
+
+Los tres endpoints de creación, listado y detalle usan los DTOs de la spec 08,
+con acceso `ENCARGADO` o `SUPERADMIN`; `OPERADOR` obtiene 403. El listado filtra
+por `status`, `client_id`, `from_date`, `to_date` (fecha del evento), `page` y
+`page_size` (máximo 100), ordenando por `sent_at` e id descendentes.
+Los importes JSON son cadenas decimales. El detalle conserva los precios vendidos
+aunque se modifique posteriormente el catálogo. El evento usa fecha/hora local de
+Lima; `sent_at` y `expires_at` son instantes UTC.

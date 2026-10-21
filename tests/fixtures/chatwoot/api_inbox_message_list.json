@@ -1,0 +1,262 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "meta": {
+      "labels": [],
+      "additional_attributes": {},
+      "contact": {
+        "additional_attributes": {
+          "social_profiles": {
+            "whatsapp": "cliente.prueba"
+          },
+          "social_whatsapp_user_name": "cliente.prueba"
+        },
+        "custom_attributes": {},
+        "email": null,
+        "id": 1,
+        "identifier": null,
+        "name": "Cliente Prueba",
+        "phone_number": "+51999111222",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "agent_last_seen_at": "2026-10-21T03:04:27.804Z",
+      "assignee_last_seen_at": null
+    },
+    "payload": [
+      {
+        "id": 26,
+        "content": "Mi nombre es Cliente Prueba",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1792517253,
+        "private": false,
+        "source_id": "wamid.FAKE0002",
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.prueba"
+            },
+            "social_whatsapp_user_name": "cliente.prueba"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Prueba",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 28,
+        "content": "Gracias, Cliente. ¿Tú proporcionarás la movilidad para trasladar al equipo o debemos cotizarla?",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1792517260,
+        "private": false,
+        "source_id": "wamid.FAKE0003",
+        "sender": {
+          "id": 1,
+          "name": "EventPro Bot",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 37,
+        "content": "Quiero hablar con un asesor",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1792520411,
+        "private": false,
+        "source_id": "wamid.FAKE0004",
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.prueba"
+            },
+            "social_whatsapp_user_name": "cliente.prueba"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Prueba",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 38,
+        "content": "La conversación fue reabierta por Encargado Prueba",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "activity": {
+            "type": "conversation_status_changed",
+            "status": "open"
+          }
+        },
+        "created_at": 1792520414,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 39,
+        "content": "Con gusto. Un encargado continuará esta conversación en breve; gracias por tu paciencia.",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1792520415,
+        "private": false,
+        "source_id": "wamid.FAKE0001",
+        "sender": {
+          "id": 1,
+          "name": "EventPro Bot",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 43,
+        "content": "Hola de nuevo",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1792552364,
+        "private": false,
+        "source_id": "wamid.FAKE0005",
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.prueba"
+            },
+            "social_whatsapp_user_name": "cliente.prueba"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Prueba",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 44,
+        "content": "¡Hola! ¿En qué te puedo ayudar con tu evento?",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1792552370,
+        "private": false,
+        "source_id": "wamid.FAKE0006",
+        "sender": {
+          "id": 1,
+          "name": "EventPro Bot",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 45,
+        "content": null,
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1792552408,
+        "private": false,
+        "source_id": "wamid.FAKE0007",
+        "sender": {
+          "additional_attributes": {
+            "social_profiles": {
+              "whatsapp": "cliente.prueba"
+            },
+            "social_whatsapp_user_name": "cliente.prueba"
+          },
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Cliente Prueba",
+          "phone_number": "+51999111222",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "attachments": [
+          {
+            "id": 1,
+            "message_id": 45,
+            "file_type": "image",
+            "account_id": 2,
+            "extension": "jpg",
+            "content_type": "image/jpeg",
+            "data_url": "https://chat.example.test/rails/active_storage/blobs/redirect/FAKETOKEN/File.jpg",
+            "thumb_url": "https://chat.example.test/rails/active_storage/representations/redirect/FAKETOKEN/FAKEVARIATION/File.jpg",
+            "file_size": 453744,
+            "width": 1355,
+            "height": 1600
+          }
+        ]
+      },
+      {
+        "id": 46,
+        "content": "Recibí el archivo. ¿Qué te gustaría cotizar para tu evento?",
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "delivered",
+        "content_attributes": {},
+        "created_at": 1792552415,
+        "private": false,
+        "source_id": "wamid.FAKE0008",
+        "sender": {
+          "id": 1,
+          "name": "EventPro Bot",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      }
+    ]
+  }
+}

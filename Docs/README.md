@@ -4,6 +4,12 @@ Bienvenido a la documentación técnica, arquitectónica y operativa de **EventP
 
 Esta documentación constituye la **Fase de Especificación y Diseño (Definition of Ready)** previa a la etapa de desarrollo de software.
 
+## Integración backend con E2
+
+La entrega local de contratos y firma se describe en la [especificación E2](02-arquitectura/09-spec-e2-contratos-pdf.md). La [guía de coordinación E2](05-operaciones/coordinaciones-e2/README.md) describe los puntos de conexión y las tareas de Christian, Mathias, Nicolas, David y Renzo. Cada integrante adapta su módulo a los contratos existentes de E2 y documenta la compatibilidad en su PR.
+
+Consultar también el [plan de Diego](05-operaciones/05-plan-de-trabajo-diego-e2.md).
+
 ---
 
 ## 📚 Estructura Completa de la Documentación
@@ -27,7 +33,8 @@ Docs/
 │   ├── 05-spec-chatwoot-gateway.md                # Especificación del gateway de mensajería Chatwoot (ADR-10)
 │   ├── 06-spec-e1-nucleo-cotizacion.md            # Especificación del núcleo de cotización de E1 (Bloque 1)
 │   ├── 07-spec-e1-outbox-mensajeria.md            # Especificación de la cola de mensajes salientes de E1 (Bloque 2)
-│   └── 08-spec-e1-contrato-cotizacion.md          # Contrato de casos de uso de cotización y división del trabajo de E1 (Bloque 4)
+│   ├── 08-spec-e1-contrato-cotizacion.md          # Contrato de casos de uso de cotización y división del trabajo de E1 (Bloque 4)
+│   └── 09-spec-e1-bandeja-conversaciones.md       # Bandeja de conversaciones de E1: vínculo, autoría, SSE, estado comercial y plan backend/frontend
 │
 ├── 03-datos/                                      # FASE 3: Persistencia y Diseño de Base de Datos
 │   ├── 01-diagrama-entidad-relacion.md            # Diagrama Entidad-Relación (DER en Mermaid)

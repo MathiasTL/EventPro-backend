@@ -1,0 +1,130 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "meta": {
+      "sender": {
+        "additional_attributes": {
+          "social_profiles": {
+            "whatsapp": "cliente.prueba"
+          },
+          "social_whatsapp_user_name": "cliente.prueba"
+        },
+        "availability_status": "offline",
+        "email": null,
+        "id": 1,
+        "name": "Cliente Prueba",
+        "phone_number": "+51999111222",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "last_activity_at": 1792520411,
+        "created_at": 1791657993
+      },
+      "channel": "Channel::Whatsapp",
+      "hmac_verified": false
+    },
+    "id": 1,
+    "messages": [
+      {
+        "id": 40,
+        "content": "La conversación fue marcada como pendiente por Encargado Prueba",
+        "account_id": 2,
+        "inbox_id": 1,
+        "conversation_id": 1,
+        "message_type": 2,
+        "created_at": 1792524712,
+        "updated_at": "2026-10-20T19:31:52.522Z",
+        "private": false,
+        "status": "sent",
+        "source_id": null,
+        "content_type": "text",
+        "content_attributes": {
+          "activity": {
+            "type": "conversation_status_changed",
+            "status": "pending"
+          }
+        },
+        "sender_type": null,
+        "sender_id": null,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "La conversación fue marcada como pendiente por Encargado Prueba",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1792524712,
+          "contact_inbox": {
+            "source_id": "51999111222"
+          }
+        }
+      }
+    ],
+    "account_id": 2,
+    "uuid": "00000000-0000-4000-8000-000000000001",
+    "additional_attributes": {},
+    "agent_last_seen_at": 1792551867,
+    "assignee_last_seen_at": 0,
+    "can_reply": true,
+    "contact_info_request": {
+      "available": false,
+      "reason": null,
+      "delivery_mode": null
+    },
+    "contact_last_seen_at": 0,
+    "custom_attributes": {},
+    "inbox_id": 1,
+    "labels": [],
+    "muted": false,
+    "snoozed_until": null,
+    "status": "pending",
+    "created_at": 1791657993,
+    "updated_at": 1792524712.541995,
+    "timestamp": 1792524712,
+    "first_reply_created_at": 1791658147,
+    "unread_count": 0,
+    "last_non_activity_message": {
+      "id": 39,
+      "content": "Con gusto. Un encargado continuará esta conversación en breve; gracias por tu paciencia.",
+      "account_id": 2,
+      "inbox_id": 1,
+      "conversation_id": 1,
+      "message_type": 1,
+      "created_at": 1792520415,
+      "updated_at": "2026-10-20T18:20:19.047Z",
+      "private": false,
+      "status": "read",
+      "source_id": "wamid.FAKE0001",
+      "content_type": "text",
+      "content_attributes": {},
+      "sender_type": "AgentBot",
+      "sender_id": 1,
+      "external_source_ids": {},
+      "additional_attributes": {},
+      "processed_message_content": "Con gusto. Un encargado continuará esta conversación en breve; gracias por tu paciencia.",
+      "sentiment": {},
+      "conversation": {
+        "assignee_id": null,
+        "unread_count": 0,
+        "last_activity_at": 1792524712,
+        "contact_inbox": {
+          "source_id": "51999111222"
+        }
+      },
+      "sender": {
+        "id": 1,
+        "name": "EventPro Bot",
+        "avatar_url": "",
+        "type": "agent_bot"
+      }
+    },
+    "last_activity_at": 1792524712,
+    "priority": null,
+    "waiting_since": 0,
+    "sla_policy_id": null
+  }
+}

@@ -309,6 +309,16 @@ Cada responsable trabaja en **una sola rama** desde `develop`; los commits van e
 
 ### 3.4 Nicolas — clientes
 
+El backend dispone de `FindClientsUseCase`, `GetClientUseCase` y los dos endpoints de
+lectura con repositorio SQL real. Los proveedores de DI usan la sesión de la petición;
+no se cachean sesiones ni se confirma la transacción desde los casos de uso. No añade
+migraciones ni modifica la interfaz de entrada, los DTO o las suites compartidas.
+`tests/integration/test_real_client_use_cases.py` instancia `FindClientsContract` y
+`GetClientContract` contra PostgreSQL temporal y añade escenarios de permisos,
+normalización de formatos antiguos, búsqueda literal y lectura sin commit. La ejecución
+de estas pruebas queda pendiente del desarrollador/CI; el frontend de clientes es una
+entrega separada de este ajuste backend.
+
 | Aspecto | Detalle |
 | :--- | :--- |
 | Alcance | `FindClients` y `GetClient` reales; routers; frontend. |
@@ -379,3 +389,19 @@ Cada responsable trabaja en **una sola rama** desde `develop`; los commits van e
 | `04-api/01-especificacion-endpoints-rest.md` | Campo `observations` en `POST /quotes` y `GET /quotes/{id}` (lo hace Brenis en su PR). |
 | `01-requisitos/04-reglas-de-negocio-y-control.md` | Resolución de la regla de comprobante tardío (lo hace Christian). |
 | `README.md` de `Docs/` | Enlace a esta especificación. |
+
+
+## Entrega local de Brenis
+
+Implementaciones reales: CreateQuote, GetQuote, ListQuotes y ExpireDueQuotes,
+routers REST, migración 0006, proveedores por sesión y creación real dentro de
+build_bot_transaction. Se mantienen las firmas de los puertos de entrada, DTOs,
+errores y suites compartidas. El repositorio de cotizaciones añade consultas de
+detalle/listado, búsqueda bloqueada de vencibles y comprobación de pagos en revisión.
+`get_or_create` admite DNI/RUC opcionales para nuevos clientes, conservando
+compatibilidad con sus llamadas existentes y sin sobrescribir clientes registrados.
+Estas ampliaciones de puertos de salida requieren revisión de Mathias y coordinación
+con Nicolas; la configuración de coordenadas de origen requiere revisión de Diego.
+
+El frontend incorpora bandeja y detalle, con filtros/paginación y API real. No
+implementa las acciones PayAdvance/CancelQuote ni los endpoints de clientes.

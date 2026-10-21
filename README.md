@@ -10,7 +10,7 @@
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196.svg)](https://www.conventionalcommits.org/)
 
 > [!NOTE]
-> **Estado: Definition of Ready.** Diseño, SRS, arquitectura, datos y contratos API están completos en [`Docs/`](Docs/README.md). Aún no existe código `app/` — este README te deja el entorno listo para empezar el scaffold.
+> **Estado: implementación en curso.** El backend existe en `app/`, con autenticación, usuarios, auditoría y módulos comerciales. La entrega de contratos PDF, contingencia manual y API de firma está descrita en la [especificación E2](Docs/02-arquitectura/09-spec-e2-contratos-pdf.md). Diego confirma las pruebas de la entrega; siguen pendientes la firma real con certificado/gateway, la revisión y el despliegue. Diseño, SRS y contratos API están en [`Docs/`](Docs/README.md).
 
 ---
 
@@ -29,7 +29,7 @@ Empieza por la visión de negocio: [Visión, Alcance y Actores](Docs/01-requisit
 | Lenguaje / API | Python 3.12, FastAPI, Pydantic v2, Uvicorn, structlog (logs JSON) | [`requirements.txt`](requirements.txt) |
 | Datos | PostgreSQL 16 + SQLAlchemy 2 + Alembic + asyncpg | [`docker-compose.yml`](docker-compose.yml) |
 | Caché / Locks / Jobs | Redis 7 + arq (vencimiento de cotizaciones, cola WhatsApp, reportes) | [`docker-compose.yml`](docker-compose.yml), [ADR-08](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
-| PDFs / Archivos | WeasyPrint + Jinja2, storage local `./uploads` | [`Dockerfile`](Dockerfile), [`.env.example`](.env.example) |
+| PDFs / Archivos | ReportLab, pypdf, documentos privados en PostgreSQL y compatibilidad con storage local | [`requirements.txt`](requirements.txt), [especificación E2](Docs/02-arquitectura/09-spec-e2-contratos-pdf.md) |
 | Auth y seguridad | PyJWT (JWT), pwdlib (Argon2id), slowapi (rate limiting), filetype (MIME real) | [`requirements.txt`](requirements.txt), [ADR-09](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
 | Firma electrónica | pyHanko (PAdES) + certificado PKCS#12 | [ADR-07](Docs/02-arquitectura/04-adr-decisiones-arquitectura.md) |
 | Calidad | pytest + pytest-asyncio + pytest-cov, ruff, mypy, Testcontainers | [`requirements-dev.txt`](requirements-dev.txt) |

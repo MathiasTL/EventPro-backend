@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -55,7 +57,24 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def get_contract_write_session(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AsyncIterator[AsyncSession]:
+    """Confirma contrato, documento, pago y outbox antes de responder HTTP.
+
+    Las rutas lo usan con scope='function'; sus adaptadores usan el mismo get_session.
+    """
+    async with session.begin():
+        yield session
+
+
 async def get_catalog_write_session() -> AsyncIterator[AsyncSession]:
     """El catálogo confirma antes de enviar HTTP con Depends(scope='function')."""
+    async with get_sessionmaker()() as session, session.begin():
+        yield session
+
+
+async def get_overrides_write_session() -> AsyncIterator[AsyncSession]:
+    """Los overrides (RF-21, RF-22) confirman antes de enviar HTTP con Depends(scope='function')."""
     async with get_sessionmaker()() as session, session.begin():
         yield session

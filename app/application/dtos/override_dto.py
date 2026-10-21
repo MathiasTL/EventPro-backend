@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
@@ -34,3 +35,44 @@ class ApproveOverbookedDTO:
     payment_id: UUID
     validation_status: PaymentValidationStatus
     event_created_id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class OverrideMobilityInput:
+    """RF-21 / US-19: sobrescritura manual del costo de movilidad de una cotización."""
+
+    quote_id: UUID
+    manual_mobility_amount: Decimal
+    reason: str
+    decided_by_user_id: UUID
+
+
+@dataclass(frozen=True)
+class OverrideMobilityDTO:
+    """Cotización recalculada tras el override: total y saldo nuevos, adelanto inalterado."""
+
+    quote_id: UUID
+    mobility_amount: Decimal
+    total_amount: Decimal
+    advance_amount: Decimal
+    pending_balance: Decimal
+    mobility_overridden: bool
+
+
+@dataclass(frozen=True)
+class OverrideTransitIntervalInput:
+    """RF-22 / US-20: ajuste manual del intervalo de tránsito de una asignación."""
+
+    assignment_id: UUID
+    transit_interval_minutes: int
+    reason: str
+    decided_by_user_id: UUID
+
+
+@dataclass(frozen=True)
+class OverrideTransitIntervalDTO:
+    """Asignación con el intervalo de tránsito sobrescrito."""
+
+    assignment_id: UUID
+    transit_interval_minutes: int
+    transit_interval_overridden: bool

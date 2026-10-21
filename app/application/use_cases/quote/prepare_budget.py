@@ -13,6 +13,9 @@ from app.application.dtos.budget_dto import BudgetInput, BudgetLine, BudgetResul
 from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
+from app.domain.services.financial_engine import FinancialEngine
+from app.domain.value_objects.liquidation import ExtraCharge
+from app.domain.value_objects.mobility import MobilityTariff
 from app.domain.value_objects.money import Money
 
 
@@ -24,7 +27,19 @@ class PrepareBudgetUseCase:
         self._availability = availability
         if not 0 < advance_percent <= 100:
             raise ValueError("advance_percent debe estar entre 1 y 100")
-        self._advance_percent = Decimal(advance_percent) / Decimal(100)
+        # La movilidad manual ya es un importe final auditado; no lleva margen adicional.
+        self._financial = FinancialEngine(
+            tariff=MobilityTariff(
+                Money.zero(),
+                Money.zero(),
+                Money.zero(),
+                Decimal(0),
+                Money.zero(),
+                Money.zero(),
+                Money.zero(),
+            ),
+            advance_percent=advance_percent,
+        )
 
     async def execute(self, request: BudgetInput) -> BudgetResult:
         if request.start_time.tzinfo is not None:
@@ -59,8 +74,11 @@ class PrepareBudgetUseCase:
             if extra is None or not extra.is_active:
                 raise ResourceNotFoundError("Extra activo no encontrado")
             lines.append(BudgetLine(extra.name, extra.sale_price))
-        subtotal = Money(sum((line.amount for line in lines), Decimal("0")))
-        advance = subtotal * self._advance_percent
+        liquidation = self._financial.liquidate(
+            package_price=Money(package.base_price),
+            extras=tuple(ExtraCharge(Money(line.amount), 1) for line in lines[1:]),
+            mobility_amount=Money(request.manual_mobility_amount),
+        )
         availability = await self._availability.check_availability(
             AvailabilityRequest(
                 request.event_date, request.start_time, package.duration_minutes, package.id
@@ -72,10 +90,10 @@ class PrepareBudgetUseCase:
             theme_name=theme_name,
             duration_minutes=package.duration_minutes,
             lines=tuple(lines),
-            services_subtotal=subtotal.amount,
+            services_subtotal=liquidation.services_subtotal.amount,
             mobility_amount=Money(request.manual_mobility_amount).amount,
-            total_amount=(subtotal + Money(request.manual_mobility_amount)).amount,
-            advance_amount=advance.amount,
-            pending_balance=(subtotal - advance).amount,
+            total_amount=liquidation.total_amount.amount,
+            advance_amount=liquidation.advance_amount.amount,
+            pending_balance=liquidation.pending_balance.amount,
             availability=availability,
         )

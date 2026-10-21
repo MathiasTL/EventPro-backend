@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from app.application.dtos.messaging_dto import (
+    ConversationLifecycle,
     ConversationMessage,
     ConversationStatus,
     ConversationSummary,
@@ -13,6 +14,7 @@ from app.application.dtos.messaging_dto import (
     ListSection,
     MessageDirection,
     MessageReceipt,
+    MessageSender,
 )
 from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
 from app.domain.value_objects.outbox import DeliveryStatus
@@ -248,6 +250,10 @@ def test_summary_of_an_open_conversation_maps_to_human_with_an_open_window() -> 
         status=ConversationStatus.HUMAN,
         service_window_open=True,
         last_message_at=instant(1_792_447_562, 6),
+        lifecycle=ConversationLifecycle.OPEN,
+        contact_name="Cliente Demo",
+        unread_count=0,
+        last_message_preview="respondiendo a la prueba",
     )
 
 
@@ -260,7 +266,7 @@ def test_summary_of_a_pending_conversation_maps_to_bot() -> None:
     assert summary.status is ConversationStatus.BOT
 
 
-def test_summary_with_a_closed_window_uses_the_embedded_message_time() -> None:
+def test_summary_with_a_closed_window_uses_the_last_non_activity_message_time() -> None:
     item = conversation_items(_body("api_conversation_list"))[1]
 
     summary = parse_conversation_summary(item)
@@ -268,7 +274,10 @@ def test_summary_with_a_closed_window_uses_the_embedded_message_time() -> None:
     assert summary is not None
     assert summary.phone == OTHER_PHONE
     assert summary.service_window_open is False
-    assert summary.last_message_at == instant(1_792_449_252, 8)
+    assert summary.last_message_at == instant(1_792_449_252, 7)
+    assert summary.contact_name == "51999333444"
+    assert summary.last_message_preview is not None
+    assert summary.last_message_preview.startswith("Welcome and congratulations")
 
 
 def test_summary_of_a_conversation_without_messages_uses_its_last_activity() -> None:
@@ -282,7 +291,7 @@ def test_summary_of_a_conversation_without_messages_uses_its_last_activity() -> 
     assert summary.last_message_at == instant(1_792_458_145, 0)
 
 
-def test_summary_skips_resolved_conversations_and_missing_phones() -> None:
+def test_summary_skips_resolved_conversations_unless_requested_and_missing_phones() -> None:
     item = conversation_items(_body("api_conversation_list"))[2]
     resolved = {**item, "status": "resolved"}
     sender = {**item["meta"]["sender"], "phone_number": None}
@@ -290,6 +299,13 @@ def test_summary_skips_resolved_conversations_and_missing_phones() -> None:
 
     assert parse_conversation_summary(resolved) is None
     assert parse_conversation_summary(no_phone) is None
+    included = parse_conversation_summary(resolved, include_resolved=True)
+    assert included is not None
+    assert (included.lifecycle, included.status) == (
+        ConversationLifecycle.RESOLVED,
+        ConversationStatus.BOT,
+    )
+    assert parse_conversation_summary({**item, "status": "snoozed"}, include_resolved=True) is None
 
 
 def test_summary_falls_back_to_last_activity_when_there_is_no_embedded_message() -> None:
@@ -474,6 +490,10 @@ def test_listed_incoming_and_outgoing_messages() -> None:
         body="Hola, info",
         sent_at=instant(1_791_657_993, 1),
         attachment_filename=None,
+        sender=MessageSender.CONTACT,
+        sender_name="Cliente Demo",
+        status="sent",
+        content_type="text",
     )
     outgoing = parse_conversation_message(items[1])
     assert outgoing is not None
@@ -491,11 +511,15 @@ def test_listed_message_without_attachments_omits_the_key() -> None:
     assert message.attachment_filename is None
 
 
-def test_listed_activity_and_private_messages_are_excluded() -> None:
+def test_listed_activity_is_a_system_message_and_private_notes_are_excluded() -> None:
     item = message_items(_body("api_message_list"))[0]
 
-    assert parse_conversation_message({**item, "message_type": 2}) is None
+    activity = parse_conversation_message({**item, "message_type": 2})
+    assert activity is not None
+    assert (activity.direction, activity.sender) == (MessageDirection.ACTIVITY, None)
     assert parse_conversation_message({**item, "private": True}) is None
+    assert parse_conversation_message({**item, "message_type": 3}) is None
+    assert parse_conversation_message({**item, "message_type": ["x"]}) is None
 
 
 def test_listed_attachment_exposes_the_decoded_file_name() -> None:

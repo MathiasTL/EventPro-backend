@@ -14,6 +14,7 @@ from app.application.dtos.gateway_event_dto import (
     DeliveryReport,
     GatewayEvent,
     IncomingClientMessage,
+    OutgoingMessageEcho,
     UnhandledGatewayEvent,
 )
 from app.application.dtos.messaging_dto import MessageDirection
@@ -55,6 +56,10 @@ class ChatwootEventGateway:
             message = _incoming_message(body)
             if message is not None:
                 return message
+        if kind == cw.EVENT_MESSAGE_CREATED and direction is MessageDirection.OUTGOING:
+            echo = None if is_note else _outgoing_echo(body)
+            if echo is not None:
+                return echo
         return _unhandled(kind, body, direction)
 
     # --- API -------------------------------------------------------------------------------
@@ -148,6 +153,25 @@ def _incoming_message(body: Mapping[str, Any]) -> IncomingClientMessage | None:
         sender_phone=phone,
         content=content if isinstance(content, str) else "",
         is_private=body.get(cw.PRIVATE_KEY) is True,
+        snapshot=cw.conversation_snapshot(body),
+        details=cw.message_details(body),
+    )
+
+
+def _outgoing_echo(body: Mapping[str, Any]) -> OutgoingMessageEcho | None:
+    """Eco de un saliente; `None` si no trae el id del mensaje o el de la conversación."""
+
+    message_id = _int_or_none(body.get(cw.ID_KEY))
+    conversation_id = _conversation_id(body)
+    if message_id is None or conversation_id is None:
+        return None
+    content = body.get(cw.CONTENT_KEY)
+    return OutgoingMessageEcho(
+        external_message_id=str(message_id),
+        conversation_id=conversation_id,
+        content=content if isinstance(content, str) else "",
+        snapshot=cw.conversation_snapshot(body),
+        details=cw.message_details(body),
     )
 
 

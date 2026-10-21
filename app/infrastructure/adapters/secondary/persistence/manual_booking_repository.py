@@ -6,7 +6,7 @@ El adaptador usa SQL parametrizado sobre el baseline existente.
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import select, text
 from sqlalchemy.engine import RowMapping
@@ -22,11 +22,14 @@ from app.domain.entities.payment import (
     PaymentMethod,
     PaymentValidationStatus,
 )
+from app.domain.entities.quote import Quote, QuoteExtraLine, QuoteSource, QuoteStatus
 from app.domain.exceptions.resource_exceptions import (
     ResourceInUseError,
     ResourceNotFoundError,
     ValidationError,
 )
+from app.domain.value_objects.liquidation import Liquidation
+from app.domain.value_objects.mobility import MobilityResult, MobilityScenario
 from app.domain.value_objects.money import Money
 from app.domain.value_objects.time_window import TimeWindow
 from app.infrastructure.adapters.secondary.persistence.mappers.payment_mapper import (
@@ -42,11 +45,21 @@ from app.infrastructure.adapters.secondary.persistence.models.payment_model impo
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_occupancy,
 )
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_client_repository import (  # noqa: E501
+    SqlAlchemyClientRepository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_quote_repository import (  # noqa: E501
+    SqlAlchemyQuoteRepository,
+)
 
 
 class SqlAlchemyManualBookingStore:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, *, deadline_hours: int = 24, commit_confirmation: bool = True
+    ) -> None:
         self._session = session
+        self._deadline_hours = deadline_hours
+        self._commit_confirmation = commit_confirmation
 
     async def stage(
         self,
@@ -76,6 +89,8 @@ class SqlAlchemyManualBookingStore:
                 raise ResourceInUseError(
                     "Estos datos ya tienen una solicitud activa; reutiliza su referencia"
                 ) from exc
+            if "quotes_pkey" in str(exc.orig):
+                raise ResourceInUseError("La referencia ya pertenece a otra cotización") from exc
             raise
 
     async def get(self, quote_id: UUID, *, lock: bool = False) -> ManualBooking | None:
@@ -104,14 +119,16 @@ class SqlAlchemyManualBookingStore:
             (
                 await self._session.execute(
                     text("""
-            SELECT q.id, q.location_address, q.location_district, q.event_date, q.event_time,
+            SELECT q.id, q.client_id, q.location_address, q.location_district,
+              q.event_date, q.event_time,
               q.package_id, q.services_subtotal, q.total_amount, q.advance_amount,
               q.pending_balance, q.final_mobility_amount, q.status,
-              q.manual_request_hash, q.expires_at,
-              c.full_name, c.phone, p.name AS package_name, p.duration_minutes,
+              q.manual_request_hash, q.expires_at, q.observations,
+              c.full_name, c.phone, c.dni, c.ruc, p.name AS package_name, p.duration_minutes,
               t.name AS theme_name, pay.id AS payment_id, pay.validation_status,
               pay.evidence_path, pay.amount AS paid_amount, pay.registered_by_user_id,
-              e.id AS event_id, co.id AS contract_id, co.contract_number, co.pdf_storage_path
+              e.id AS event_id, e.event_code, co.id AS contract_id,
+              co.contract_number, co.pdf_storage_path
             FROM quotes q JOIN clients c ON c.id=q.client_id
             JOIN packages p ON p.id=q.package_id
             LEFT JOIN themes t ON t.id=q.theme_id
@@ -134,7 +151,7 @@ class SqlAlchemyManualBookingStore:
             (
                 await self._session.execute(
                     text("""
-            SELECT qe.quote_id, x.name, qe.subtotal FROM quote_extras qe
+            SELECT qe.quote_id, x.name, qe.quantity, qe.subtotal FROM quote_extras qe
             JOIN extras x ON x.id=qe.extra_id WHERE qe.quote_id=ANY(:ids) ORDER BY qe.id
         """),
                     {"ids": [row["id"] for row in rows]},
@@ -183,6 +200,15 @@ class SqlAlchemyManualBookingStore:
             contract_id=row["contract_id"],
             contract_number=row["contract_number"],
             pdf_path=row["pdf_storage_path"],
+            client_id=row["client_id"],
+            event_code=row["event_code"],
+            dni=row["dni"],
+            ruc=row["ruc"],
+            observations=row["observations"],
+            extras=tuple(
+                f"{entry['name']} x {entry['quantity']}: S/ {entry['subtotal']:.2f}"
+                for entry in extras
+            ),
         )
 
     async def _stage(
@@ -196,73 +222,55 @@ class SqlAlchemyManualBookingStore:
         user_id: UUID,
         request_hash: str,
     ) -> ManualBooking:
-        client = (
-            (
-                await self._session.execute(
-                    text(
-                        "SELECT id, full_name FROM clients WHERE phone IN (:phone,:digits,:local) "
-                        "ORDER BY (phone=:phone) DESC LIMIT 1"
-                    ),
-                    {
-                        "phone": phone,
-                        "digits": phone.lstrip("+"),
-                        "local": phone.removeprefix("+51"),
-                    },
-                )
-            )
-            .mappings()
-            .first()
+        client = await SqlAlchemyClientRepository(self._session).get_or_create(
+            phone, budget.request.client_name
         )
-        if client is None:
-            client_id = await self._session.scalar(
-                text(
-                    "INSERT INTO clients (id,phone,full_name) VALUES (:id,:phone,:name) "
-                    "ON CONFLICT (phone) DO UPDATE SET phone=EXCLUDED.phone RETURNING id"
-                ),
-                {"id": uuid4(), "phone": phone, "name": budget.request.client_name},
-            )
-        else:
-            # El teléfono es la identidad; no modifica nombres de clientes compartidos.
-            client_id = client["id"]
-        await self._session.execute(
-            text("""
-            INSERT INTO quotes (id,client_id,source,event_date,event_time,location_address,
-              location_district,package_id,theme_id,client_provides_mobility,
-              services_subtotal,total_amount,advance_amount,pending_balance,status,sent_at,
-              expires_at,manual_request_hash,base_mobility_amount,final_mobility_amount,
-              mobility_overridden,mobility_override_reason)
-            VALUES (:id,:client,'MANUAL',:date,:time,:address,:district,:package,:theme,:transport,
-              :services,:total,:advance,:balance,'PAYMENT_STARTED',now(),
-              now()+interval '24 hours',:hash,:mobility,:mobility,:overridden,:mobility_reason)
-        """),
-            {
-                "id": quote_id,
-                "client": client_id,
-                "date": budget.request.event_date,
-                "time": budget.request.start_time,
-                "address": budget.request.address,
-                "district": district,
-                "package": budget.request.package_id,
-                "theme": budget.request.theme_id,
-                "total": budget.total_amount,
-                "services": budget.services_subtotal,
-                "transport": budget.request.client_provides_transport,
-                "mobility": budget.mobility_amount,
-                "overridden": not budget.request.client_provides_transport,
-                "mobility_reason": budget.request.mobility_override_reason,
-                "advance": budget.advance_amount,
-                "balance": budget.pending_balance,
-                "hash": request_hash,
-            },
+        money = Money
+        mobility = MobilityResult(
+            scenario=MobilityScenario.EXEMPT
+            if budget.request.client_provides_transport
+            else MobilityScenario.CONTINGENCY,
+            distance_km=None,
+            duration_minutes=None,
+            base_amount=money(budget.mobility_amount),
+            final_amount=money(budget.mobility_amount),
         )
-        for extra_id, line in zip(budget.request.extra_ids, budget.lines[1:], strict=True):
-            await self._session.execute(
-                text("""
-                INSERT INTO quote_extras (quote_id,extra_id,quantity,unit_price,subtotal)
-                VALUES (:quote,:extra,1,:amount,:amount)
-            """),
-                {"quote": quote_id, "extra": extra_id, "amount": line.amount},
-            )
+        liquidation = Liquidation(
+            services_subtotal=money(budget.services_subtotal),
+            mobility_amount=money(budget.mobility_amount),
+            total_amount=money(budget.total_amount),
+            advance_amount=money(budget.advance_amount),
+            pending_balance=money(budget.pending_balance),
+            balance_services=money(budget.services_subtotal) - money(budget.advance_amount),
+            balance_mobility=money(budget.mobility_amount),
+        )
+        now = datetime.now(UTC)
+        quote = Quote.create(
+            client_id=client.id,
+            source=QuoteSource.MANUAL,
+            event_date=budget.request.event_date,
+            event_time=budget.request.start_time,
+            location_address=budget.request.address,
+            location_district=district,
+            package_id=budget.request.package_id,
+            theme_id=budget.request.theme_id,
+            client_provides_mobility=budget.request.client_provides_transport,
+            mobility=mobility,
+            liquidation=liquidation,
+            extras=tuple(
+                QuoteExtraLine(extra_id, 1, money(line.amount), money(line.amount))
+                for extra_id, line in zip(budget.request.extra_ids, budget.lines[1:], strict=True)
+            ),
+            now=now,
+            deadline_hours=self._deadline_hours,
+            manual_request_hash=request_hash,
+            observations=budget.request.observations,
+            mobility_overridden=not budget.request.client_provides_transport,
+            mobility_override_reason=budget.request.mobility_override_reason,
+        )
+        quote.id = quote_id
+        quote.start_payment(now)
+        await SqlAlchemyQuoteRepository(self._session).add(quote)
         payment = Payment(
             quote_id=quote_id,
             concept=PaymentConcept.ADVANCE,
@@ -295,7 +303,8 @@ class SqlAlchemyManualBookingStore:
         result = await self.get(quote_id)
         if result is None:
             raise ValidationError("La solicitud no se pudo recuperar antes de confirmar")
-        await self._session.commit()
+        if self._commit_confirmation:
+            await self._session.commit()
         return result
 
     async def finalize(
@@ -305,10 +314,12 @@ class SqlAlchemyManualBookingStore:
         event_id: UUID,
         contract_id: UUID,
         contract_number: str,
-        pdf_path: str,
+        pdf_path: str | None,
         window: TimeWindow,
         requirements: tuple[InventoryRequirementDTO, ...],
         override_reason: str | None = None,
+        *,
+        draft: bool = False,
     ) -> ManualBooking:
         self._session.add(
             EventModel(
@@ -325,6 +336,7 @@ class SqlAlchemyManualBookingStore:
                 final_total_amount=booking.total_amount,
                 advance_paid=booking.advance_amount,
                 status="AWAITING_SIGNATURE",
+                client_observations=booking.observations,
             )
         )
         await self._session.flush()
@@ -383,16 +395,25 @@ class SqlAlchemyManualBookingStore:
             )
         )
         await self._session.flush()
-        await self._session.execute(
-            text("UPDATE quotes SET status='CONVERTED' WHERE id=:id"), {"id": booking.quote_id}
-        )
+        quotes = SqlAlchemyQuoteRepository(self._session)
+        quote = await quotes.get_by_id(booking.quote_id)
+        if quote is None:
+            raise ResourceNotFoundError("Cotización no encontrada")
+        quote.convert()
+        await quotes.save(quote)
         await self._session.execute(
             text("""
             INSERT INTO contracts
               (id,contract_number,event_id,pdf_storage_path,status,is_manual_mode)
-            VALUES (:id,:number,:event,:path,'ISSUED',true)
+            VALUES (:id,:number,:event,:path,:status,true)
         """),
-            {"id": contract_id, "number": contract_number, "event": event_id, "path": pdf_path},
+            {
+                "id": contract_id,
+                "number": contract_number,
+                "event": event_id,
+                "path": pdf_path,
+                "status": "DRAFT" if draft else "ISSUED",
+            },
         )
         await self._session.execute(
             text("""
@@ -410,7 +431,10 @@ class SqlAlchemyManualBookingStore:
         result = await self.get(booking.quote_id)
         if result is None:
             raise ValidationError("La solicitud no se pudo recuperar antes de confirmar")
-        await self._session.commit()
+        if self._commit_confirmation:
+            await self._session.commit()
+        else:
+            await self._session.flush()
         return result
 
     async def require_approval(self, booking: ManualBooking, user_id: UUID) -> ManualBooking:
@@ -436,7 +460,10 @@ class SqlAlchemyManualBookingStore:
         result = await self.get(booking.quote_id)
         if result is None:
             raise ValidationError("Solicitud no encontrada")
-        await self._session.commit()
+        if self._commit_confirmation:
+            await self._session.commit()
+        else:
+            await self._session.flush()
         return result
 
     async def refund(
@@ -474,9 +501,14 @@ class SqlAlchemyManualBookingStore:
                 new_values={"validation_status": payment.validation_status.value, "reason": reason},
             )
         )
-        await self._session.execute(
-            text("UPDATE quotes SET status='CANCELLED' WHERE id=:id"), {"id": quote_id}
-        )
+        quotes = SqlAlchemyQuoteRepository(self._session)
+        quote = await quotes.get_by_id(quote_id)
+        if quote is None:
+            raise ResourceNotFoundError("Cotización no encontrada")
+        # El reembolso resuelve el pago; no reabre ni cambia un vencimiento histórico.
+        if quote.status not in (QuoteStatus.CANCELLED, QuoteStatus.EXPIRED):
+            quote.cancel(reason)
+            await quotes.save(quote)
         await self._session.flush()
         result = await self.get(quote_id)
         if result is None:

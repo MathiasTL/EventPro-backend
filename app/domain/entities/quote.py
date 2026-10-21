@@ -83,6 +83,7 @@ class Quote:
     extras: tuple[QuoteExtraLine, ...] = ()
     status: QuoteStatus = QuoteStatus.SENT
     manual_request_hash: str | None = None
+    observations: str | None = None
     # Motivo de la cancelación: solo vive en memoria (no hay columna; lo audita el caso de uso).
     cancellation_reason: str | None = None
     id: UUID = field(default_factory=uuid4)
@@ -118,6 +119,7 @@ class Quote:
         manual_request_hash: str | None = None,
         mobility_overridden: bool = False,
         mobility_override_reason: str | None = None,
+        observations: str | None = None,
     ) -> Self:
         """Nace en ``SENT`` con la liquidación congelada y vencimiento ``now + deadline_hours``."""
 
@@ -159,6 +161,7 @@ class Quote:
             sent_at=sent_at,
             expires_at=sent_at + timedelta(hours=deadline_hours),
             manual_request_hash=manual_request_hash,
+            observations=observations,
         )
 
     @property
@@ -203,3 +206,21 @@ class Quote:
             raise InvalidQuoteStateError(f"La cotización está {self.status.value}.")
         self.status = QuoteStatus.CANCELLED
         self.cancellation_reason = reason.strip() if reason and reason.strip() else None
+
+    def override_mobility(self, *, liquidation: Liquidation, reason: str) -> None:
+        """RF-21 / US-19: sobrescribe el monto de movilidad sin alterar el adelanto.
+
+        Solo admite cotizaciones abiertas (``SENT`` o ``PAYMENT_STARTED``): rechaza las
+        ``CONVERTED``, ``CANCELLED`` o ``EXPIRED``; el motivo es obligatorio. ``liquidation`` ya
+        viene recalculada por ``FinancialEngine.liquidate`` con el nuevo monto de movilidad.
+        """
+
+        if self.status not in _OPEN_STATUSES:
+            raise InvalidQuoteStateError(f"La cotización está {self.status.value}.")
+        if not reason or not reason.strip():
+            raise ValidationError("El motivo del ajuste de movilidad es obligatorio")
+        if liquidation.advance_amount != self.liquidation.advance_amount:
+            raise ValidationError("El override de movilidad no puede alterar el adelanto")
+        self.liquidation = liquidation
+        self.mobility_overridden = True
+        self.mobility_override_reason = reason.strip()
