@@ -39,9 +39,9 @@ class CreateQuoteRequest(BaseModel):
     client_provides_mobility: bool = False
     latitude: Decimal | None = Field(default=None, ge=-90, le=90, decimal_places=7)
     longitude: Decimal | None = Field(default=None, ge=-180, le=180, decimal_places=7)
-    observations: Annotated[str, StringConstraints(strip_whitespace=False, max_length=5000)] | None = (
-        None
-    )
+    observations: (
+        Annotated[str, StringConstraints(strip_whitespace=False, max_length=5000)] | None
+    ) = None
     source: QuoteSource = QuoteSource.WHATSAPP
 
     def to_input(self) -> CreateQuoteInput:

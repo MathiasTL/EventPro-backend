@@ -5,7 +5,14 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.application.dtos.availability_dto import AvailabilityStatus
 from app.domain.entities.payment import PaymentMethod
@@ -64,9 +71,9 @@ class BudgetResponse(BaseModel):
 class ManualRequest(BudgetRequest):
     quote_id: UUID
     phone: str = Field(pattern=r"^\+?[0-9]{9,15}$")
-    observations: Annotated[str, StringConstraints(strip_whitespace=False, max_length=5000)] | None = (
-        None
-    )
+    observations: (
+        Annotated[str, StringConstraints(strip_whitespace=False, max_length=5000)] | None
+    ) = None
 
     @field_validator("phone")
     @classmethod
