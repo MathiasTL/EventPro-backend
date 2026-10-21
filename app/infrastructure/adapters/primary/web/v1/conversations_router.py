@@ -33,7 +33,11 @@ from app.application.use_cases.messaging.list_conversations import (
     ListConversations,
 )
 from app.application.use_cases.messaging.mark_conversation_read import MarkConversationRead
-from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
+from app.application.use_cases.messaging.mark_event_done import MarkEventDone
+from app.domain.exceptions.messaging_exceptions import (
+    InvalidLeadTransitionError,
+    MessagingUnavailableError,
+)
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import (
@@ -181,3 +185,19 @@ async def mark_conversation_read(
     with _gateway_errors():
         await use_case.execute(conversation_id)
     return Response(status_code=204)
+
+
+@router.post("/{conversation_id}/lead/event-done", response_model=ConversationResponse)
+async def mark_event_done(
+    conversation_id: ConversationId,
+    context: InboxUser,
+    use_case: Annotated[MarkEventDone, Depends(containers.get_mark_event_done_use_case)],
+) -> ConversationResponse:
+    """Marca a mano «Evento realizado»; solo desde ``CONVERTED`` e idempotente (7.4, D25)."""
+
+    try:
+        with _gateway_errors():
+            view = await use_case.execute(conversation_id, user_id=context.user_id)
+    except InvalidLeadTransitionError as exc:
+        raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
+    return ConversationResponse.from_view(view)

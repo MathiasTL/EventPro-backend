@@ -20,3 +20,6 @@ class IInboxLookupPort(Protocol):
 
     async def quote_statuses(self, quote_ids: Collection[UUID]) -> Mapping[UUID, QuoteStatus]:
         """Estado de cada cotización."""
+
+    async def settled_quote_ids(self, quote_ids: Collection[UUID]) -> set[UUID]:
+        """Cotizaciones cuyo evento está ``SETTLED`` (D25); el evento enlaza por ``quote_id``."""

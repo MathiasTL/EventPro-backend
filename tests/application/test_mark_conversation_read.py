@@ -125,7 +125,14 @@ async def test_conversation_updated_carries_lead_quote_and_assignee() -> None:
     assert updated["quote_status"] == "CONVERTED"
     assert updated["lead_status"] == LeadStatus.CONVERTED.value
     assert updated["assigned_user_name"] == "María Torres"
-    assert lookup.calls == ["quote_statuses", "user_names"]
+    # Una pasada para decidir el reinicio del ciclo (D25) y otra para enriquecer el evento.
+    assert lookup.calls == [
+        "quote_statuses",
+        "settled_quote_ids",
+        "quote_statuses",
+        "settled_quote_ids",
+        "user_names",
+    ]
 
 
 async def test_a_lookup_failure_publishes_the_event_without_enrichment() -> None:

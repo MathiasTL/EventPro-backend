@@ -20,6 +20,7 @@ from app.application.dtos.gateway_event_dto import (
     OutgoingMessageEcho,
     UnhandledGatewayEvent,
 )
+from app.application.dtos.inbox_dto import LeadStatus
 from app.application.dtos.messaging_dto import (
     ConversationLifecycle,
     ConversationStatus,
@@ -36,7 +37,7 @@ from app.application.ports.output.inbox_event_unit_of_work_port import (
 from app.application.ports.output.inbox_lookup_port import IInboxLookupPort
 from app.application.ports.output.outbox_repository_port import OutboxTransactionFactory
 from app.application.use_cases.messaging import conversation_events as events
-from app.application.use_cases.messaging.lead_status import derive_lead_status
+from app.application.use_cases.messaging.lead_status import resolve_lead
 from app.application.use_cases.messaging.message_authorship import resolve_author_type
 from app.application.use_cases.messaging.record_delivery_status import RecordDeliveryStatus
 from app.core.logging import get_logger
@@ -145,7 +146,7 @@ class ProcessGatewayEvent:
                     tx, message.conversation_id, message.sender_phone, at
                 )
                 link.record_client_message(at)
-                self._restart_lead_cycle_if_event_done(link, at)
+                await self._restart_lead_cycle_if_event_done(link, at)
                 await tx.links.save(link)
                 client = await _client_of(tx, link)
         except Exception as exc:
@@ -173,12 +174,26 @@ class ProcessGatewayEvent:
             raise RuntimeError("La bandeja no está configurada")
         return self._inbox()
 
-    def _restart_lead_cycle_if_event_done(self, link: ConversationLink, at: datetime) -> None:
-        """Punto de llamada de D25 (B5b): reiniciar el ciclo si el ``lead_status`` es EVENT_DONE.
+    async def _restart_lead_cycle_if_event_done(self, link: ConversationLink, at: datetime) -> None:
+        """D25: un mensaje del cliente en ``EVENT_DONE`` reinicia el ciclo comercial.
 
-        El estado comercial se calcula con la cotización y el evento (``IInboxLookupPort``), que
-        llegan con B5/B5b; hasta entonces no hay nada que evaluar aquí.
+        El estado se calcula fuera de la transacción del vínculo (otra conexión, solo lectura).
+        Si la consulta falla no se reinicia: el mensaje se registra igual y el bot responde.
         """
+
+        if self._lookup is None or link.quote_id is None:
+            return
+        try:
+            _, lead_status = await resolve_lead(self._lookup, link)
+        except Exception as exc:
+            get_logger("gateway_events").warning(
+                "lead_cycle_check_failed",
+                conversation_id=link.chatwoot_conversation_id,
+                error_type=type(exc).__name__,
+            )
+            return
+        if lead_status is LeadStatus.EVENT_DONE:
+            link.restart_lead_cycle(at=at)
 
     async def _process_echo(
         self, echo: OutgoingMessageEcho, received_at: datetime, *, last_attempt: bool
@@ -288,16 +303,15 @@ class ProcessGatewayEvent:
             link.assigned_user_id if snapshot.lifecycle is ConversationLifecycle.OPEN else None
         )
         try:
-            statuses = await self._lookup.quote_statuses([link.quote_id]) if link.quote_id else {}
+            quote_status, lead_status = await resolve_lead(self._lookup, link)
             names = await self._lookup.user_names([assignee]) if assignee else {}
         except Exception as exc:
             get_logger("gateway_events").warning(
                 "conversation_enrichment_failed", error_type=type(exc).__name__
             )
             return None
-        quote_status = statuses.get(link.quote_id) if link.quote_id else None
         return events.LeadEnrichment(
-            lead_status=derive_lead_status(quote_status),
+            lead_status=lead_status,
             quote_status=quote_status,
             assigned_user_name=names.get(assignee) if assignee else None,
         )

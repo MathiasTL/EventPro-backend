@@ -1,7 +1,7 @@
 """ProcessGatewayEvent con la bandeja: vínculo, eventos y reglas de enrutamiento (spec 09, 6.1)."""
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from structlog.testing import capture_logs
@@ -24,6 +24,8 @@ from app.application.dtos.messaging_dto import (
 )
 from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
 from app.domain.entities.client import Client
+from app.domain.entities.conversation_link import ConversationLink
+from app.domain.entities.quote import QuoteStatus
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 from app.domain.value_objects.outbox import DeliveryStatus
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -31,6 +33,7 @@ from app.infrastructure.adapters.secondary.events.in_memory_conversation_event_p
     InMemoryConversationEventPublisher,
 )
 from tests.application.inbox_event_support import InMemoryClients, InMemoryInbox
+from tests.application.inbox_read_support import FakeInboxLookup
 from tests.application.outbox_support import InMemoryOutboxStore
 from tests.domain.outbox_support import NOW, make_message
 
@@ -116,6 +119,7 @@ class _World:
         *,
         client: Client | None = None,
         publish_error: Exception | None = None,
+        lookup: FakeInboxLookup | None = None,
     ) -> None:
         self.store = InMemoryOutboxStore()
         self.inbox = InMemoryInbox(
@@ -129,6 +133,7 @@ class _World:
             incoming_handler=self.bot,
             inbox=self.inbox,
             publisher=self.publisher,
+            lookup=lookup,
         )
 
     async def run(self, *, last_attempt: bool = False) -> GatewayEventOutcome:
@@ -513,3 +518,102 @@ async def test_the_in_memory_publisher_keeps_the_order() -> None:
     await publisher.publish(second)
 
     assert publisher.events == [first, second]
+
+
+# --- Reinicio del ciclo comercial (D25) -------------------------------------------------------
+
+
+async def _done_world(
+    *,
+    settled: bool = False,
+    manual: bool = False,
+    quote_status: QuoteStatus = QuoteStatus.CONVERTED,
+) -> tuple[_World, UUID]:
+    quote_id = uuid4()
+    lookup = FakeInboxLookup(quotes={quote_id: quote_status}, settled=[quote_id] if settled else ())
+    world = _World(_incoming(ConversationStatus.BOT), lookup=lookup)
+    link = await world.inbox.links.ensure(CONVERSATION_ID, None, NOW)
+    link.link_quote(quote_id, at=NOW)
+    if manual:
+        link.mark_event_done(user_id=uuid4(), at=NOW)
+    await world.inbox.links.save(link)
+    return world, quote_id
+
+
+@pytest.mark.parametrize("trigger", ["settled", "manual"])
+async def test_an_incoming_message_in_event_done_restarts_the_lead_cycle(trigger: str) -> None:
+    world, _ = await _done_world(settled=trigger == "settled", manual=trigger == "manual")
+
+    outcome = await world.run()
+
+    link = world.inbox.links.links[CONVERSATION_ID]
+    assert outcome is GatewayEventOutcome.APPLIED
+    assert link.quote_id is None
+    assert link.event_done_at is None
+    assert link.event_done_by_user_id is None
+    assert link.lead_cycle_started_at == SENT_AT
+    update = world.publisher.events[1].data
+    assert (update["lead_status"], update["quote_id"], update["quote_status"]) == (
+        "QUOTING",
+        None,
+        None,
+    )
+    assert len(world.bot.messages) == 1
+
+
+async def test_the_restart_keeps_the_previous_quote_untouched_in_the_lookup() -> None:
+    world, quote_id = await _done_world(settled=True)
+
+    await world.run()
+
+    assert world.use_case._lookup is not None
+    assert await world.use_case._lookup.quote_statuses([quote_id]) == {
+        quote_id: QuoteStatus.CONVERTED
+    }
+
+
+async def test_a_converted_quote_without_done_signal_keeps_its_cycle() -> None:
+    world, quote_id = await _done_world()
+
+    await world.run()
+
+    link = world.inbox.links.links[CONVERSATION_ID]
+    assert link.quote_id == quote_id
+    assert link.lead_cycle_started_at is None
+    assert world.publisher.events[1].data["lead_status"] == "CONVERTED"
+
+
+async def test_a_settled_event_of_a_quote_that_is_not_converted_does_not_restart() -> None:
+    world, quote_id = await _done_world(settled=True, quote_status=QuoteStatus.SENT)
+
+    await world.run()
+
+    assert world.inbox.links.links[CONVERSATION_ID].quote_id == quote_id
+
+
+async def test_a_failing_lookup_never_blocks_the_message_nor_the_bot() -> None:
+    world, quote_id = await _done_world(settled=True)
+    lookup = world.use_case._lookup
+    assert isinstance(lookup, FakeInboxLookup)
+    lookup.error = RuntimeError("db caída")
+
+    outcome = await world.run()
+
+    link = world.inbox.links.links[CONVERSATION_ID]
+    assert outcome is GatewayEventOutcome.APPLIED
+    assert link.quote_id == quote_id
+    assert link.last_client_message_at == SENT_AT
+    assert len(world.bot.messages) == 1
+
+
+async def test_a_new_quote_links_normally_after_the_restart() -> None:
+    world, _ = await _done_world(settled=True)
+    await world.run()
+    new_quote = uuid4()
+
+    link = await world.inbox.links.get(CONVERSATION_ID)
+    assert isinstance(link, ConversationLink)
+    link.link_quote(new_quote, at=RECEIVED_AT)
+    await world.inbox.links.save(link)
+
+    assert world.inbox.links.links[CONVERSATION_ID].quote_id == new_quote

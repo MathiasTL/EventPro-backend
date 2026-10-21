@@ -13,3 +13,9 @@ class MessagingUnavailableError(DomainError):
     """El gateway de mensajería no responde; el reintento corresponde a la cola outbox."""
 
     code = "messaging-unavailable"
+
+
+class InvalidLeadTransitionError(DomainError):
+    """El estado comercial actual no admite la transición pedida (D25)."""
+
+    code = "invalid-lead-transition"

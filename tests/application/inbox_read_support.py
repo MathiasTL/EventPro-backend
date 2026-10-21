@@ -15,10 +15,12 @@ class FakeInboxLookup:
         clients: Mapping[UUID, str] | None = None,
         users: Mapping[UUID, str] | None = None,
         quotes: Mapping[UUID, QuoteStatus] | None = None,
+        settled: Collection[UUID] = (),
     ) -> None:
         self.clients = dict(clients or {})
         self.users = dict(users or {})
         self.quotes = dict(quotes or {})
+        self.settled = set(settled)
         self.calls: list[str] = []
         self.error: Exception | None = None
 
@@ -30,6 +32,12 @@ class FakeInboxLookup:
 
     async def quote_statuses(self, quote_ids: Collection[UUID]) -> Mapping[UUID, QuoteStatus]:
         return self._answer("quote_statuses", self.quotes, quote_ids)
+
+    async def settled_quote_ids(self, quote_ids: Collection[UUID]) -> set[UUID]:
+        self.calls.append("settled_quote_ids")
+        if self.error is not None:
+            raise self.error
+        return self.settled.intersection(quote_ids)
 
     def _answer[V](
         self, name: str, source: Mapping[UUID, V], ids: Collection[UUID]

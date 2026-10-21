@@ -65,6 +65,31 @@ async def test_lookup_resolves_names_and_quote_status_in_batches(
     assert await lookup.user_names([]) == {}
 
 
+async def test_settled_quote_ids_only_returns_quotes_whose_event_is_settled(
+    engine: AsyncEngine, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    settled, scheduled, without_event = uuid4(), uuid4(), uuid4()
+    await insert_quotes(engine, [settled, scheduled, without_event])
+    async with engine.begin() as connection:
+        for quote_id, status in ((settled, "SETTLED"), (scheduled, "SCHEDULED")):
+            await connection.execute(
+                text(
+                    "INSERT INTO events (event_code, quote_id, event_date, start_time, "
+                    "end_time, address, district, total_services_amount, "
+                    "total_mobility_amount, final_total_amount, status) "
+                    "VALUES (:code, :quote_id, '2026-10-15', '21:30', '22:30', "
+                    "'Av. Benavides', 'Miraflores', 980, 100, 1080, :status)"
+                ),
+                {"code": f"EVT-{quote_id.hex[:8]}", "quote_id": quote_id, "status": status},
+            )
+    lookup = SqlAlchemyInboxLookup(factory)
+
+    found = await lookup.settled_quote_ids([settled, scheduled, without_event, uuid4()])
+
+    assert found == {settled}
+    assert await lookup.settled_quote_ids([]) == set()
+
+
 async def test_outbox_batch_lookup_matches_current_and_retried_ids(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:

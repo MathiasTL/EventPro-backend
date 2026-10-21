@@ -82,6 +82,7 @@ from app.application.use_cases.messaging.list_conversations import (
     ListConversations,
 )
 from app.application.use_cases.messaging.mark_conversation_read import MarkConversationRead
+from app.application.use_cases.messaging.mark_event_done import MarkEventDone
 from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
 from app.application.use_cases.messaging.receive_gateway_event import ReceiveGatewayEvent
 from app.application.use_cases.payment.approve_overbooked_payment import (
@@ -470,6 +471,18 @@ def get_list_conversation_messages_use_case(
 ) -> ListConversationMessages:
     return ListConversationMessages(
         get_messaging_port(), get_outbox_repository(session), get_inbox_lookup()
+    )
+
+
+def get_mark_event_done_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> MarkEventDone:
+    """Con sesión transaccional: la marca se confirma antes de enviar la respuesta HTTP."""
+
+    links = sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(session)
+    views = ConversationViewBuilder(links, get_inbox_lookup())
+    return MarkEventDone(
+        get_messaging_port(), links, views, get_conversation_event_publisher(), get_clock_port()
     )
 
 

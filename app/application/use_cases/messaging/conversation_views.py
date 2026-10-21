@@ -13,7 +13,11 @@ from app.application.ports.output.conversation_link_repository_port import (
 )
 from app.application.ports.output.inbox_lookup_port import IInboxLookupPort
 from app.application.use_cases.messaging.conversation_events import SERVICE_WINDOW
-from app.application.use_cases.messaging.lead_status import derive_lead_status
+from app.application.use_cases.messaging.lead_status import (
+    derive_lead_status,
+    link_event_done,
+    settled_among_converted,
+)
 from app.domain.entities.conversation_link import ConversationLink
 
 
@@ -51,6 +55,7 @@ class ConversationViewBuilder:
         client_names = await self._lookup.client_names(client_ids) if client_ids else {}
         quote_statuses = await self._lookup.quote_statuses(quote_ids) if quote_ids else {}
         user_names = await self._lookup.user_names(user_ids) if user_ids else {}
+        settled = await settled_among_converted(self._lookup, quote_statuses)
 
         views: list[ConversationView] = []
         for summary in summaries:
@@ -74,7 +79,9 @@ class ConversationViewBuilder:
                     phone=summary.phone.value,
                     quote_id=quote_id,
                     quote_status=quote_status,
-                    lead_status=derive_lead_status(quote_status),
+                    lead_status=derive_lead_status(
+                        quote_status, event_done=bool(link and link_event_done(link, settled))
+                    ),
                     lifecycle=summary.lifecycle,
                     mode=summary.status,
                     assigned_user_id=assignee,

@@ -11,7 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.entities.quote import QuoteStatus
+from app.domain.value_objects.event_status import EventStatus
 from app.infrastructure.adapters.secondary.persistence.models.client_model import ClientModel
+from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
 from app.infrastructure.adapters.secondary.persistence.models.quote_model import QuoteModel
 from app.infrastructure.adapters.secondary.persistence.models.user import User
 
@@ -29,6 +31,19 @@ class SqlAlchemyInboxLookup:
     async def quote_statuses(self, quote_ids: Collection[UUID]) -> Mapping[UUID, QuoteStatus]:
         found = await self._pairs(QuoteModel.id, QuoteModel.status, quote_ids)
         return {quote_id: QuoteStatus(status) for quote_id, status in found.items()}
+
+    async def settled_quote_ids(self, quote_ids: Collection[UUID]) -> set[UUID]:
+        """``events.quote_id`` es único: cada cotización tiene a lo sumo un evento."""
+
+        if not quote_ids:
+            return set()
+        async with self._session_factory() as session:
+            rows = await session.scalars(
+                select(EventModel.quote_id).where(
+                    EventModel.quote_id.in_(quote_ids), EventModel.status == EventStatus.SETTLED
+                )
+            )
+            return set(rows)
 
     async def _pairs(self, key: Any, value: Any, ids: Collection[UUID]) -> dict[UUID, Any]:
         if not ids:
