@@ -48,9 +48,15 @@ La nueva migración `0008_contract_signature`, posterior a `0007_contract_manage
 
 Se reutiliza `SqlAlchemyManualBookingStore` sin commits internos. Crea/actualiza datos del cliente, cotización `MANUAL`, extras con cantidades, evidencia, adelanto verificado por el encargado, evento, reservas de inventario, contrato y auditoría en una sola transacción. Este endpoint es la contingencia autoritativa de RF-23: permite que el encargado registre y verifique la evidencia en el mismo acto, dejando constancia de esa decisión. `/manual-bookings` conserva su revisión separada y su restricción de verificación propia.
 
+En un cliente existente, los campos DNI/RUC omitidos se conservan. Enviar explícitamente `null` limpia ese campo; suministrar un valor lo actualiza. Nombre y datos de identidad explícitamente modificados se auditan con actor, valores anteriores/nuevos y cotización mediante `MANUAL_CONTRACT` sobre la entidad `clients`. La distinción entre omisión y valor explícito también forma parte de la huella de idempotencia. Observaciones y cláusulas conservan espacios y saltos de línea tal como se reciben.
+
 El precio de servicios viene del catálogo o del importe acordado con motivo. El adelanto debe coincidir exactamente con el porcentaje configurado sobre servicios (10% por defecto); un importe distinto responde 400 `invalid-advance-amount`. El saldo incluye movilidad. Sin importe pactado, la movilidad usa la tarifa de contingencia por distrito de RN-03; si el cliente aporta transporte es cero. Observaciones y cláusulas se incorporan antes de renderizar el PDF.
 
 La revalidación autoritativa usa Redis a través del puerto de disponibilidad y el mismo candado transaccional PostgreSQL global que las demás reservas manuales. Un conflicto devuelve 409 y revierte todo; no aprueba sobrecupo desde esta ruta. `issue_contract=false` deja `DRAFT` sin PDF ni enlace; `POST /contracts` permite emitirlo después.
+
+El PDF se prepara con la instantánea comercial y la identidad persistida **antes de adquirir el candado global**. Tras adquirirlo se revalida capacidad, se reservan recursos y se adopta ese documento; la emisión agrega enlace/auditoría sin volver a renderizar. El documento permanece en la misma transacción PostgreSQL: cualquier conflicto posterior revierte también el PDF preparado. La preparación aún mantiene la transacción, el candado de idempotencia y, si corresponde, el del cliente; lo que se reduce es la sección global de disponibilidad.
+
+La emisión requiere evento `AWAITING_SIGNATURE`; un histórico `SCHEDULED` sin contrato se rechaza antes de generar documento o enlace. Las dos rutas de descarga, `/contracts/{id}/pdf` y `/manual-bookings/{quote_id}/contract`, usan `ManageContracts.pdf` para elegir el documento vigente y entregar el PDF sellado tras la firma.
 
 ## Firma pública (US-15, backend)
 
@@ -63,6 +69,8 @@ La revalidación autoritativa usa Redis a través del puerto de disponibilidad y
 | `POST /contracts/sign/{token}` | `otp_proof`, `signature_base64` PNG hasta 1 MiB, `signer_full_name` y `accept_terms=true`. Valida prueba, imagen, estado y adelanto; estampa firma y sella, guarda evidencia, audita `CONTRACT_SIGNED`, cambia evento a `SCHEDULED` y encola copia PDF. |
 
 El token se consume al firmar; una petición repetida devuelve 404 y no vuelve a sellar ni encolar. Reenviar el enlace, regenerar el contrato o solicitar otro OTP invalida pruebas anteriores. La expiración del enlace devuelve 410. Cinco errores de OTP bloquean esa generación hasta pedir otra dentro de los límites. Las escrituras se serializan por evento, por lo que dos firmas concurrentes no pueden confirmar dos veces.
+
+US-15 exige que el OTP siga vigente al firmar: una prueba JWT todavía válida no extiende su vencimiento. Si el código vence entre la verificación y la firma, se devuelve 410 `otp-expired`, se conserva el enlace y se permite solicitar/verificar un nuevo OTP dentro de los límites existentes.
 
 Las respuestas públicas llevan `Cache-Control: private, no-store` y `Referrer-Policy: no-referrer`. El access log de Uvicorn redacta el token; el proxy y cualquier APM deben aplicar la misma redacción de `/contracts/sign/*` y excluir cuerpos OTP/firma. Los límites por IP requieren que el proxy de confianza configure correctamente la IP de cliente.
 

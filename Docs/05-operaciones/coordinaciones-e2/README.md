@@ -6,6 +6,8 @@ La implementación actual de E2 y su [especificación](../../02-arquitectura/09-
 
 Los archivos individuales describen los puntos de conexión, las tareas de cada responsable y las comprobaciones de compatibilidad. El seguimiento registra los avances conforme se incorporen los PR y sus evidencias.
 
+Los ajustes de identidad, OTP, estados, descarga del PDF y candado global solicitados en la PR #34 se detallan en el [seguimiento de revisión técnica](revision-pr34.md), junto con la evidencia de E5/E6 y de operación que sigue pendiente.
+
 ## Base técnica compartida
 
 1. Mantener las rutas, DTO, puertos, estados, validaciones y límites de la entrega E2. Si un módulo usa otro formato, su responsable debe implementar el adaptador en su lado de la frontera.
