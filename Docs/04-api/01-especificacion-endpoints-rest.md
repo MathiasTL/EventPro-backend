@@ -768,6 +768,21 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
 
 ### 2.10 Módulo: Contratos y Firma Electrónica (`/contracts`)
 
+**Estado de implementación E2:** emisión PDF, gestión administrativa, contingencia `POST /contracts/manual` y API pública `/contracts/sign/*` implementadas localmente en backend; pendientes pruebas de Diego, revisión y despliegue. Véase [especificación E2](../02-arquitectura/09-spec-e2-contratos-pdf.md). La verificación genérica recibe un evento existente de E5 mediante `event_id`; la contingencia manual sí crea y reserva su evento. El frontend está fuera del alcance de esta entrega.
+
+#### `POST /contracts`
+* **Descripción:** Emisión administrativa idempotente o recuperación para un evento con adelanto verificado; después de anular permite crear otro contrato vigente.
+* **Seguridad:** `ENCARGADO` o `SUPERADMIN`.
+* **Request:** `{"event_id":"<uuid>"}`.
+* **Respuesta:** `200 OK`, detalle del contrato con `contract_id`, `contract_number`, `event_id`, `status`, `is_manual_mode`, vigencia del enlace y metadatos. No devuelve el token en claro.
+* **Errores:** `404` evento inexistente; `409 invalid-contract-state` si falta el adelanto o el evento no admite emisión; `422` entrada inválida.
+
+#### `PATCH /contracts/{id}/observations`
+* **Descripción:** Cambia la nota del evento y regenera el PDF antes de firmar; audita valores previos/nuevos. Un contrato emitido rota el enlace y reinicia OTP; un borrador conserva `DRAFT` sin envío.
+* **Seguridad:** `ENCARGADO` o `SUPERADMIN`.
+* **Request:** `{"client_observations":"texto literal o null"}`; el campo es obligatorio y admite hasta 5000 caracteres. Para borrar la nota, enviar JSON `null`, no la cadena `"null"`.
+* **Respuesta:** `200 OK`, detalle actualizado. `404` inexistente; `409 invalid-contract-state` si está firmado/anulado o el evento no admite cambios; `422` validación.
+
 El contrato se crea automáticamente al validar el adelanto (RF-13): se compila el PDF, el contrato pasa a `ISSUED` y se envía por WhatsApp un enlace de firma de un solo uso (`/contracts/sign/{token}`). El `{token}` es un valor criptográfico aleatorio con expiración (`signature_token_expires_at`); solo se almacena su hash. Un token solo da acceso al contrato al que pertenece. La firma electrónica es un flujo propio (ADR-07): visualización, OTP por WhatsApp, firma manuscrita y sello PAdES.
 
 #### `GET /contracts`
@@ -821,6 +836,7 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
 * **Response `200 OK`:** Archivo binario `application/pdf`. **Errores:** `404` si el contrato está en `DRAFT` (aún no hay PDF).
 
 #### `POST /contracts/manual`
+* **Idempotencia:** cabecera obligatoria `Idempotency-Key: <UUID>`; se usa como `quote_id`. Mismos datos/evidencia y clave retornan el resultado existente con 200; clave usada con datos diferentes, 409. Primera creación, 201.
 * **Descripción:** Creación de un contrato en modo manual de contingencia, sin pasar por el bot de WhatsApp (RF-23, PC-05). En una sola operación atómica: crea o actualiza el cliente por teléfono, crea una cotización con `source = MANUAL` con los montos acordados, registra el adelanto como pago `ADVANCE` ya `VERIFIED` por el encargado (verificación autoritativa de disponibilidad con bloqueo Redis incluida), convierte la cotización a `CONVERTED`, crea el evento (`AWAITING_SIGNATURE`) con sus reservas de inventario y genera el contrato con `is_manual_mode = true`. Registra la acción `MANUAL_CONTRACT` en `audit_logs`.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Content-Type:** `multipart/form-data` con dos partes:
@@ -857,7 +873,7 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
     "issue_contract": true
   }
   ```
-  * `agreed_services_subtotal` y `agreed_mobility_amount` son opcionales: si se omiten, se calculan con el catálogo y el motor de movilidad. Si se envían, `agreed_services_reason` y `mobility_override_reason` son obligatorios respectivamente, y el adelanto se calcula como el 10% del subtotal de servicios acordado.
+  * `agreed_services_subtotal` y `agreed_mobility_amount` son opcionales: si se omiten, se calculan con el catálogo y la tarifa de contingencia por distrito de RN-03. Si se envían, `agreed_services_reason` y `mobility_override_reason` son obligatorios respectivamente, y el adelanto se calcula con `ADVANCE_PERCENT` (10% por defecto) sobre servicios acordados.
   * `advance.amount` debe ser exactamente el 10% del subtotal de servicios (`400` `invalid-advance-amount` en caso contrario). `advance.payment_method` admite `YAPE`, `PLIN`, `BANK_TRANSFER` o `CASH`.
   * `issue_contract`: si es `true` (por defecto), el contrato se compila y pasa a `ISSUED` con envío del enlace de firma por WhatsApp; si es `false`, queda en `DRAFT`.
 * **Response `201 Created`:**
@@ -960,10 +976,10 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
     "status": "SIGNED",
     "signed_at": "2026-09-23T21:05:00Z",
     "sealed_pdf_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-    "message": "Contrato firmado satisfactoriamente. Se ha enviado una copia a su WhatsApp."
+    "message": "Contrato firmado. Se ha encolado una copia para tu WhatsApp."
   }
   ```
-* **Errores:** `401` (`invalid-otp`, prueba de OTP ausente, inválida o vencida), `404` (`invalid-signature-token`), `410` (`signature-token-expired`), `409` (`invalid-contract-state`, ya firmado o anulado), `422` (`validation-error`, imagen inválida o términos no aceptados).
+* **Errores:** `401` (`invalid-otp`, prueba inválida o vencida), `404` (`invalid-signature-token`, incluye enlace consumido), `410` (`signature-token-expired`), `409` (`invalid-contract-state`), `422` (`validation-error`, prueba ausente, imagen inválida o términos no aceptados), `503` (`signature-unavailable`, certificado no disponible/fuera de vigencia o fallo del sello/TSA; sin consumir el enlace).
 
 ---
 

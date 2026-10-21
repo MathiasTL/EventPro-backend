@@ -98,6 +98,9 @@ Las variables en blanco (`CHATWOOT_ACCOUNT_ID=`) se leen como no definidas. La U
 * `LOCAL_STORAGE_PATH`: Directorio en disco para comprobantes y contratos PDF (por defecto `./uploads`; en Docker Compose se fija a `/app/uploads`, respaldado por el volumen `uploads_data`).
 
 ### 2.8 Firma Electrónica de Contratos (ADR-07)
+La API de contingencia manual y firma pública está implementada en backend. Aplicar las migraciones hasta `0007_contract_signature` mediante el procedimiento de despliegue y configurar el certificado antes de habilitar la firma. Sin certificado disponible/vigente el sellado devuelve 503 y no consume el enlace. Véase [alcance y comandos para Diego](../02-arquitectura/09-spec-e2-contratos-pdf.md).
+
+* `CONTRACT_FRONTEND_URL`: Origen web para construir el enlace `/contracts/sign/{token}` (por defecto `http://localhost:3000`). Configurar el dominio HTTPS del frontend al desplegar. La gestión de contratos emite y rota enlaces; las rutas públicas y la firma corresponden a US-15. Ver [implementación y validación de contratos PDF](../02-arquitectura/09-spec-e2-contratos-pdf.md).
 * `SIGNATURE_PKCS12_PATH`: Ruta al certificado PKCS#12 (`.p12`) con el que se sella el PDF (PAdES). En local se coloca en `./secrets/` (ignorado por git); en Docker Compose se monta en solo lectura y la variable se fija a `/run/secrets/eventpro-signing.p12`.
 * `SIGNATURE_PKCS12_PASSWORD`: Contraseña del archivo `.p12`. Es un secreto: nunca se versiona.
 * `SIGNATURE_TSA_URL`: URL de la autoridad de sellado de tiempo RFC 3161 (opcional; vacía desactiva la marca de tiempo).
