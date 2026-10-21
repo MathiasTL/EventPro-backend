@@ -85,7 +85,7 @@ def test_revision_chain_is_linear_from_0003() -> None:
     revision = script.get_revision("0004_outbox_delivery_tracking")
     assert revision is not None
     assert revision.down_revision == "0003_manual_booking_documents"
-    assert script.get_heads() == ["0005_event_financial_snapshots"]
+    assert script.get_heads() == ["0007_contract_signature"]
     financial_revision = script.get_revision("0005_event_financial_snapshots")
     assert financial_revision is not None
     assert financial_revision.down_revision == revision.revision

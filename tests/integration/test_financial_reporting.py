@@ -442,7 +442,7 @@ def test_migration_backfills_and_is_reversible(db):
     event_id = asyncio.run(seed_historical())
     command.upgrade(config, "head")
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0005_event_financial_snapshots"]
+    assert scripts.get_heads() == ["0007_contract_signature"]
     assert (
         scripts.get_revision("0005_event_financial_snapshots").down_revision
         == "0004_outbox_delivery_tracking"
@@ -471,7 +471,7 @@ def test_migration_backfills_and_is_reversible(db):
                 assert await connection.run_sync(schema_diff) == []
                 assert (
                     await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                    == "0005_event_financial_snapshots"
+                    == "0007_contract_signature"
                 )
             async with async_sessionmaker(engine, expire_on_commit=False)() as session:
                 snapshot = await session.get(EventFinancialSnapshotModel, event_id)

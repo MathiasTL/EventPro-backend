@@ -171,7 +171,7 @@ async def test_request_receipt_reservation_contract_atomic_and_replay(scenario):
                     "contract": row["contract_id"],
                 },
             )
-            == 3
+            == 4  # Incluye CONTRACT_ISSUED de la integración con E2.
         )
 
 
