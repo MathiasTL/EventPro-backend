@@ -242,7 +242,7 @@ Puerto de lectura nuevo `IInboxLookupPort` con tres consultas por lote: `client_
 2. Si ya está `open` y asignada al mismo usuario, responde `200` sin cambios.
 3. Si está asignada a otro: `ENCARGADO` recibe `409 conversation-taken-by-other`; `SUPERADMIN` sigue como reasignación (6.6).
 4. `claim(conversation, user, expected_assignee)`. Si pierde, `409 conversation-taken-by-other`.
-5. Tras ganar el `claim`, siempre `set_conversation_status(HUMAN)` (idempotente, porque la lectura del paso 1 pudo quedar vieja). Si falla, **compensa** (`release` con el asignado esperado = el usuario) y responde `503`.
+5. Tras ganar el `claim`, siempre `set_conversation_status(HUMAN)` (idempotente, porque la lectura del paso 1 pudo quedar vieja). Si falla, **compensa** y responde `503`: restituye al asignado previo con `claim(previo, esperado = el usuario)` cuando un `SUPERADMIN` reasignó la conversación de otro, o hace `release` si no había asignado; una falla de la compensación se registra y no reemplaza el error de Chatwoot.
 6. Si estaba en modo `BOT` (`pending` o `resolved`): `handoff_reason = MANUAL_TAKEOVER` y `handed_off_at`. Si ya era una derivación sin asignar, conserva el motivo original.
 7. Si estaba en modo `BOT`, limpia la sesión del bot en Redis (D23), de mejor esfuerzo: una falla se registra y no revierte la toma.
 8. Publica `conversation.updated` y responde `200` con la fila actualizada.
@@ -590,6 +590,14 @@ Las capturas se tomaron el 2026-10-20 con el responsable del producto, a través
 * **Punto 3 (`data_url`)** — si no es alcanzable desde la red interna aun reescribiendo el host, se descarga con el token de agente en la cabecera `api_access_token`; si tampoco funciona, el hilo muestra «Adjunto no disponible» con nombre y tipo, y la vista de adjuntos entrantes pasa a seguimiento.
 
 **Límites conocidos:** con un solo `retried_external_message_id`, un segundo reintento de un mensaje que volvió a fallar sobrescribe el id anterior, y el primer mensaje fallido se muestra como «Bot» (D24); el evento `conversation.updated` de la marca manual «Evento realizado» se publica antes de confirmar la transacción (si la confirmación falla, la interfaz se corrige en la siguiente consulta); tope de 500 conversaciones leídas; contador de no leídos compartido; sin reenvío de eventos perdidos; si Chatwoot falla durante la derivación, la reconciliación pendiente es quien corrige; la auditoría de una intervención puede fallar tras el cambio de Chatwoot; al derivar, el bot limpia un asignado viejo con *compare-and-set* contra el titular leído en la misma transacción, de modo que si una toma confirma antes que la derivación, la toma gana y se registra `bot_handoff_release_cas_lost`; solo una secuencia A, luego B, luego A en ese instante podría dejar la conversación `open` sin dueño, y un `SUPERADMIN` la reasigna; el motivo, el resumen y los avisos de la derivación son de mejor esfuerzo, y si fallan la conversación ya quedó con el encargado pero sin motivo ni evento `handoff.requested`; el motivo `tool_loop_limit` del agente se registra como `BOT_NOT_UNDERSTOOD` y `llm_after_action` como `BOT_ERROR`.
+
+**Seguimientos conocidos (no bloqueantes):**
+* **Devolver frente a una reasignación concurrente de un `SUPERADMIN`:** si el CAS de la devolución se pierde después de poner Chatwoot en `pending`, Chatwoot queda en `pending` mientras la base asigna al otro usuario (`conversation_assignment.py`, `ReleaseConversation`); se corrige solo en la siguiente toma.
+* **Auditoría de intervención fuera de la transacción del `claim`:** se escribe después de la llamada a Chatwoot (`conversation_assignment.py`); si la auditoría falla, la API responde `500` con el estado ya cambiado.
+* **El bot decide con la foto del webhook:** usa el `conversation_status` del evento (`handle_incoming_message.py`) y tomar no toma el *lock* del bot, de modo que una respuesta del bot puede colarse tras la toma humana.
+* **`link_created_quote` dentro de la transacción del bot:** (`handle_incoming_message.py`) un fallo al vincular en la bandeja revierte la cotización y la respuesta; conviene usar un *savepoint*.
+* **SSE sin tope por usuario:** cada flujo mantiene una conexión *pub/sub* de Redis; el proxy inverso no debe registrar la cadena de consulta (`access_token`).
+* **Envío JSON sin límite de tamaño:** la rama JSON del envío lee `request.body()` sin tope (`conversations_router.py`).
 
 ---
 

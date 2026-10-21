@@ -98,7 +98,8 @@ class TakeoverConversation(_AssignmentFlow):
         ``ConversationTakenByOtherError`` (con el asignado vigente).
 
         Idempotente si ya está ``open`` y asignada al mismo usuario: no escribe ni publica. Si
-        Chatwoot falla al reabrir, compensa la asignación antes de relanzar el error.
+        Chatwoot falla al reabrir, restituye el asignado previo (o libera si no había) antes de
+        relanzar el error.
         """
 
         summary = await self._messaging.get_conversation(conversation_id)
@@ -118,7 +119,7 @@ class TakeoverConversation(_AssignmentFlow):
                 raise ConversationTakenByOtherError(latest.assigned_user_id if latest else None)
         # Siempre se reabre (idempotente): la lectura ``open`` pudo quedar vieja si una devolución
         # estaba por aplicar ``pending``. El modo previo sale de esa misma lectura.
-        await self._reopen(conversation_id, user_id)
+        await self._reopen(conversation_id, user_id, holder)
         if not was_open:
             await self._register_manual_handoff(conversation_id)
             await self._clear_bot_session(conversation_id)
@@ -130,12 +131,29 @@ class TakeoverConversation(_AssignmentFlow):
         await self._publish(view)
         return view
 
-    async def _reopen(self, conversation_id: int, user_id: UUID) -> None:
+    async def _reopen(self, conversation_id: int, user_id: UUID, holder: UUID | None) -> None:
+        """Reabre en Chatwoot; si falla, restituye el asignado previo y relanza el error original.
+
+        Con un asignado previo distinto (reasignación de un ``SUPERADMIN``) se le devuelve la
+        asignación con el mismo CAS; sin él, se libera. Una falla de la compensación se registra
+        y no reemplaza el error de Chatwoot.
+        """
+
         try:
             await self._messaging.set_conversation_status(conversation_id, ConversationStatus.HUMAN)
         except Exception:
-            async with self._links() as links:
-                await links.release(conversation_id, user_id)
+            try:
+                async with self._links() as links:
+                    if holder is not None and holder != user_id:
+                        await links.claim(conversation_id, holder, user_id)
+                    else:
+                        await links.release(conversation_id, user_id)
+            except Exception as exc:
+                get_logger("conversation_assignment").warning(
+                    "conversation_assignment_compensation_failed",
+                    conversation_id=conversation_id,
+                    error_type=type(exc).__name__,
+                )
             raise
 
     async def _register_manual_handoff(self, conversation_id: int) -> None:

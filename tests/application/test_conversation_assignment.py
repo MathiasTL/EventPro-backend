@@ -189,6 +189,43 @@ async def test_a_chatwoot_failure_on_reopen_compensates_the_assignment() -> None
     assert world.publisher.events == []
 
 
+async def test_a_chatwoot_failure_on_a_superadmin_reassignment_restores_the_previous_holder() -> (
+    None
+):
+    world, owner, admin = AssignmentWorld(), new_user(), new_user()
+    await world.assign(owner)
+    world.messaging.status_update_fails = True
+
+    with pytest.raises(MessagingUnavailableError):
+        await world.takeover.execute(1, user_id=admin, role=SUPERADMIN)
+
+    assert world.stored().assigned_user_id == owner
+    assert world.audit_port.entries == []
+    assert world.publisher.events == []
+
+
+async def test_a_failed_compensation_does_not_mask_the_original_chatwoot_error() -> None:
+    world, owner, admin = AssignmentWorld(), new_user(), new_user()
+    await world.assign(owner)
+    world.messaging.status_update_fails = True
+    real_claim = world.links.claim
+    calls = 0
+
+    async def fail_on_compensation(conversation_id, user_id, expected):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise RuntimeError("la base de datos no responde")
+        return await real_claim(conversation_id, user_id, expected)
+
+    world.links.claim = fail_on_compensation  # type: ignore[method-assign]
+
+    with pytest.raises(MessagingUnavailableError):
+        await world.takeover.execute(1, user_id=admin, role=SUPERADMIN)
+
+    assert calls == 2
+
+
 async def test_takeover_of_a_missing_conversation_is_not_found_and_creates_no_link() -> None:
     world = AssignmentWorld()
 
