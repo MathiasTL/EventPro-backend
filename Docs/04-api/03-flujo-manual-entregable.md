@@ -30,6 +30,8 @@ La confirmación recibe `{"receipt_verified":true}`. Quien registró el pago no 
 
 Si no hay disponibilidad al recibir el comprobante o al confirmar, se conserva el pago en REQUIRES_MANUAL_APPROVAL, sin evento ni contrato. Para rechazar ese sobrecupo se usa refund con `{"action":"REQUEST","reason":"Motivo documentado"}`: REFUND_PENDING y cotización CANCELLED. Después de realizar realmente la devolución se declara `{"action":"CONFIRM","reason":"Referencia de devolución realizada"}`: REFUNDED. El backend registra la decisión; no efectúa una transferencia bancaria.
 
+Si una cotización ya está `EXPIRED`, el reembolso conserva ese estado terminal y resuelve únicamente el pago, sin crear evento ni contrato. Esto también permite completar reembolsos pendientes históricos. Se mantienen las transiciones de Payment: `REQUEST` exige `REQUIRES_MANUAL_APPROVAL` y `CONFIRM` exige `REFUND_PENDING`; un comprobante `REJECTED` no habilita un reembolso y devuelve 409.
+
 ## Integridad y concurrencia
 
 - Confirmación exige cotización PAYMENT_STARTED, vigente durante 24 horas, evento futuro y pago pendiente o en revisión. El vencimiento se valida al confirmar, sin depender de un job de expiración.
