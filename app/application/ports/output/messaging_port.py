@@ -1,8 +1,8 @@
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 from typing import Protocol
 
 from app.application.dtos.messaging_dto import (
+    AttachmentContent,
     ConversationMessage,
     ConversationStatus,
     ConversationSummary,
@@ -52,16 +52,36 @@ class IMessagingPort(Protocol):
         self,
         *,
         status: ConversationStatus | None = None,
+        include_resolved: bool = False,
         page: int = 1,
         page_size: int = 25,
     ) -> Sequence[ConversationSummary]:
-        """Bandeja de conversaciones, la más reciente primero."""
+        """Bandeja de conversaciones, la más reciente primero.
+
+        Las resueltas solo se incluyen con ``include_resolved``; cuentan como ``BOT``.
+        """
+
+    async def get_conversation(self, conversation_id: int) -> ConversationSummary:
+        """Resumen de una conversación; lanza ResourceNotFoundError si no existe."""
 
     async def list_messages(
         self,
         conversation_id: int,
         *,
-        before: datetime | None = None,
+        before_id: int | None = None,
         limit: int = 50,
     ) -> Sequence[ConversationMessage]:
-        """Mensajes en orden cronológico ascendente; lanza ResourceNotFoundError si no existe."""
+        """Los ``limit`` mensajes más recientes con id menor que ``before_id`` (D16).
+
+        Se entregan en orden cronológico ascendente e incluyen los avisos de actividad; las
+        notas privadas no. Lanza ResourceNotFoundError si la conversación no existe.
+        """
+
+    async def mark_conversation_read(self, conversation_id: int) -> None:
+        """Reinicia el contador de no leídos (``update_last_seen`` del agente, D13)."""
+
+    async def get_attachment(self, conversation_id: int, attachment_id: int) -> AttachmentContent:
+        """Descarga un adjunto de la conversación (D17).
+
+        Lanza ResourceNotFoundError si no pertenece a la conversación o su destino no es seguro.
+        """

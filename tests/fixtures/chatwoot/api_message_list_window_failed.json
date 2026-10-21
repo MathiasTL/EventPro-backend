@@ -1,0 +1,70 @@
+{
+  "provisional": false,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "meta": {
+      "labels": [],
+      "additional_attributes": {},
+      "contact": {
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "email": null,
+        "id": 3,
+        "identifier": null,
+        "name": "+51999111222",
+        "phone_number": "+51999111222",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "agent_last_seen_at": null,
+      "assignee_last_seen_at": null
+    },
+    "payload": [
+      {
+        "id": 14,
+        "content": "La conversación fue marcada como pendiente por Encargado Prueba",
+        "inbox_id": 1,
+        "conversation_id": 3,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "activity": {
+            "type": "conversation_status_changed",
+            "status": "pending"
+          }
+        },
+        "created_at": 1792514441,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 42,
+        "content": "Prueba de captura de falla (EventPro)",
+        "inbox_id": 1,
+        "conversation_id": 3,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "failed",
+        "content_attributes": {
+          "external_error": "El mensaje no se envió porque la ventana de atención al cliente de WhatsApp de 24 horas está cerrada y no se proporcionaron parámetros de plantilla. Envía en su lugar un mensaje de plantilla aprobado."
+        },
+        "created_at": 1792551879,
+        "private": false,
+        "source_id": null,
+        "sender": {
+          "id": 2,
+          "name": "Encargado Prueba",
+          "available_name": "Encargado Prueba",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      }
+    ]
+  }
+}

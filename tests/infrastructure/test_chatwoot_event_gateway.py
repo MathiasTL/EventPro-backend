@@ -11,12 +11,20 @@ import pytest
 from structlog.testing import capture_logs
 
 from app.application.dtos.gateway_event_dto import (
+    ConversationSnapshot,
     DeliveryNotice,
     DeliveryReport,
     IncomingClientMessage,
+    MessageDetails,
+    OutgoingMessageEcho,
     UnhandledGatewayEvent,
 )
-from app.application.dtos.messaging_dto import ConversationStatus, MessageDirection
+from app.application.dtos.messaging_dto import (
+    ConversationLifecycle,
+    ConversationStatus,
+    MessageDirection,
+    MessageSender,
+)
 from app.domain.exceptions.messaging_exceptions import MessagingUnavailableError
 from app.domain.exceptions.resource_exceptions import ValidationError
 from app.domain.value_objects.outbox import DeliveryStatus
@@ -237,6 +245,17 @@ def test_an_incoming_created_message_becomes_a_client_message() -> None:
         sender_phone=PhoneNumber("+51999111222"),
         content="Prueba de la prueba",
         is_private=False,
+        snapshot=ConversationSnapshot(
+            lifecycle=ConversationLifecycle.OPEN,
+            unread_count=1,
+            can_reply=True,
+            contact_phone=PhoneNumber("+51999111222"),
+            contact_name="Cliente Demo",
+        ),
+        details=MessageDetails(
+            sent_at=datetime(2026, 10, 19, 22, 5, 32, 179000, tzinfo=UTC),
+            sender_name="Cliente Demo",
+        ),
     )
 
 
@@ -296,13 +315,76 @@ def test_an_incoming_message_without_the_minimum_data_stays_unhandled(missing: s
     assert isinstance(_parse(body), UnhandledGatewayEvent)
 
 
-def test_an_outgoing_created_message_is_unhandled() -> None:
-    assert _parse(_body("message_created_outgoing")) == UnhandledGatewayEvent(
-        kind="message_created",
-        direction=MessageDirection.OUTGOING,
-        conversation_id=1,
-        external_message_id="6",
+def test_an_outgoing_created_message_becomes_an_echo_with_the_conversation_snapshot() -> None:
+    echo = _parse(_body("message_created_outgoing"))
+
+    assert isinstance(echo, OutgoingMessageEcho)
+    assert (echo.external_message_id, echo.conversation_id) == ("6", 1)
+    assert echo.content == "respondiendo a la prueba"
+    assert echo.snapshot is not None
+    assert echo.snapshot.lifecycle is ConversationLifecycle.OPEN
+    # El teléfono es el del contacto (meta), no el del agente que escribió.
+    assert echo.snapshot.contact_phone == PhoneNumber("+51999111222")
+    assert (echo.details.sender, echo.details.sender_name) == (MessageSender.USER, "Agente Demo")
+    assert echo.details.delivery_status is None
+
+
+def test_an_echo_that_chatwoot_already_rejected_carries_its_failure() -> None:
+    body = _body("message_created_outgoing")
+    _embedded(body)["status"] = "failed"
+    _embedded(body)["content_attributes"] = {"external_error": REAL_ERROR}
+
+    echo = _parse(body)
+
+    assert isinstance(echo, OutgoingMessageEcho)
+    assert (echo.details.delivery_status, echo.details.error) == (
+        DeliveryStatus.FAILED,
+        REAL_ERROR,
     )
+
+
+def test_an_outgoing_private_note_is_not_an_echo() -> None:
+    body = _body("message_created_outgoing")
+    body["private"] = True
+
+    assert isinstance(_parse(body), UnhandledGatewayEvent)
+
+
+@pytest.mark.parametrize("missing", ["id", "conversation_id"])
+def test_an_echo_without_its_ids_stays_unhandled(missing: str) -> None:
+    body = _body("message_created_outgoing")
+    if missing == "id":
+        del body["id"]
+    else:
+        del body["conversation"]["id"]
+
+    assert isinstance(_parse(body), UnhandledGatewayEvent)
+
+
+def test_an_activity_notice_is_never_an_echo() -> None:
+    body = _body("message_created_outgoing")
+    body["message_type"] = 2
+
+    assert isinstance(_parse(body), UnhandledGatewayEvent)
+
+
+def test_an_incoming_message_exposes_its_attachments_and_unread_count() -> None:
+    body = _body("message_created_incoming")
+    body["attachments"] = [
+        {
+            "id": 311,
+            "file_type": "image",
+            "content_type": "image/jpeg",
+            "data_url": "https://x/a.jpg",
+        }
+    ]
+    body["conversation"]["unread_count"] = 4
+
+    event = _parse(body)
+
+    assert isinstance(event, IncomingClientMessage)
+    assert event.snapshot is not None and event.snapshot.unread_count == 4
+    assert [a.attachment_id for a in event.details.attachments] == [311]
 
 
 def test_a_conversation_event_carries_its_conversation_id() -> None:

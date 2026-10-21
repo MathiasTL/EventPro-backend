@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 from app.application.ports.output.clock_port import IClockPort
 from app.application.ports.output.outbox_repository_port import IOutboxRepositoryPort
@@ -34,12 +35,14 @@ class EnqueueMessage:
         message_type: MessageType,
         payload: Mapping[str, Any],
         redact_after_send: bool = False,
+        author_user_id: UUID | None = None,
     ) -> OutboxMessage:
         message = OutboxMessage.create(
             recipient=recipient,
             message_type=message_type,
             payload=payload,
             redact_after_send=redact_after_send,
+            author_user_id=author_user_id,
             max_attempts=self._max_attempts,
             now=self._clock.utcnow(),
         )

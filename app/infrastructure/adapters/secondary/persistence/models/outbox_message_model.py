@@ -1,4 +1,4 @@
-"""Tabla outbox_messages (0001_initial_schema + seguimiento de entrega de 0004)."""
+"""Tabla outbox_messages (0001_initial_schema + entrega de 0004 + autor de 0006)."""
 
 from datetime import datetime
 from typing import Any
@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -42,6 +43,8 @@ class OutboxMessageModel(Base):
         UniqueConstraint("external_message_id", name="uq_outbox_messages_external_message_id"),
         Index("ix_outbox_messages_next_attempt_at", "next_attempt_at"),
         Index("ix_outbox_messages_status_next_attempt", "status", "next_attempt_at"),
+        Index("ix_outbox_messages_author_user_id", "author_user_id"),
+        Index("ix_outbox_messages_retried_external_message_id", "retried_external_message_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -73,3 +76,7 @@ class OutboxMessageModel(Base):
     redact_after_send: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    author_user_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    retried_external_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)

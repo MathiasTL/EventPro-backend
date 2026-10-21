@@ -39,7 +39,7 @@ from tests.domain.outbox_support import (
     make_message,
 )
 
-from ._support import run_migrations
+from ._support import insert_user, run_migrations
 
 pytestmark = pytest.mark.integration
 
@@ -128,6 +128,34 @@ async def test_sent_and_delivered_state_round_trips(
     assert loaded.status is OutboxStatus.SENT
     assert loaded.delivery_status is DeliveryStatus.READ
     assert loaded.conversation_id == 77
+
+
+async def test_author_and_retried_external_id_round_trip(
+    engine: AsyncEngine, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    author = await insert_user(engine, "ENCARGADO")
+    message = make_message(author_user_id=author)
+    await _add_all(factory, [message])
+    assert (await _reload(factory, message)).author_user_id == author
+
+    message.retried_external_message_id = "cw-old"
+    async with factory() as session, session.begin():
+        await SqlAlchemyOutboxRepository(session).save(message)
+
+    loaded = await _reload(factory, message)
+    assert loaded == message
+    assert loaded.author_user_id == author
+    assert loaded.retried_external_message_id == "cw-old"
+
+
+async def test_bot_messages_have_no_author(factory: async_sessionmaker[AsyncSession]) -> None:
+    message = make_message()
+    await _add_all(factory, [message])
+
+    loaded = await _reload(factory, message)
+
+    assert loaded.author_user_id is None
+    assert loaded.retried_external_message_id is None
 
 
 async def test_redacted_payload_is_stored_as_sql_null(

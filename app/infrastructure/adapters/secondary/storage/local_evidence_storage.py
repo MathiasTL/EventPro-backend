@@ -20,6 +20,13 @@ _EXT_BY_MIME = {
     "image/webp": ".webp",
     "application/pdf": ".pdf",
 }
+_MIME_BY_EXT = {ext: mime for mime, ext in _EXT_BY_MIME.items()}
+
+
+def mime_for_path(evidence_path: str) -> str:
+    """Tipo MIME detectado al guardar, recuperado de la extensión neutral de la ruta."""
+
+    return _MIME_BY_EXT.get(Path(evidence_path).suffix, "application/octet-stream")
 
 
 class LocalEvidenceStorage:

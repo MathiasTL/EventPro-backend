@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from app.application.ports.input.quote_create_port import ICreateQuotePort
 from app.application.ports.input.quote_lifecycle_port import IPayAdvancePort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
+from app.application.ports.output.conversation_link_repository_port import (
+    IConversationLinkRepositoryPort,
+)
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
 
 
@@ -24,6 +27,8 @@ class BotTransaction:
     pay_advance: IPayAdvancePort
     enqueue_message: EnqueueMessage
     catalog: ICatalogReadPort
+    # El vínculo con la cotización se confirma o revierte con ella (spec 09, 6.2).
+    conversation_links: IConversationLinkRepositoryPort
 
 
 # Abre la unidad de trabajo: confirma al salir sin error y revierte si el bloque falla.

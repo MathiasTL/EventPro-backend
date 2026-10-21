@@ -20,6 +20,7 @@ class BudgetInput:
     client_provides_transport: bool = True
     manual_mobility_amount: Decimal = Decimal("0.00")
     mobility_override_reason: str | None = None
+    observations: str | None = None
 
 
 @dataclass(frozen=True)

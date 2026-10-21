@@ -6,8 +6,10 @@ tokens, cuerpos de respuesta, teléfonos ni URLs con parámetros de consulta.
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -18,6 +20,16 @@ from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 # Chatwoot v4 autentica con este encabezado; `Authorization: Bearer` no se acepta.
 TOKEN_HEADER = "api_access_token"
 _AUTH_REJECTED_STATUSES = frozenset({401, 403})
+# Los adjuntos de WhatsApp llegan a 100 MB; el proxy de la bandeja acota la lectura.
+MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
+MAX_DOWNLOAD_REDIRECTS = 3
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+@dataclass(frozen=True)
+class DownloadedFile:
+    data: bytes
+    content_type: str | None
 
 
 class ChatwootToken(StrEnum):
@@ -105,6 +117,72 @@ class ChatwootClient:
             raise MessagingUnavailableError(f"Chatwoot respondió {status} en {operation}")
 
         return self._parse_json(response, operation=operation, required_keys=required_keys)
+
+    async def download(self, public_url: str, *, operation: str) -> DownloadedFile:
+        """Descarga un archivo que Chatwoot publica en su URL pública (D17), sin el token.
+
+        La URL pública se reescribe al esquema y anfitrión de `CHATWOOT_BASE_URL` (conservando
+        `Host` y `X-Forwarded-Proto` originales, como pide Rails) y las redirecciones solo se
+        siguen si son relativas o apuntan a ese anfitrión o al público; cualquier otro destino se
+        rechaza como `ResourceNotFoundError` para no convertir el proxy en un SSRF.
+        """
+
+        log = get_logger("chatwoot")
+        public = urlsplit(public_url)
+        base = self._http.base_url
+        base_netloc = base.netloc.decode("ascii")
+        if public.scheme not in ("http", "https") or not public.netloc:
+            raise self._rejected(log, operation, "invalid_url")
+        trusted = {base_netloc, public.netloc}
+        headers = {"Host": public.netloc, "X-Forwarded-Proto": public.scheme}
+        url = urlunsplit((base.scheme, base_netloc, public.path, public.query, ""))
+        for _ in range(MAX_DOWNLOAD_REDIRECTS + 1):
+            try:
+                async with self._http.stream("GET", url, headers=headers) as response:
+                    status = response.status_code
+                    if status in _REDIRECT_STATUSES and "location" in response.headers:
+                        target = urlsplit(urljoin(url, response.headers["location"]))
+                        if target.netloc not in trusted or target.scheme not in ("http", "https"):
+                            raise self._rejected(log, operation, "foreign_redirect")
+                        url = urlunsplit((base.scheme, base_netloc, target.path, target.query, ""))
+                        continue
+                    return await self._read_download(response, operation=operation)
+            except httpx.HTTPError as exc:
+                raise self._transport_error(log, operation, exc) from None
+        raise self._rejected(log, operation, "too_many_redirects")
+
+    async def _read_download(self, response: httpx.Response, *, operation: str) -> DownloadedFile:
+        log = get_logger("chatwoot")
+        status = response.status_code
+        if status == 404:
+            raise ResourceNotFoundError(f"Chatwoot no encontró el recurso en {operation}")
+        if status != 200:
+            log.warning("chatwoot_request_rejected", operation=operation, status=status)
+            raise MessagingUnavailableError(f"Chatwoot respondió {status} en {operation}")
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in response.aiter_bytes():
+            size += len(chunk)
+            if size > MAX_DOWNLOAD_BYTES:
+                log.warning("chatwoot_download_too_large", operation=operation)
+                raise MessagingUnavailableError(f"Archivo demasiado grande en {operation}")
+            chunks.append(chunk)
+        content_type = response.headers.get("content-type", "").split(";")[0].strip() or None
+        return DownloadedFile(b"".join(chunks), content_type)
+
+    @staticmethod
+    def _rejected(log: Any, operation: str, reason: str) -> ResourceNotFoundError:
+        log.warning("chatwoot_download_rejected", operation=operation, reason=reason)
+        return ResourceNotFoundError(f"Destino de descarga no permitido en {operation}")
+
+    @staticmethod
+    def _transport_error(
+        log: Any, operation: str, exc: httpx.HTTPError
+    ) -> MessagingUnavailableError:
+        log.warning("chatwoot_request_failed", operation=operation, error_type=type(exc).__name__)
+        if isinstance(exc, httpx.TimeoutException):
+            return MessagingUnavailableError(f"Chatwoot no respondió a tiempo en {operation}")
+        return MessagingUnavailableError(f"No se pudo conectar con Chatwoot en {operation}")
 
     @staticmethod
     def _parse_json(

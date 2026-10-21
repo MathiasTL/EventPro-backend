@@ -83,6 +83,7 @@ class Quote:
     extras: tuple[QuoteExtraLine, ...] = ()
     status: QuoteStatus = QuoteStatus.SENT
     manual_request_hash: str | None = None
+    observations: str | None = None
     # Motivo de la cancelación: solo vive en memoria (no hay columna; lo audita el caso de uso).
     cancellation_reason: str | None = None
     id: UUID = field(default_factory=uuid4)
@@ -118,6 +119,7 @@ class Quote:
         manual_request_hash: str | None = None,
         mobility_overridden: bool = False,
         mobility_override_reason: str | None = None,
+        observations: str | None = None,
     ) -> Self:
         """Nace en ``SENT`` con la liquidación congelada y vencimiento ``now + deadline_hours``."""
 
@@ -159,6 +161,7 @@ class Quote:
             sent_at=sent_at,
             expires_at=sent_at + timedelta(hours=deadline_hours),
             manual_request_hash=manual_request_hash,
+            observations=observations,
         )
 
     @property

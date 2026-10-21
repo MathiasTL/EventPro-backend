@@ -68,7 +68,7 @@ def _ctx(use_case: _RecordingUseCase) -> dict[str, Any]:
 def test_worker_settings_registers_the_dispatch_cron_every_five_seconds(
     worker: ModuleType,
 ) -> None:
-    (job,) = worker.WorkerSettings.cron_jobs
+    job = next(job for job in worker.WorkerSettings.cron_jobs if job.name == "dispatch_outbox")
 
     assert job.name == "dispatch_outbox"
     assert job.coroutine is worker.dispatch_outbox
@@ -95,7 +95,10 @@ def test_worker_settings_use_the_configured_redis_and_lifecycle_hooks(
 async def test_arq_can_build_a_worker_from_the_settings(worker: ModuleType) -> None:
     arq_worker = create_worker(worker.WorkerSettings)
     try:
-        assert [job.name for job in arq_worker.cron_jobs] == ["dispatch_outbox"]
+        assert {job.name for job in arq_worker.cron_jobs} == {
+            "dispatch_outbox",
+            "expire_due_quotes",
+        }
     finally:
         await arq_worker.close()
 

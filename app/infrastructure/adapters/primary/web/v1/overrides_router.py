@@ -13,6 +13,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.dtos.override_dto import (
     ApproveOverbookedInput,
@@ -29,7 +30,11 @@ from app.application.use_cases.quote.override_mobility import OverrideQuoteMobil
 from app.domain.exceptions.event_exceptions import InvalidEventStateError
 from app.domain.exceptions.payment_exceptions import InvalidPaymentStateError
 from app.domain.exceptions.quote_exceptions import InvalidQuoteStateError
-from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
+from app.domain.exceptions.resource_exceptions import (
+    ResourceInUseError,
+    ResourceNotFoundError,
+    ValidationError,
+)
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import AuthContext, require_role
 from app.infrastructure.adapters.primary.web.problem import ProblemError
@@ -41,6 +46,7 @@ from app.infrastructure.adapters.primary.web.schemas.override_schemas import (
     TransitIntervalOverrideRequest,
     TransitIntervalOverrideResponse,
 )
+from app.infrastructure.adapters.secondary.persistence.database import get_contract_write_session
 from app.infrastructure.di import containers
 
 router = APIRouter(prefix="/overrides", tags=["Procesos de control"])
@@ -55,6 +61,7 @@ _STAFF = (Role.ENCARGADO, Role.SUPERADMIN)
 async def decide_overbooked_payment(
     payment_id: UUID,
     payload: Annotated[OverbookedDecisionRequest, Body()],
+    transaction: Annotated[AsyncSession, Depends(get_contract_write_session, scope="function")],
     context: Annotated[AuthContext, Depends(require_role(*_STAFF))],
     use_case: Annotated[
         ApproveOverbookedPaymentUseCase,
@@ -76,6 +83,8 @@ async def decide_overbooked_payment(
     except ValidationError as exc:
         raise ProblemError(422, "validation-error", "Error de validación", str(exc)) from exc
     except InvalidPaymentStateError as exc:
+        raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
+    except ResourceInUseError as exc:
         raise ProblemError(409, exc.code, "Conflicto", str(exc)) from exc
     return OverbookedDecisionResponse.model_validate(result)
 

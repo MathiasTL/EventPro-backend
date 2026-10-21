@@ -14,12 +14,17 @@ from app.infrastructure.adapters.primary.web.v1 import (
     audit_logs_router,
     budgets_router,
     catalog_router,
+    contract_signing_router,
+    contracts_router,
+    conversations_router,
     crew_router,
     events_router,
     financial_router,
     manual_bookings_router,
+    manual_contracts_router,
     overrides_router,
     payments_router,
+    quotes_router,
     users_router,
 )
 from app.infrastructure.adapters.primary.webhooks import chatwoot_webhook
@@ -61,6 +66,9 @@ def create_app() -> FastAPI:
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         response = await call_next(request)
+        if "/contracts/sign/" in request.url.path:
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
         for header, value in SECURITY_HEADERS.items():
             response.headers[header] = value
         return response
@@ -70,6 +78,10 @@ def create_app() -> FastAPI:
     application.include_router(health_router.router)
     application.include_router(auth_router.router, prefix=settings.api_v1_prefix)
     application.include_router(users_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(manual_contracts_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(contract_signing_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(contracts_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(quotes_router.router, prefix=settings.api_v1_prefix)
     application.include_router(events_router.router, prefix=settings.api_v1_prefix)
     application.include_router(financial_router.router, prefix=settings.api_v1_prefix)
     application.include_router(catalog_router.router, prefix=settings.api_v1_prefix)
@@ -79,6 +91,7 @@ def create_app() -> FastAPI:
     application.include_router(budgets_router.router, prefix=settings.api_v1_prefix)
     application.include_router(manual_bookings_router.router, prefix=settings.api_v1_prefix)
     application.include_router(audit_logs_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(conversations_router.router, prefix=settings.api_v1_prefix)
     # Siempre registrada: sin secreto configurado responde 401, así no depende de la configuración.
     application.include_router(chatwoot_webhook.router, prefix=settings.api_v1_prefix)
     return application

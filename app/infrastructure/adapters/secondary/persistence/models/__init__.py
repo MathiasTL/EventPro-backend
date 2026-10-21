@@ -10,6 +10,10 @@ from app.infrastructure.adapters.secondary.persistence.models.catalog_models imp
     ThemeModel,
 )
 from app.infrastructure.adapters.secondary.persistence.models.client_model import ClientModel
+from app.infrastructure.adapters.secondary.persistence.models.contract_model import ContractModel
+from app.infrastructure.adapters.secondary.persistence.models.conversation_link_model import (
+    ConversationLinkModel,
+)
 from app.infrastructure.adapters.secondary.persistence.models.event_extension_model import (
     EventExtensionModel,
 )
@@ -39,6 +43,8 @@ __all__ = [
     "AuditLog",
     "Base",
     "ClientModel",
+    "ContractModel",
+    "ConversationLinkModel",
     "CrewAssignmentModel",
     "CrewModel",
     "EventExtensionModel",

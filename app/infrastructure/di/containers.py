@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated
 
@@ -28,6 +29,15 @@ from app.application.ports.output.catalog_admin_port import ICatalogAdminPort, I
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.client_repository_port import IClientRepositoryPort
 from app.application.ports.output.clock_port import IClockPort
+from app.application.ports.output.conversation_event_publisher_port import (
+    IConversationEventPublisherPort,
+)
+from app.application.ports.output.conversation_event_subscriber_port import (
+    IConversationEventSubscriberPort,
+)
+from app.application.ports.output.conversation_link_repository_port import (
+    IConversationLinkRepositoryPort,
+)
 from app.application.ports.output.conversation_session_port import IConversationSessionPort
 from app.application.ports.output.crew_assignment_repository_port import (
     ICrewAssignmentRepositoryPort,
@@ -37,6 +47,7 @@ from app.application.ports.output.document_source_port import IDocumentSourcePor
 from app.application.ports.output.event_dedup_port import IEventDedupPort
 from app.application.ports.output.gateway_event_port import IGatewayEventPort
 from app.application.ports.output.gateway_event_queue_port import IGatewayEventQueuePort
+from app.application.ports.output.inbox_lookup_port import IInboxLookupPort
 from app.application.ports.output.language_model_port import ILanguageModelPort
 from app.application.ports.output.manual_booking_port import IBookingDocuments, IManualBookingStore
 from app.application.ports.output.messaging_port import IMessagingPort
@@ -58,8 +69,12 @@ from app.application.use_cases.auth.login import LoginUseCase
 from app.application.use_cases.auth.logout import LogoutUseCase
 from app.application.use_cases.auth.refresh import RefreshUseCase
 from app.application.use_cases.bot.agent_engine import ConversationAgent
+from app.application.use_cases.bot.bot_handoff import BotHandoffRecorder
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
+from app.application.use_cases.contract.create_manual_contract import CreateManualContract
+from app.application.use_cases.contract.manage_contracts import ManageContracts
+from app.application.use_cases.contract.sign_contract import SignContract
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
 from app.application.use_cases.crew.override_transit_interval import (
     OverrideCrewTransitIntervalUseCase,
@@ -69,10 +84,32 @@ from app.application.use_cases.event.register_event_extension import RegisterEve
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
+from app.application.use_cases.messaging.conversation_assignment import (
+    ReleaseConversation,
+    TakeoverConversation,
+)
+from app.application.use_cases.messaging.conversation_views import ConversationViewBuilder
 from app.application.use_cases.messaging.dispatch_due_messages import DispatchDueMessages
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.application.use_cases.messaging.get_conversation_attachment import (
+    GetConversationAttachment,
+)
+from app.application.use_cases.messaging.list_conversation_messages import (
+    ListConversationMessages,
+)
+from app.application.use_cases.messaging.list_conversations import (
+    GetConversation,
+    ListConversations,
+)
+from app.application.use_cases.messaging.mark_conversation_read import MarkConversationRead
+from app.application.use_cases.messaging.mark_event_done import MarkEventDone
 from app.application.use_cases.messaging.process_gateway_event import ProcessGatewayEvent
 from app.application.use_cases.messaging.receive_gateway_event import ReceiveGatewayEvent
+from app.application.use_cases.messaging.retry_message import RetryMessage
+from app.application.use_cases.messaging.send_conversation_message import (
+    RetryConversationMessage,
+    SendConversationMessage,
+)
 from app.application.use_cases.payment.approve_overbooked_payment import (
     ApproveOverbookedPaymentUseCase,
 )
@@ -84,6 +121,10 @@ from app.application.use_cases.payment.refund_payment import RefundPaymentUseCas
 from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
+from app.application.use_cases.quote.create_quote import CreateQuoteUseCase
+from app.application.use_cases.quote.expire_due_quotes import ExpireDueQuotesUseCase
+from app.application.use_cases.quote.get_quote import GetQuoteUseCase
+from app.application.use_cases.quote.list_quotes import ListQuotesUseCase
 from app.application.use_cases.quote.override_mobility import OverrideQuoteMobilityUseCase
 from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
 from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
@@ -97,7 +138,7 @@ from app.domain.services.concurrency_evaluator import ConcurrencyEvaluator
 from app.domain.services.financial_engine import FinancialEngine
 from app.domain.services.inventory_availability import InventoryAvailabilityService
 from app.domain.services.travel_interval_service import TravelIntervalService
-from app.domain.value_objects.mobility import MobilityTariff
+from app.domain.value_objects.mobility import MobilityTariff, RouteLocation
 from app.infrastructure.adapters.secondary.availability.availability_adapter import (
     AvailabilityAdapter,
 )
@@ -109,6 +150,12 @@ from app.infrastructure.adapters.secondary.cache.redis_event_dedup_adapter impor
     RedisEventDedupAdapter,
 )
 from app.infrastructure.adapters.secondary.cache.redis_lock_adapter import RedisLockAdapter
+from app.infrastructure.adapters.secondary.events.redis_conversation_event_publisher import (
+    RedisConversationEventPublisher,
+)
+from app.infrastructure.adapters.secondary.events.redis_conversation_event_subscriber import (
+    RedisConversationEventSubscriber,
+)
 from app.infrastructure.adapters.secondary.external_services import (
     fake_payment_verification_adapter,
     system_clock_adapter,
@@ -128,12 +175,8 @@ from app.infrastructure.adapters.secondary.external_services.fake_messaging_adap
 )
 from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
     FakeCancelQuote,
-    FakeCreateQuote,
-    FakeExpireDueQuotes,
     FakeFindClients,
     FakeGetClient,
-    FakeGetQuote,
-    FakeListQuotes,
     FakePayAdvance,
     FakeQuoteStore,
 )
@@ -147,6 +190,7 @@ from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapt
 from app.infrastructure.adapters.secondary.external_services.openai.openai_language_model_adapter import (  # noqa: E501
     OpenAILanguageModelAdapter,
 )
+from app.infrastructure.adapters.secondary.mobility.district_zones import zone_for_district
 from app.infrastructure.adapters.secondary.mobility.tariff import build_mobility_tariff
 from app.infrastructure.adapters.secondary.persistence import (
     SqlAlchemyAvailabilityRepository,
@@ -154,6 +198,7 @@ from app.infrastructure.adapters.secondary.persistence import (
     catalog_admin_repository,
 )
 from app.infrastructure.adapters.secondary.persistence.audit_log_adapter import (
+    SessionAuditRecorder,
     SQLAlchemyAuditLogAdapter,
 )
 from app.infrastructure.adapters.secondary.persistence.database import (
@@ -166,16 +211,24 @@ from app.infrastructure.adapters.secondary.persistence.database import (
 from app.infrastructure.adapters.secondary.persistence.manual_booking_repository import (
     SqlAlchemyManualBookingStore,
 )
+from app.infrastructure.adapters.secondary.persistence.manual_contract_repository import (
+    SqlAlchemyManualContractStore,
+)
 from app.infrastructure.adapters.secondary.persistence.refresh_token_repository import (
     SQLAlchemyRefreshTokenRepository,
 )
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_client_repository,
+    sqlalchemy_conversation_link_repository,
     sqlalchemy_crew_assignment_repository,
     sqlalchemy_event_repository,
+    sqlalchemy_inbox_lookup,
     sqlalchemy_outbox_repository,
     sqlalchemy_payment_repository,
     sqlalchemy_quote_repository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_contract_repository import (  # noqa: E501
+    SqlAlchemyContractRepository,
 )
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
     SqlAlchemyFinancialRepository,
@@ -183,8 +236,14 @@ from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_f
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_bot_unit_of_work import (
     SqlAlchemyBotUnitOfWork,
 )
+from app.infrastructure.adapters.secondary.persistence.sqlalchemy_conversation_link_unit_of_work import (  # noqa: E501
+    SqlAlchemyConversationLinkUnitOfWork,
+)
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_health_adapter import (
     SQLAlchemyHealthAdapter,
+)
+from app.infrastructure.adapters.secondary.persistence.sqlalchemy_inbox_event_unit_of_work import (
+    SqlAlchemyInboxEventUnitOfWork,
 )
 from app.infrastructure.adapters.secondary.persistence.user_repository import (
     SQLAlchemyUserRepository,
@@ -192,7 +251,11 @@ from app.infrastructure.adapters.secondary.persistence.user_repository import (
 from app.infrastructure.adapters.secondary.queue.arq_gateway_event_queue import (
     ArqGatewayEventQueue,
 )
+from app.infrastructure.adapters.secondary.signature.pades_signature_adapter import (
+    PadesSignatureAdapter,
+)
 from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
+from app.infrastructure.adapters.secondary.storage.contract_pdf import ReportLabContractPdf
 from app.infrastructure.adapters.secondary.storage.document_source_adapter import (
     StorageDocumentSource,
 )
@@ -395,11 +458,153 @@ def get_gateway_event_port() -> IGatewayEventPort:
 
 
 @lru_cache
+def get_conversation_event_publisher() -> IConversationEventPublisherPort:
+    """Publicador de eventos de la bandeja sobre Redis, compartido por el worker y la API."""
+
+    return RedisConversationEventPublisher(get_redis_client())
+
+
+@lru_cache
+def get_conversation_event_subscriber() -> IConversationEventSubscriberPort:
+    """Suscriptor del canal de eventos de la bandeja, para el stream SSE."""
+
+    return RedisConversationEventSubscriber(get_redis_client())
+
+
+@lru_cache
 def get_process_gateway_event_use_case() -> ProcessGatewayEvent:
+    session_factory = get_sessionmaker()
     return ProcessGatewayEvent(
-        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(get_sessionmaker()),
+        transaction=sqlalchemy_outbox_repository.SqlAlchemyOutboxTransaction(session_factory),
         gateway=get_gateway_event_port(),
         incoming_handler=get_handle_incoming_message_use_case(),
+        inbox=SqlAlchemyInboxEventUnitOfWork(session_factory),
+        publisher=get_conversation_event_publisher(),
+        lookup=get_inbox_lookup(),
+    )
+
+
+@lru_cache
+def get_inbox_lookup() -> IInboxLookupPort:
+    return sqlalchemy_inbox_lookup.SqlAlchemyInboxLookup(get_sessionmaker())
+
+
+def get_conversation_view_builder(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ConversationViewBuilder:
+    links = sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(session)
+    return ConversationViewBuilder(links, get_inbox_lookup())
+
+
+def get_list_conversations_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> ListConversations:
+    return ListConversations(get_messaging_port(), views)
+
+
+def get_get_conversation_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> GetConversation:
+    return GetConversation(get_messaging_port(), views)
+
+
+def get_get_conversation_attachment_use_case() -> GetConversationAttachment:
+    return GetConversationAttachment(get_messaging_port())
+
+
+def get_list_conversation_messages_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ListConversationMessages:
+    return ListConversationMessages(
+        get_messaging_port(), get_outbox_repository(session), get_inbox_lookup()
+    )
+
+
+def get_mark_event_done_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> MarkEventDone:
+    """Con sesión transaccional: la marca se confirma antes de enviar la respuesta HTTP."""
+
+    links = sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(session)
+    views = ConversationViewBuilder(links, get_inbox_lookup())
+    return MarkEventDone(
+        get_messaging_port(), links, views, get_conversation_event_publisher(), get_clock_port()
+    )
+
+
+def _assignment_args(
+    views: ConversationViewBuilder,
+) -> tuple[
+    IMessagingPort,
+    SqlAlchemyConversationLinkUnitOfWork,
+    ConversationViewBuilder,
+    IConversationSessionPort,
+    AuditService,
+    IConversationEventPublisherPort,
+    IClockPort,
+]:
+    return (
+        get_messaging_port(),
+        SqlAlchemyConversationLinkUnitOfWork(get_sessionmaker()),
+        views,
+        get_conversation_session_port(),
+        get_audit_service(),
+        get_conversation_event_publisher(),
+        get_clock_port(),
+    )
+
+
+def get_takeover_conversation_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> TakeoverConversation:
+    """Cada tramo de escritura abre su transacción corta: ninguna sigue abierta durante Chatwoot."""
+
+    return TakeoverConversation(*_assignment_args(views))
+
+
+def get_release_conversation_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> ReleaseConversation:
+    return ReleaseConversation(*_assignment_args(views))
+
+
+def get_mark_conversation_read_use_case(
+    views: Annotated[ConversationViewBuilder, Depends(get_conversation_view_builder)],
+) -> MarkConversationRead:
+    return MarkConversationRead(get_messaging_port(), views, get_conversation_event_publisher())
+
+
+def _outgoing_args(
+    session: AsyncSession,
+) -> tuple[
+    IMessagingPort,
+    IConversationLinkRepositoryPort,
+    IOutboxRepositoryPort,
+    AuditService,
+]:
+    """Todo sobre la misma sesión: mensaje, auditoría y lectura del vínculo van juntos."""
+
+    return (
+        get_messaging_port(),
+        sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(session),
+        get_outbox_repository(session),
+        AuditService(SessionAuditRecorder(session)),
+    )
+
+
+def get_send_conversation_message_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> SendConversationMessage:
+    """Sesión transaccional: el mensaje y su auditoría se confirman antes de responder 202."""
+
+    return SendConversationMessage(*_outgoing_args(session), get_enqueue_message_use_case(session))
+
+
+def get_retry_conversation_message_use_case(
+    session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
+) -> RetryConversationMessage:
+    return RetryConversationMessage(
+        *_outgoing_args(session), RetryMessage(get_outbox_repository(session), get_clock_port())
     )
 
 
@@ -563,7 +768,10 @@ def get_register_advance_payment_use_case(
 def get_verify_payment_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> VerifyPaymentUseCase:
-    return VerifyPaymentUseCase(get_payment_repository(session))
+    return VerifyPaymentUseCase(
+        sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session, commit_on_save=False),
+        get_contract_use_case(session),
+    )
 
 
 def get_audit_payment_use_case(
@@ -647,9 +855,10 @@ def get_approve_overbooked_payment_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ApproveOverbookedPaymentUseCase:
     return ApproveOverbookedPaymentUseCase(
-        get_payment_repository(session),
-        get_audit_service(),
+        sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session, commit_on_save=False),
+        AuditService(SQLAlchemyAuditLogAdapter(get_sessionmaker(), session=session)),
         sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
+        get_contract_use_case(session),
     )
 
 
@@ -709,6 +918,9 @@ def clear_application_caches() -> None:
     _chatwoot_client.cache_clear()
     get_gateway_event_port.cache_clear()
     get_process_gateway_event_use_case.cache_clear()
+    get_inbox_lookup.cache_clear()
+    get_conversation_event_publisher.cache_clear()
+    get_conversation_event_subscriber.cache_clear()
     get_conversation_session_port.cache_clear()
     get_bot_lock.cache_clear()
     get_bot_unit_of_work.cache_clear()
@@ -741,7 +953,9 @@ async def shutdown_infrastructure() -> None:
 def get_manual_booking_store(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> IManualBookingStore:
-    return SqlAlchemyManualBookingStore(session)
+    return SqlAlchemyManualBookingStore(
+        session, deadline_hours=get_settings().advance_deadline_hours
+    )
 
 
 def get_booking_documents(
@@ -770,12 +984,82 @@ def get_prepare_budget_use_case(
 
 
 def get_confirm_manual_booking_use_case(
-    store: Annotated[IManualBookingStore, Depends(get_manual_booking_store)],
     catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
     availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
     documents: Annotated[IBookingDocuments, Depends(get_booking_documents)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ConfirmManualBookingUseCase:
-    return ConfirmManualBookingUseCase(store, catalog, availability, documents, contract_pdf)
+    return ConfirmManualBookingUseCase(
+        SqlAlchemyManualBookingStore(
+            session,
+            deadline_hours=get_settings().advance_deadline_hours,
+            commit_confirmation=False,
+        ),
+        catalog,
+        availability,
+        documents,
+        contract_pdf,
+        get_contract_use_case(session),
+        SqlAlchemyContractRepository(session).next_number,
+    )
+
+
+def get_contract_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ManageContracts:
+    settings = get_settings()
+    return ManageContracts(
+        SqlAlchemyContractRepository(session),
+        PostgresBookingDocuments(session),
+        ReportLabContractPdf(),
+        get_enqueue_message_use_case(session),
+        get_clock_port(),
+        frontend_url=settings.contract_frontend_url,
+        link_ttl_hours=settings.signature_link_ttl_hours,
+    )
+
+
+def get_sign_contract_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> SignContract:
+    settings = get_settings()
+    return SignContract(
+        SqlAlchemyContractRepository(session),
+        PostgresBookingDocuments(session),
+        PostgresBookingDocuments(session, purpose="signatures"),
+        PadesSignatureAdapter(
+            settings.signature_pkcs12_path,
+            settings.signature_pkcs12_password.get_secret_value(),
+            settings.signature_tsa_url,
+        ),
+        get_enqueue_message_use_case(session),
+        get_clock_port(),
+        secret=settings.secret_key,
+        otp_minutes=settings.signature_otp_ttl_minutes,
+        max_attempts=settings.signature_otp_max_attempts,
+        proof_minutes=settings.signature_otp_proof_ttl_minutes,
+    )
+
+
+def get_create_manual_contract_use_case(
+    catalog: Annotated[ICatalogReadPort, Depends(get_catalog_read_port)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CreateManualContract:
+    return CreateManualContract(
+        SqlAlchemyManualContractStore(
+            session,
+            deadline_hours=get_settings().advance_deadline_hours,
+            commit_confirmation=False,
+        ),
+        SqlAlchemyContractRepository(session),
+        catalog,
+        availability,
+        PostgresBookingDocuments(session, purpose="receipts"),
+        get_contract_use_case(session),
+        get_clock_port(),
+        get_settings().advance_percent,
+    )
 
 
 def get_register_manual_booking_use_case(
@@ -806,24 +1090,50 @@ def get_fake_quote_store() -> FakeQuoteStore:
 # --- E1 contrato: cotizacion (Brenis) ---
 
 
-@lru_cache
-def get_create_quote_use_case() -> ICreateQuotePort:
-    return FakeCreateQuote(get_fake_quote_store(), clock=get_clock_port())
+async def get_quote_write_session() -> AsyncIterator[AsyncSession]:
+    """Confirma antes de responder; revierte errores de caso de uso o de serialización."""
+    async with get_sessionmaker()() as session, session.begin():
+        yield session
 
 
-@lru_cache
-def get_quote_use_case() -> IGetQuotePort:
-    return FakeGetQuote(get_fake_quote_store(), clock=get_clock_port())
+def build_create_quote_use_case(session: AsyncSession) -> ICreateQuotePort:
+    settings = get_settings()
+    return CreateQuoteUseCase(
+        get_quote_repository(session),
+        get_client_repository(session),
+        get_catalog_read_port(session),
+        get_availability_port(session),
+        get_route_estimator(),
+        get_financial_engine(),
+        get_clock_port(),
+        RouteLocation(
+            latitude=settings.promotora_base_latitude, longitude=settings.promotora_base_longitude
+        ),
+        zone_for_district,
+        settings.advance_deadline_hours,
+    )
 
 
-@lru_cache
-def get_list_quotes_use_case() -> IListQuotesPort:
-    return FakeListQuotes(get_fake_quote_store(), clock=get_clock_port())
+def get_create_quote_use_case(
+    session: Annotated[AsyncSession, Depends(get_quote_write_session, scope="function")],
+) -> ICreateQuotePort:
+    return build_create_quote_use_case(session)
 
 
-@lru_cache
-def get_expire_due_quotes_use_case() -> IExpireDueQuotesPort:
-    return FakeExpireDueQuotes(get_fake_quote_store(), clock=get_clock_port())
+def get_quote_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IGetQuotePort:
+    return GetQuoteUseCase(get_quote_repository(session))
+
+
+def get_list_quotes_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IListQuotesPort:
+    return ListQuotesUseCase(get_quote_repository(session))
+
+
+def get_expire_due_quotes_use_case(session: AsyncSession) -> IExpireDueQuotesPort:
+    return ExpireDueQuotesUseCase(get_quote_repository(session), get_clock_port())
 
 
 # --- E1 contrato: cotizacion (Christian) ---
@@ -868,16 +1178,18 @@ def get_bot_lock() -> ICacheLockPort:
 def build_bot_transaction(session: AsyncSession) -> BotTransaction:
     """Casos de uso del bot sobre la sesión de un turno (spec 08, sección 6, pregunta 5).
 
-    ``CreateQuote`` y ``PayAdvance`` salen de los proveedores de arriba, hoy fakes sin sesión.
-    Cuando un responsable entregue su caso de uso real, cambia solo su línea aquí y en el
-    proveedor, y le pasa ``session`` para que comparta la transacción con ``EnqueueMessage``.
+    CreateQuote real y EnqueueMessage comparten sesión y commit de la unidad de trabajo.
+    PayAdvance conserva la implementación de Christian; su integración no cambia este puerto.
     """
 
     return BotTransaction(
-        create_quote=get_create_quote_use_case(),
+        create_quote=build_create_quote_use_case(session),
         pay_advance=get_pay_advance_use_case(),
         enqueue_message=get_enqueue_message_use_case(session),
         catalog=get_catalog_read_port(session),
+        conversation_links=sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(
+            session
+        ),
     )
 
 
@@ -922,4 +1234,11 @@ def get_handle_incoming_message_use_case() -> HandleIncomingMessage:
         messaging=get_messaging_port(),
         clock=get_clock_port(),
         lock=get_bot_lock(),
+        handoffs=BotHandoffRecorder(
+            links=SqlAlchemyConversationLinkUnitOfWork(get_sessionmaker()),
+            lookup=get_inbox_lookup(),
+            messaging=get_messaging_port(),
+            publisher=get_conversation_event_publisher(),
+            clock=get_clock_port(),
+        ),
     )

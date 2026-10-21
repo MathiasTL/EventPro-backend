@@ -554,7 +554,7 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Entonces** el mensaje se acepta con estado `QUEUED`, se entrega al cliente por WhatsApp y el autor real queda registrado en `audit_logs`.
   * **Dado que** la ventana de 24 h está cerrada,
   * **Cuando** el encargado intenta enviar texto libre,
-  * **Entonces** el sistema lo rechaza con `service-window-closed` y la interfaz solo permite elegir una plantilla aprobada.
+  * **Entonces** el sistema lo rechaza con `service-window-closed` y la interfaz deshabilita el compositor con el aviso «Han pasado más de 24 h; el cliente debe escribir primero» (sin plantillas en esta versión).
   * **Dado que** el cliente envió una imagen o un comprobante en el chat,
   * **Cuando** el encargado abre la conversación,
   * **Entonces** visualiza el adjunto mediante el proxy autenticado de EventPro, sin que el navegador acceda a Chatwoot.
@@ -591,10 +591,22 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 * **Criterios de Aceptación:**
   * **Dado que** existen conversaciones atendidas por el bot, por encargados y derivaciones sin asignar,
   * **Cuando** el encargado filtra por modo (`BOT` o `HUMAN`) o por «asignadas a mí» o «sin asignar»,
-  * **Entonces** la bandeja muestra el cliente, el modo, el motivo de traspaso con su etiqueta en español, la vista previa del último mensaje y si la ventana de 24 h sigue abierta.
+  * **Entonces** la bandeja muestra el cliente, el modo, el motivo de traspaso con su etiqueta en español, la vista previa del último mensaje, el contador de mensajes no leídos, el badge del estado comercial (`lead_status`: Cotizando, Cotización enviada, Pago iniciado, Convertido, Vencida/Cancelada o Evento realizado) y si la ventana de 24 h sigue abierta.
+  * **Dado que** existen muchas conversaciones,
+  * **Cuando** el encargado escribe al menos 2 caracteres del nombre o del teléfono del cliente,
+  * **Entonces** la bandeja muestra solo las conversaciones que coinciden, sin distinguir mayúsculas ni tildes.
+  * **Dado que** un cliente envió mensajes sin leer,
+  * **Cuando** el encargado abre el hilo,
+  * **Entonces** el contador de no leídos de esa conversación se reinicia.
+  * **Dado que** el usuario es `SUPERADMIN`,
+  * **Cuando** filtra por un encargado concreto,
+  * **Entonces** la bandeja muestra las conversaciones asignadas a ese encargado; un `ENCARGADO` que intenta ese filtro recibe `403`.
+  * **Dado que** la cotización de una conversación está `CONVERTED`,
+  * **Cuando** un `ENCARGADO` o `SUPERADMIN` marca «Evento realizado»,
+  * **Entonces** el estado comercial pasa a «Evento realizado» sin cambiar el modo ni la asignación; en cualquier otro estado el sistema responde `409` (`invalid-lead-transition`), y si el cliente vuelve a escribir el estado regresa a «Cotizando» en la misma conversación.
   * **Dado que** un mensaje saliente tiene estado de entrega `FAILED`,
   * **Cuando** el encargado abre el hilo,
-  * **Entonces** ve un motivo legible en español (por ejemplo, «La ventana de 24 horas está cerrada» o «El número no está entre los destinatarios de prueba») y, si se agotaron los reintentos del envío, un botón «Reintentar» que vuelve a enviar el mensaje.
+  * **Entonces** ve un motivo legible en español (por ejemplo, «La ventana de 24 horas está cerrada» o «El número no está entre los destinatarios de prueba») y, si se agotaron los reintentos del envío, un botón «Reintentar» que reencola el mismo mensaje (misma fila del *outbox*, sin duplicarlo).
   * **Dado que** Chatwoot no está disponible,
   * **Cuando** el encargado abre la bandeja o un hilo,
   * **Entonces** la interfaz informa que la mensajería no está disponible temporalmente, sin exponer detalles del gateway.

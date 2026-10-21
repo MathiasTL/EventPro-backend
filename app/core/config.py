@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # --- Cotización y movilidad (E1, valores aprobados por el negocio, RN-03) ---
     advance_deadline_hours: int = Field(default=24, gt=0)
+    promotora_base_latitude: Decimal = Field(default=Decimal("-12.0864"), ge=-90, le=90)
+    promotora_base_longitude: Decimal = Field(default=Decimal("-77.0328"), ge=-180, le=180)
     mobility_rate_per_km: Decimal = Field(default=Decimal("1.00"), ge=0, decimal_places=2)
     mobility_rate_per_minute: Decimal = Field(default=Decimal("0.30"), ge=0, decimal_places=2)
     mobility_minimum_amount: Decimal = Field(default=Decimal("20.00"), ge=0, decimal_places=2)
@@ -98,6 +100,23 @@ class Settings(BaseSettings):
     # --- Almacenamiento de comprobantes/evidencias (E5) ---
     storage_backend: str = "local"
     local_storage_path: str = "./uploads"
+
+    # --- Contratos (E2); enlace web, no la URL de la API ---
+    contract_frontend_url: str = "http://localhost:3000"
+    signature_link_ttl_hours: int = Field(default=168, gt=0)
+    signature_pkcs12_path: str = ""
+    signature_pkcs12_password: SecretStr = SecretStr("")
+    signature_tsa_url: str = ""
+    signature_otp_ttl_minutes: int = Field(default=10, gt=0, le=30)
+    signature_otp_max_attempts: int = Field(default=5, gt=0, le=10)
+    signature_otp_proof_ttl_minutes: int = Field(default=15, gt=0, le=30)
+
+    @field_validator("contract_frontend_url")
+    @classmethod
+    def _contract_frontend_url(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("CONTRACT_FRONTEND_URL debe ser una URL HTTP o HTTPS")
+        return value.rstrip("/")
 
     @field_validator("cors_origins", mode="before")
     @classmethod
