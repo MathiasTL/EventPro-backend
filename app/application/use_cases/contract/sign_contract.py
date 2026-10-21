@@ -196,6 +196,10 @@ class SignContract:
                 raise ValueError("Prueba no corresponde al OTP vigente")
         except (jwt.PyJWTError, ValueError) as exc:
             raise SignatureError(401, "invalid-otp", "Verifica el código antes de firmar") from exc
+        if not contract.otp_expires_at or contract.otp_expires_at <= self._clock.utcnow():
+            raise SignatureError(
+                410, "otp-expired", "El código venció; solicita y verifica uno nuevo"
+            )
         if data.advance < data.required_advance or data.advance <= 0:
             raise SignatureError(409, "invalid-contract-state", "Adelanto verificado insuficiente")
         if not contract.pdf_storage_path:

@@ -1,8 +1,16 @@
 from datetime import date, time
 from decimal import Decimal
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.domain.exceptions.resource_exceptions import ValidationError
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -57,8 +65,12 @@ class ManualContractRequest(StrictModel):
     )
     mobility_override_reason: str | None = Field(default=None, min_length=10, max_length=500)
     advance: ManualAdvance
-    client_observations: str | None = Field(default=None, max_length=5000)
-    custom_clauses: str | None = Field(default=None, max_length=10000)
+    client_observations: Annotated[str, StringConstraints(strip_whitespace=False)] | None = Field(
+        default=None, max_length=5000
+    )
+    custom_clauses: Annotated[str, StringConstraints(strip_whitespace=False)] | None = Field(
+        default=None, max_length=10000
+    )
     issue_contract: bool = True
 
     @model_validator(mode="after")

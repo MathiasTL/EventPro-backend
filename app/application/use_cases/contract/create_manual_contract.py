@@ -6,6 +6,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from app.application.dtos.availability_dto import AvailabilityRequest
 from app.application.dtos.budget_dto import BudgetLine
+from app.application.dtos.contract_dto import ContractData
 from app.application.dtos.manual_contract_dto import ManualContractInput
 from app.application.ports.output.availability_port import IAvailabilityPort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
@@ -105,6 +106,53 @@ class CreateManualContract:
             user_id,
             request.request_hash,
         )
+        await self._store.set_details(request, user_id)
+        event_id = uuid5(NAMESPACE_URL, f"eventpro:manual-event:{request.quote_id}")
+        contract_id = uuid5(NAMESPACE_URL, f"eventpro:manual-contract:{request.quote_id}")
+        number = await self._repo.next_number(self._clock.utcnow().year)
+        window = TimeWindow.from_schedule(
+            request.budget.event_date, request.budget.start_time, budget.duration_minutes
+        )
+        prepared = Contract(
+            id=contract_id,
+            event_id=event_id,
+            contract_number=number,
+            is_manual_mode=True,
+            custom_clauses=request.clauses,
+            created_at=self._clock.utcnow(),
+        )
+        if request.issue:
+            name, dni, ruc = await self._store.get_identity(request.quote_id)
+            await self._contracts.prepare_manual_pdf(
+                prepared,
+                ContractData(
+                    event_id=event_id,
+                    event_status="AWAITING_SIGNATURE",
+                    quote_id=request.quote_id,
+                    source="MANUAL",
+                    client_name=name,
+                    phone=request.phone,
+                    dni=dni,
+                    ruc=ruc,
+                    event_date=request.budget.event_date,
+                    start_time=request.budget.start_time,
+                    end_time=window.end.time(),
+                    address=request.budget.address,
+                    district=request.district,
+                    package_name=budget.package_name,
+                    theme_name=budget.theme_name,
+                    extras=tuple(
+                        f"{line.name} x {quantities[extra]}: S/ {line.amount:.2f}"
+                        for line, extra in zip(lines[1:], request.budget.extra_ids, strict=True)
+                    ),
+                    services=services,
+                    mobility=budget.mobility_amount,
+                    total=total,
+                    advance=advance,
+                    required_advance=advance,
+                    observations=request.observations,
+                ),
+            )
         # Mismo candado PostgreSQL de disponibilidad usado por las demás confirmaciones.
         booking = await self._store.get(request.quote_id, lock=True)
         if booking is None:
@@ -119,26 +167,18 @@ class CreateManualContract:
                 "No hay disponibilidad; usa el flujo de aprobación de sobrecupo"
             )
         requirements = tuple(await self._catalog.get_inventory_requirements(booking.package_id))
-        event_id = uuid5(NAMESPACE_URL, f"eventpro:manual-event:{request.quote_id}")
-        contract_id = uuid5(NAMESPACE_URL, f"eventpro:manual-contract:{request.quote_id}")
-        number = await self._repo.next_number(self._clock.utcnow().year)
         booking = await self._store.finalize(
             booking,
             user_id,
             event_id,
             contract_id,
             number,
-            None,
-            TimeWindow.from_schedule(
-                booking.event_date, booking.start_time, budget.duration_minutes
-            ),
+            prepared.pdf_storage_path,
+            window,
             requirements,
             "Registro manual autoritativo con evidencia verificada",
-            draft=True,
+            draft=not request.issue,
         )
-        # Completar cantidades y observaciones tras convertir la cotización mantiene
-        # sus datos pactados alineados con la instantánea usada por la emisión.
-        await self._store.set_details(request)
         await self._store.set_contract_details(event_id, contract_id, request)
         contract = (
             await self._contracts.issue_for_event(event_id, user_id)

@@ -45,7 +45,7 @@ async def create_manual_contract(
             422, "validation-error", "Datos inválidos", "Revisa los datos del contrato manual"
         ) from exc
     receipt = await advance_evidence_file.read(5 * 1024 * 1024 + 1)
-    canonical = request.model_dump_json() + hashlib.sha256(receipt).hexdigest()
+    canonical = request.model_dump_json(exclude_unset=True) + hashlib.sha256(receipt).hexdigest()
     fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
     mobility = (
         Decimal(0)
@@ -90,6 +90,7 @@ async def create_manual_contract(
                 receipt=receipt,
                 receipt_type=advance_evidence_file.content_type or "",
                 receipt_name=advance_evidence_file.filename or "evidence",
+                identity_fields=frozenset(request.client.model_fields_set),
             ),
             context.user_id,
         )

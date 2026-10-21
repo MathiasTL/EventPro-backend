@@ -28,3 +28,4 @@ class ManualContractInput:
     receipt: bytes
     receipt_type: str
     receipt_name: str
+    identity_fields: frozenset[str] = frozenset({"full_name"})

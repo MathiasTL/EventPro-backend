@@ -49,6 +49,12 @@ class ManageContracts:
             raise ValidationError("Paginación inválida")
         return await self._repo.list(filters)
 
+    async def prepare_manual_pdf(self, contract: Contract, data: ContractData) -> None:
+        """Prepara el documento transaccional antes del candado global; no publica el enlace."""
+        if not contract.is_manual_mode or contract.event_id != data.event_id:
+            raise ValidationError("La vista previa no corresponde al contrato manual")
+        await self._render(contract, data)
+
     async def _locked(self, contract_id: UUID) -> tuple[Contract, ContractData]:
         previous = await self.get(contract_id)
         data = await self._repo.event_data(previous.event_id, lock=True)
@@ -63,7 +69,7 @@ class ManageContracts:
             )
         if data.advance < data.required_advance or data.advance <= 0:
             raise InvalidContractStateError("Se requiere un adelanto verificado para emitir")
-        if data.event_status not in ("AWAITING_SIGNATURE", "SCHEDULED"):
+        if data.event_status != "AWAITING_SIGNATURE":
             raise InvalidContractStateError("El evento no admite emisión de contrato")
 
     async def prepare_payment_event(self, event_id: UUID, quote_id: UUID) -> None:
