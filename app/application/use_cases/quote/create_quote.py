@@ -54,6 +54,8 @@ class CreateQuoteUseCase:
         self._deadline = deadline_hours
 
     async def execute(self, dto: CreateQuoteInput) -> CreatedQuoteDTO:
+        if dto.observations is not None and len(dto.observations) > 5000:
+            raise ValidationError("Las observaciones admiten hasta 5000 caracteres")
         now = self._clock.utcnow().astimezone(UTC)
         if dto.event_time.tzinfo is not None:
             raise ValidationError("Indica la hora local de Lima sin offset")

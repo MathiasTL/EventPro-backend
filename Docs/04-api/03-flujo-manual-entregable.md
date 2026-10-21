@@ -4,7 +4,7 @@
 
 El encargado captura la solicitud que normalmente llegaría por WhatsApp. El proceso implementado es solicitud → presupuesto → comprobante → revisión humana del ingreso de dinero → reserva del evento e inventario → contrato PDF `ISSUED`. El evento queda `AWAITING_SIGNATURE`. Firma electrónica, transferencia bancaria y envío por WhatsApp no se presentan como automatizados.
 
-Los precios de servicios proceden del catálogo. `ADVANCE_PERCENT` configura el adelanto sobre servicios (10 por defecto); movilidad no aumenta ese adelanto. `pending_balance` representa el saldo de servicios; movilidad se paga adicionalmente. Si el cliente aporta transporte, movilidad es cero. Si no, el encargado declara `manual_mobility_amount > 0` y `mobility_override_reason` (10..500 caracteres); queda auditado como `OVERRIDE_MOBILITY`. No se simula una tarifa de Maps.
+Los precios de servicios proceden del catálogo. `ADVANCE_PERCENT` configura el adelanto sobre servicios (10 por defecto); movilidad no aumenta ese adelanto. `pending_balance` representa `total − adelanto`, incluida la movilidad. Si el cliente aporta transporte, movilidad es cero. Si no, el encargado declara `manual_mobility_amount > 0` y `mobility_override_reason` (10..500 caracteres); queda auditado como `OVERRIDE_MOBILITY`. No se simula una tarifa de Maps.
 
 ## API implementada
 
@@ -24,6 +24,8 @@ El presupuesto recibe `client_name`, `event_date`, `start_time`, `address`, `pac
 
 El registro recibe multipart `payload_json` y `receipt_file`. El JSON agrega `quote_id` (UUID de idempotencia), `phone`, `district`, `payment_method` y `paid_amount`. Los teléfonos locales de nueve dígitos se normalizan a +51; se reconoce el teléfono legado sin modificar datos ajenos. El nombre del contacto existente se conserva como nombre maestro. El importe debe coincidir con el adelanto calculado en el servidor.
 
+`payload_json` admite además `observations` opcional (máximo 5000 caracteres). Conserva espacios y saltos de línea, se guarda en la cotización y se copia a `events.client_observations` al confirmar. El texto forma parte de la huella de idempotencia cuando está presente; omitirlo o enviarlo como `null` conserva la huella del contrato HTTP anterior. `POST /quotes` conserva también las observaciones literalmente y aplica el mismo límite de E2.
+
 Un replay idéntico retorna 200; creación, 201. La huella incluye todos los campos normalizados y SHA-256 del comprobante. Reutilizar la referencia con datos diferentes o presentar la misma solicitud activa con otra referencia retorna 409. Se respalda con un índice único en PostgreSQL.
 
 La confirmación recibe `{"receipt_verified":true}`. Quien registró el pago no puede verificarlo: únicamente SUPERADMIN puede exceptuar esta separación con `override_reason`, registrado en bitácora. Un sobrecupo exige además `approve_overbooking=true` y motivo. El override permite superar el umbral de simultaneidad; nunca inventa stock.
@@ -31,6 +33,10 @@ La confirmación recibe `{"receipt_verified":true}`. Quien registró el pago no 
 Si no hay disponibilidad al recibir el comprobante o al confirmar, se conserva el pago en REQUIRES_MANUAL_APPROVAL, sin evento ni contrato. Para rechazar ese sobrecupo se usa refund con `{"action":"REQUEST","reason":"Motivo documentado"}`: REFUND_PENDING y cotización CANCELLED. Después de realizar realmente la devolución se declara `{"action":"CONFIRM","reason":"Referencia de devolución realizada"}`: REFUNDED. El backend registra la decisión; no efectúa una transferencia bancaria.
 
 ## Integridad y concurrencia
+
+La confirmación reutiliza el generador `ReportLabContractPdf` y `ContractData` de [E2](../02-arquitectura/09-spec-e2-contratos-pdf.md). El adaptador del flujo manual entrega identidad DNI/RUC existente, horario, extras con cantidades e importes congelados y observaciones. Renderiza antes del candado global y conserva correlativo, PDF y contrato en los reintentos. Los documentos históricos no se regeneran automáticamente.
+
+La integración de Diego confirma reserva, pago, documento, contrato, auditoría y enlace en outbox en una sola transacción. Un fallo de PDF o cola revierte la confirmación; la solicitud y el comprobante registrados previamente permanecen disponibles para reintentar. No duplica emisión, firma ni envíos HTTP desde E1: la entrega del enlace corresponde al worker/gateway y la firma a E2. El entorno requiere la cadena de migraciones de E2 hasta `0008_contract_signature`; este ajuste no añade migraciones.
 
 - Confirmación exige cotización PAYMENT_STARTED, vigente durante 24 horas, evento futuro y pago pendiente o en revisión. El vencimiento se valida al confirmar, sin depender de un job de expiración.
 - El dominio Payment valida verificación, aprobación, revisión y reembolso. Se registran capturador, verificador, cambios del pago, conversión de cotización y emisión del contrato.

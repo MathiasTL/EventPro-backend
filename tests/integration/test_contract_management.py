@@ -1,6 +1,7 @@
 """Contratos con PostgreSQL/Redis efímeros; ninguna llamada externa ni base compartida."""
 
 import asyncio
+import base64
 from datetime import date
 from io import BytesIO
 from uuid import uuid4
@@ -156,7 +157,36 @@ async def test_pdf_failure_rolls_back_payment_and_documents(scenario, monkeypatc
 
 async def test_manual_confirmation_uses_same_contract_lifecycle(scenario):
     client, factory, payload, headers, _ = scenario
+    notes = "  Entrada por puerta lateral\nConservar esta nota  "
+    extra_id = uuid4()
+    async with factory() as session:
+        await session.execute(
+            text("INSERT INTO extras(id,name,sale_price,direct_cost) VALUES (:id,'Globos',20,5)"),
+            {"id": extra_id},
+        )
+        await session.commit()
+    payload = {
+        **payload,
+        "observations": notes,
+        "extra_ids": [str(extra_id)],
+        "paid_amount": "12.00",
+        "client_provides_transport": False,
+        "manual_mobility_amount": "50.00",
+        "mobility_override_reason": "Tarifa acordada por el encargado",
+    }
     assert (await register(client, payload, headers["SUPERADMIN"])).status_code == 201
+    assert (await register(client, payload, headers["SUPERADMIN"])).status_code == 200
+    changed = {**payload, "observations": notes.strip()}
+    assert (await register(client, changed, headers["SUPERADMIN"])).status_code == 409
+    async with factory() as session:
+        await session.execute(
+            text(
+                "UPDATE clients SET dni='12345678',ruc='20123456789' "
+                "WHERE id=(SELECT client_id FROM quotes WHERE id=:id)"
+            ),
+            {"id": payload["quote_id"]},
+        )
+        await session.commit()
     result = await confirm(client, payload, headers["ENCARGADO"])
     assert result.status_code == 200, result.text
     data = result.json()
@@ -165,7 +195,31 @@ async def test_manual_confirmation_uses_same_contract_lifecycle(scenario):
         f"/api/v1/contracts/{data['contract_id']}", headers=headers["ENCARGADO"]
     )
     assert fetched.status_code == 200 and fetched.json()["is_manual_mode"]
+    downloaded = await client.get(
+        f"/api/v1/contracts/{data['contract_id']}/pdf", headers=headers["ENCARGADO"]
+    )
+    assert downloaded.status_code == 200, downloaded.text
+    content = "\n".join(p.extract_text() for p in PdfReader(BytesIO(downloaded.content)).pages)
+    assert "12345678" in content and "20123456789" in content
+    assert "OBSERVACIONES ESPECIALES DEL CLIENTE" in content
+    assert "Entrada por puerta lateral" in content and "Conservar esta nota" in content
+    assert "Globos x 1: S/ 20.00" in content
+    assert "158.00" in content  # Total 170 menos adelanto 12, incluida movilidad.
+    legacy_pdf = await client.get(
+        f"/api/v1/manual-bookings/{payload['quote_id']}/contract", headers=headers["ENCARGADO"]
+    )
+    assert legacy_pdf.status_code == 200, legacy_pdf.text
+    assert base64.b64decode(legacy_pdf.json()["pdf_base64"]) == downloaded.content
+    replay = await confirm(client, payload, headers["ENCARGADO"])
+    assert replay.status_code == 200 and replay.json() == data
     async with factory() as session:
+        assert (
+            await session.scalar(
+                text("SELECT client_observations FROM events WHERE id=:id"),
+                {"id": data["event_id"]},
+            )
+            == notes
+        )
         assert (
             await session.scalar(
                 text("SELECT signature_token_hash FROM contracts WHERE id=:id"),
@@ -173,6 +227,55 @@ async def test_manual_confirmation_uses_same_contract_lifecycle(scenario):
             )
             is not None
         )
+        assert (
+            await session.scalar(
+                text("SELECT count(*) FROM outbox_messages WHERE payload->>'contract_id'=:id"),
+                {"id": data["contract_id"]},
+            )
+            == 1
+        )
+
+
+@pytest.mark.parametrize("failure", ["pdf", "outbox"])
+async def test_manual_e2_failure_rolls_back_confirmation(scenario, monkeypatch, failure):
+    client, factory, payload, headers, _ = scenario
+    assert (await register(client, payload, headers["SUPERADMIN"])).status_code == 201
+    async with factory() as session:
+        before = await session.scalar(text("SELECT count(*) FROM booking_documents"))
+
+    async def fail(*args):
+        raise RuntimeError("Fallo simulado de integración E2")
+
+    target = ReportLabContractPdf if failure == "pdf" else SqlAlchemyOutboxRepository
+    with monkeypatch.context() as patch:
+        patch.setattr(target, "render" if failure == "pdf" else "add", fail)
+        result = await confirm(client, payload, headers["ENCARGADO"])
+    assert result.status_code == 500, result.text
+    async with factory() as session:
+        assert await session.scalar(text("SELECT count(*) FROM booking_documents")) == before
+        assert (
+            await session.scalar(
+                text("SELECT status FROM quotes WHERE id=:id"), {"id": payload["quote_id"]}
+            )
+            == "PAYMENT_STARTED"
+        )
+        assert (
+            await session.scalar(
+                text("SELECT validation_status FROM payments WHERE quote_id=:id"),
+                {"id": payload["quote_id"]},
+            )
+            == "PENDING_VERIFICATION"
+        )
+        assert (
+            await session.scalar(
+                text("SELECT count(*) FROM events WHERE quote_id=:id"),
+                {"id": payload["quote_id"]},
+            )
+            == 0
+        )
+    # El mismo registro se puede confirmar al recuperarse E2.
+    recovered = await confirm(client, payload, headers["ENCARGADO"])
+    assert recovered.status_code == 200, recovered.text
 
 
 async def test_regeneration_updates_schedule_and_void_allows_reissue(scenario):
