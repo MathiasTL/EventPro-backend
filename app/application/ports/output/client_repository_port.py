@@ -13,5 +13,7 @@ class IClientRepositoryPort(Protocol):
     async def get_by_phone(self, phone: str) -> Client | None:
         """Busca por teléfono en cualquier formato que acepte PhoneNumber."""
 
-    async def get_or_create(self, phone: str, full_name: str) -> Client:
+    async def get_or_create(
+        self, phone: str, full_name: str, *, dni: str | None = None, ruc: str | None = None
+    ) -> Client:
         """Devuelve el cliente del teléfono o lo crea; nunca sobrescribe el nombre existente."""

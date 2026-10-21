@@ -6,7 +6,7 @@ Seguir la [guía de integración E2](README.md). E5 adapta su flujo al puerto ex
 
 - `event_id` existente, vinculado a la misma `quote_id` del pago, estado `AWAITING_SIGNATURE`, datos comerciales completos e importes consistentes.
 - Pago `ADVANCE` que solo se verifica tras revisar evidencia y disponibilidad. E2 suma exclusivamente pagos `VERIFIED` vinculados al evento y a su cotización; requiere un adelanto positivo que alcance el importe exigido.
-- Observaciones iniciales copiadas literalmente a `events.client_observations` antes de emitir. Si el productor aún no persiste notas en cotización, resolver su origen con Mathias/Nicolas sin introducir consultas a columnas inexistentes en E2.
+- Observaciones iniciales copiadas literalmente de `quotes.observations` a `events.client_observations` antes de emitir. La columna de cotización ya está integrada en develop mediante `0006_quote_observations`; E5 completa la copia en su creación del evento con Mathias/Nicolas.
 
 ## Punto de integración existente
 

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import re
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -117,6 +118,41 @@ async def test_manual_draft_replay_and_conflict_are_atomic(scenario):
         headers=headers["ENCARGADO"],
     )
     assert issued.status_code == 200 and issued.json()["status"] == "ISSUED"
+
+
+async def test_manual_keeps_quantities_and_quote_notes_with_real_quote_repository(scenario):
+    client, factory, legacy, headers, _ = scenario
+    extra_id = uuid4()
+    async with factory() as session:
+        await session.execute(
+            text("INSERT INTO extras(id,name,sale_price,direct_cost) VALUES (:id,:name,25,5)"),
+            {"id": extra_id, "name": f"Extra-{extra_id}"},
+        )
+        await session.commit()
+    payload = manual_payload(
+        legacy,
+        extras=[{"extra_id": str(extra_id), "quantity": 3}],
+        advance={"payment_method": "CASH", "amount": "17.50"},
+    )
+    key = uuid4()
+    result = await create(client, payload, headers["ENCARGADO"], key)
+    assert result.status_code == 201, result.text
+    assert Decimal(str(result.json()["total_amount"])) == Decimal("175.00")
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text("SELECT quantity,unit_price,subtotal FROM quote_extras WHERE quote_id=:id"),
+                {"id": key},
+            )
+        ).one()
+        assert row == (3, Decimal("25.00"), Decimal("75.00"))
+        assert (
+            await session.scalar(
+                text("SELECT observations FROM quotes WHERE id=:id"),
+                {"id": key},
+            )
+            == payload["client_observations"]
+        )
 
 
 async def test_manual_pdf_failure_rolls_back_all_new_rows(scenario, monkeypatch):

@@ -1,26 +1,31 @@
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import text, update
 
 from app.application.dtos.manual_contract_dto import ManualContractInput
 from app.infrastructure.adapters.secondary.persistence.manual_booking_repository import (
     SqlAlchemyManualBookingStore,
 )
+from app.infrastructure.adapters.secondary.persistence.models.client_model import ClientModel
 
 
 class SqlAlchemyManualContractStore(SqlAlchemyManualBookingStore):
     async def set_details(self, request: ManualContractInput) -> None:
+        client_id = await self._session.scalar(
+            text("SELECT client_id FROM quotes WHERE id=:quote"), {"quote": request.quote_id}
+        )
         await self._session.execute(
-            text(
-                "UPDATE clients SET full_name=:name,dni=:dni,ruc=:ruc "
-                "WHERE id=(SELECT client_id FROM quotes WHERE id=:quote)"
-            ),
-            {
-                "name": request.budget.client_name,
-                "dni": request.dni,
-                "ruc": request.ruc,
-                "quote": request.quote_id,
-            },
+            update(ClientModel)
+            .where(ClientModel.id == client_id)
+            .values(
+                full_name=request.budget.client_name,
+                dni=request.dni,
+                ruc=request.ruc,
+            )
+        )
+        await self._session.execute(
+            text("UPDATE quotes SET observations=:notes WHERE id=:quote"),
+            {"notes": request.observations, "quote": request.quote_id},
         )
         for extra_id, quantity in request.quantities:
             await self._session.execute(

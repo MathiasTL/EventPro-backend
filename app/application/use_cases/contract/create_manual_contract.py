@@ -105,7 +105,6 @@ class CreateManualContract:
             user_id,
             request.request_hash,
         )
-        await self._store.set_details(request)
         # Mismo candado PostgreSQL de disponibilidad usado por las demás confirmaciones.
         booking = await self._store.get(request.quote_id, lock=True)
         if booking is None:
@@ -137,6 +136,9 @@ class CreateManualContract:
             "Registro manual autoritativo con evidencia verificada",
             draft=True,
         )
+        # Completar cantidades y observaciones tras convertir la cotización mantiene
+        # sus datos pactados alineados con la instantánea usada por la emisión.
+        await self._store.set_details(request)
         await self._store.set_contract_details(event_id, contract_id, request)
         contract = (
             await self._contracts.issue_for_event(event_id, user_id)

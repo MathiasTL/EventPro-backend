@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # --- Cotización y movilidad (E1, valores aprobados por el negocio, RN-03) ---
     advance_deadline_hours: int = Field(default=24, gt=0)
+    promotora_base_latitude: Decimal = Field(default=Decimal("-12.0864"), ge=-90, le=90)
+    promotora_base_longitude: Decimal = Field(default=Decimal("-77.0328"), ge=-180, le=180)
     mobility_rate_per_km: Decimal = Field(default=Decimal("1.00"), ge=0, decimal_places=2)
     mobility_rate_per_minute: Decimal = Field(default=Decimal("0.30"), ge=0, decimal_places=2)
     mobility_minimum_amount: Decimal = Field(default=Decimal("20.00"), ge=0, decimal_places=2)

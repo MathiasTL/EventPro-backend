@@ -34,13 +34,13 @@ Recursos inexistentes responden 404; estados o adelanto incompatible, 409 `inval
 
 ## Migración y configuración
 
-Aplicar **solo al desplegar** `0006_contract_management` después de `0005_event_financial_snapshots`. La revisión crea `contract_number_seq`, inicializada por encima de los correlativos numéricos existentes, y agrega `CONTRACT_ISSUED`, `CONTRACT_LINK_RESENT`, `CONTRACT_REGENERATED` y `CONTRACT_VOIDED` al vocabulario de auditoría. Los números nuevos tienen formato `CTR-año-0001` con secuencia global creciente; no se reinicia por año y puede tener saltos tras rollback. Se permite anular un borrador sin PDF. Las pruebas usan bases efímeras; no aplican migraciones a Supabase compartido.
+Aplicar **solo al desplegar** `0007_contract_management` después de `0006_quote_observations` (PR #32 de develop). La revisión crea `contract_number_seq`, inicializada por encima de los correlativos numéricos existentes, y agrega `CONTRACT_ISSUED`, `CONTRACT_LINK_RESENT`, `CONTRACT_REGENERATED` y `CONTRACT_VOIDED` al vocabulario de auditoría. Los números nuevos tienen formato `CTR-año-0001` con secuencia global creciente; no se reinicia por año y puede tener saltos tras rollback. Se permite anular un borrador sin PDF. Las pruebas usan bases efímeras; no aplican migraciones a Supabase compartido.
 
 El downgrade conserva los datos; se rechaza si ya existen las nuevas acciones de auditoría o borradores anulados sin PDF que el baseline no admite. No se borra ni transforma evidencia para forzarlo.
 
 `CONTRACT_FRONTEND_URL` configura el origen web de los enlaces (por defecto `http://localhost:3000`; configurar el dominio del frontend al desplegar). `SIGNATURE_LINK_TTL_HOURS` debe ser positivo. El almacenamiento `booking_documents` existente mantiene PDF y fila comercial en la misma transacción.
 
-La nueva migración `0007_contract_signature`, posterior a `0006`, añade `otp_last_requested_at`, `otp_window_started_at` y `otp_request_count`. Estos límites sobreviven a reinicios, múltiples procesos y rotación del enlace. El único head esperado ahora es `0007_contract_signature`. No se aplicó a ninguna base compartida.
+La nueva migración `0008_contract_signature`, posterior a `0007_contract_management`, añade `otp_last_requested_at`, `otp_window_started_at` y `otp_request_count`. Estos límites sobreviven a reinicios, múltiples procesos y rotación del enlace. El único head esperado ahora es `0008_contract_signature`. No se aplicó a ninguna base compartida.
 
 ## Contingencia manual (US-14, backend)
 
@@ -76,6 +76,8 @@ Pruebas de dominio y aplicación cubren estados, autorización del adelanto, cor
 
 Diego confirma que las pruebas de la entrega están bien, tras ejecutar la validación desde su terminal. El agente no volvió a ejecutar pruebas. Se corrigieron los identificadores extensos de parametrización en Windows y la llamada al validador asíncrono de pyHanko. La firma real con certificado configurado, gateway y entrega WhatsApp sigue pendiente de integración; las pruebas automatizadas no acreditan esa operación real. Los comandos siguientes quedan como referencia para regresiones, incluida cualquier actualización posterior de la base de la rama.
 
+Al preparar la PR se incorporó `origin/develop` en `f772a9b` (PR #32), conservando los repositorios reales de cotización y las transacciones E2. Se ajustó la cadena E2 a `0007`/`0008` y se añadió un caso de compatibilidad de cantidades/notas del contrato manual. Después de esa incorporación se comprobaron lint, formato, tipos y head de Alembic; no se reejecutó pytest. La confirmación anterior de Diego corresponde a la entrega previa a esta actualización de base.
+
 ## Comandos para Diego (PowerShell)
 
 Desde `D:\Proyectos\EventPro-backend`, preparar dependencias y comprobar calidad sin modificar formato:
@@ -88,7 +90,7 @@ Desde `D:\Proyectos\EventPro-backend`, preparar dependencias y comprobar calidad
 .\.venv\Scripts\python.exe -m alembic heads
 ```
 
-`alembic heads` debe mostrar un único head: `0007_contract_signature`; no aplica cambios a la base de datos.
+`alembic heads` debe mostrar un único head: `0008_contract_signature`; no aplica cambios a la base de datos.
 
 Pruebas del nuevo módulo sin contenedores:
 

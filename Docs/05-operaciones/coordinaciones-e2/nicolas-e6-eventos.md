@@ -13,7 +13,7 @@ Seguir la [guía de integración E2](README.md). E6 consume la confirmación pro
 
 - [ ] Consumir `SCHEDULED` sin agregar una segunda transición ni solicitar que E2 escriba otro estado para acomodar E6.
 - [ ] Mantener las condiciones de asignación/pre-show/inicio; no iniciar un evento pendiente de firma por marcar manualmente `SIGNED` o `SCHEDULED`.
-- [ ] Coordinar con Christian la carga inicial literal de observaciones y comprobar igualdad entre evento, cronograma y PDF. No atribuir a E2 la lectura de una columna de cotización todavía inexistente.
+- [ ] Coordinar con Christian la copia inicial literal de `quotes.observations` a `events.client_observations` y comprobar igualdad entre evento, cronograma y PDF. La columna de cotización está disponible desde `0006_quote_observations`.
 - [ ] Probar la lectura tras una firma confirmada y tras rollback de sellado: el segundo caso debe permanecer pendiente de firma.
 - [ ] Verificar cancelación/anulación conservando contrato, PDF sellado, hash y auditoría; respetar el bloqueo de evento usado por E2.
 - [ ] Entregar PR/evidencia de compatibilidad y coordinar con Diego los cambios de la frontera de estados o seguridad.

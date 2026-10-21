@@ -14,7 +14,7 @@ Los archivos individuales describen los puntos de conexión, las tareas de cada 
 4. Respetar `DRAFT → ISSUED → SIGNED` y `VOIDED` bajo las reglas del agregado; solo la firma E2 confirma `SIGNED` y su transición asociada a `SCHEDULED`. Preservar evidencias y consumo único del token.
 5. Mantener observaciones literales en `events.client_observations`, importes PEN con decimales y saldo `total − adelanto`, incluida movilidad. Cada productor debe entregar datos compatibles antes de llamar a E2.
 6. Respetar los bloqueos y el orden de adquisición de la operación integrada. La reserva de capacidad usa el candado PostgreSQL compartido `AVAILABILITY_LOCK_KEY` y la comprobación existente de disponibilidad; no inventar otro candado incompatible.
-7. Coordinar las migraciones con un solo head. La cadena local E2 es `0005_event_financial_snapshots → 0006_contract_management → 0007_contract_signature`. No editar migraciones ya aplicadas ni eliminar evidencia para facilitar un downgrade. Si develop avanza, resolver la cadena en el PR y con revisión de Diego.
+7. Coordinar las migraciones con un solo head. La cadena local E2 es `0005_event_financial_snapshots → 0006_quote_observations → 0007_contract_management → 0008_contract_signature`. No editar migraciones ya aplicadas ni eliminar evidencia para facilitar un downgrade. Si develop avanza, resolver la cadena en el PR y con revisión de Diego.
 8. No incluir token, OTP, `otp_proof`, claves, certificado o firma manuscrita en logs ni respuestas administrativas. Conservar redacción del outbox y configurar redacción equivalente en proxy/APM.
 
 ## Responsables y entregables

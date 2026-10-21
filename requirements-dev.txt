@@ -8,5 +8,5 @@ pytest-cov>=5.0.0,<8.0.0
 ruff==0.16.10
 mypy==2.4.0
 testcontainers[postgres]>=4.8.0,<5.0.0
-# Lectura del contenido real de los contratos PDF en pruebas.
-pypdf>=5.0.0,<7.0.0
+# Ganchos síncronos de las suites de contrato sobre el PostgreSQL temporal.
+pg8000>=1.31.0,<2.0.0

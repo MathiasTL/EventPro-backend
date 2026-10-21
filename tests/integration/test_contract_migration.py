@@ -19,7 +19,7 @@ pytestmark = pytest.mark.integration
 def test_contract_migration_is_linear_reversible_and_keeps_legacy_data(database_url):
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
-    assert ScriptDirectory.from_config(config).get_heads() == ["0007_contract_signature"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0008_contract_signature"]
     command.upgrade(config, "0005_event_financial_snapshots")
     quote_id, event_id, contract_id = uuid4(), uuid4(), uuid4()
 

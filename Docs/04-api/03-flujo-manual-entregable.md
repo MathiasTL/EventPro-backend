@@ -60,3 +60,19 @@ La migración se valida en PostgreSQL efímero/Testcontainers. Aplicarla a la ba
 Los archivos anteriores conservan lectura por el adaptador local. Antes de desplegar múltiples instancias con datos anteriores, deben copiarse esos archivos y actualizarse sus referencias mediante una migración operativa coordinada. Los documentos nuevos son compartidos y se incluyen en el respaldo de PostgreSQL; con volúmenes altos convendrá sustituir el puerto por almacenamiento de objetos.
 
 ReportLab es el único motor PDF de runtime, con plantilla manual-v1. El texto contractual requiere aprobación del responsable del negocio antes de usarlo con clientes reales. No acredita firma ni sello PAdES. ADR-11 explica las decisiones y diferencias respecto a pagos genéricos.
+
+
+## Integración con el núcleo de cotización (Brenis, spec 08)
+
+Las nuevas solicitudes reutilizan `FinancialEngine`, `Quote` y los repositorios
+de clientes/cotizaciones. El estado inicial manual es `PAYMENT_STARTED`; la
+confirmación usa `Quote.convert()` y la devolución sin reserva `Quote.cancel()`.
+La idempotencia, auditoría, candados y transacción de reserva permanecen vigentes.
+El saldo nuevo se calcula como `total - adelanto`: incluye el 90 % de servicios y
+el 100 % de movilidad. No se recalculan ni alteran los importes históricos.
+
+El worker registra `expire_due_quotes` cada minuto y confirma su transacción.
+No vence cotizaciones con comprobantes `PENDING_VERIFICATION` o
+`REQUIRES_MANUAL_APPROVAL`, ni filas bloqueadas por una operación concurrente.
+La migración 0006 debe aplicarse por el procedimiento autorizado del entorno;
+las pruebas se ejecutan exclusivamente en PostgreSQL temporal.

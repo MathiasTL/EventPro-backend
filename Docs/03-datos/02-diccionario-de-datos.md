@@ -260,13 +260,13 @@ Contratos formalizados en PDF con firma electrónica propia: enlace por WhatsApp
 | `id` | `UUID` | NO | `gen_random_uuid()` | PK | Identificador del contrato. |
 | `contract_number` | `VARCHAR(30)` | NO | - | UNIQUE | Número correlativo (`CTR-2026-0001`). |
 | `event_id` | `UUID` | NO | - | FK (`events.id`), INDEX | Evento asociado. Solo puede existir un contrato no `VOIDED` por evento (índice único parcial). |
-| `pdf_storage_path` | `VARCHAR(255)` | SÍ | `NULL` | CHECK (`status NOT IN ('ISSUED','SIGNED')` OR `pdf_storage_path IS NOT NULL`) | Ruta del PDF compilado. Desde `0006_contract_management`, un borrador anulado puede conservar ruta nula; un emitido o firmado exige PDF. |
+| `pdf_storage_path` | `VARCHAR(255)` | SÍ | `NULL` | CHECK (`status NOT IN ('ISSUED','SIGNED')` OR `pdf_storage_path IS NOT NULL`) | Ruta del PDF compilado. Desde `0007_contract_management`, un borrador anulado puede conservar ruta nula; un emitido o firmado exige PDF. |
 | `signature_token_hash` | `VARCHAR(64)` | SÍ | `NULL` | UNIQUE | Hash SHA-256 del token de un solo uso del enlace de firma; el token en claro solo viaja por WhatsApp. |
 | `signature_token_expires_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Expiración del enlace de firma. |
 | `otp_hash` | `VARCHAR(255)` | SÍ | `NULL` | - | Hash del código OTP de 6 dígitos enviado por WhatsApp; nulo si no hay un OTP vigente. |
 | `otp_expires_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Expiración del OTP vigente. |
 | `otp_attempts` | `INTEGER` | NO | `0` | CHECK (`otp_attempts >= 0`) | Intentos fallidos del OTP vigente; al superar el máximo permitido se invalida el OTP. |
-| `otp_last_requested_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Última solicitud OTP; espera mínima de 60 segundos. Añadido en `0007_contract_signature`. |
+| `otp_last_requested_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Última solicitud OTP; espera mínima de 60 segundos. Añadido en `0008_contract_signature`. |
 | `otp_window_started_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Inicio de ventana de diez minutos para solicitudes OTP. |
 | `otp_request_count` | `INTEGER` | NO | `0` | - | Solicitudes en la ventana; máximo tres por contrato. No se reinicia al rotar enlace. |
 | `signature_image_path` | `VARCHAR(255)` | SÍ | `NULL` | - | Ruta de la imagen de la firma manuscrita capturada. |
@@ -411,7 +411,7 @@ Cola de mensajes salientes con reintentos (patrón *outbox*). Desacopla las tran
 ### 2.20 Tabla: `audit_logs`
 Bitácora de auditoría para trazabilidad de decisiones críticas y procesos de control.
 
-La revisión `0006_contract_management` amplía el CHECK de `action` con `CONTRACT_ISSUED`, `CONTRACT_LINK_RESENT`, `CONTRACT_REGENERATED` y `CONTRACT_VOIDED`. Estas acciones registran la gestión administrativa; no contienen tokens u OTP. El vocabulario previo de la tabla se conserva.
+La revisión `0007_contract_management` amplía el CHECK de `action` con `CONTRACT_ISSUED`, `CONTRACT_LINK_RESENT`, `CONTRACT_REGENERATED` y `CONTRACT_VOIDED`. Estas acciones registran la gestión administrativa; no contienen tokens u OTP. El vocabulario previo de la tabla se conserva.
 
 | Columna | Tipo | Nulo | Default | Restricciones | Descripción |
 | :--- | :--- | :---: | :--- | :--- | :--- |

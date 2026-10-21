@@ -84,7 +84,7 @@ async def test_manual_mobility_does_not_increase_advance():
     )
     assert result.total_amount == Decimal("160.05")
     assert result.advance_amount == Decimal("11.01")
-    assert result.pending_balance == Decimal("99.04")
+    assert result.pending_balance == Decimal("149.04")
 
 
 @pytest.mark.parametrize(

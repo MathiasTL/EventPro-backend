@@ -32,7 +32,7 @@ La base del frontend ([SCRUM-53](https://eventprofessional.atlassian.net/browse/
 
 | Área | Estado | Evidencia y límite |
 | :--- | :--- | :--- |
-| Base backend, Alembic y CI | Integrado / Finalizado | Plataforma fusionada por PR #11 y SCRUM-44 finalizado. Existen `app/`, migraciones `0001` a `0005` y [CI](../../.github/workflows/ci.yml). Las revisiones locales `0006`/`0007` están pendientes de despliegue. README actualizado. |
+| Base backend, Alembic y CI | Integrado / Finalizado | Plataforma fusionada por PR #11 y SCRUM-44 finalizado. Existen `app/`, migraciones `0001` a `0005` y [CI](../../.github/workflows/ci.yml). Las revisiones locales `0007`/`0008` están pendientes de despliegue. README actualizado. |
 | Salud, autenticación y RBAC | Integrado / Finalizado | PR #11 incluye [`/health`](../../app/infrastructure/adapters/primary/web/health_router.py), [login/refresh/logout](../../app/infrastructure/adapters/primary/web/auth_router.py), [`require_role(...)`](../../app/infrastructure/adapters/primary/web/deps.py) y bootstrap de [`SUPERADMIN`](../../app/infrastructure/adapters/secondary/persistence/bootstrap_superadmin.py). La integración de cada nueva épica sigue requiriendo sus pruebas. |
 | Usuarios, revocación y bitácora | Integrado / Finalizado en Jira | PR #20 y #19 fusionados; SCRUM-58 y SCRUM-59 finalizados. Hay [router de usuarios](../../app/infrastructure/adapters/primary/web/v1/users_router.py), [servicio de auditoría](../../app/application/services/audit_service.py), [consulta de bitácora](../../app/infrastructure/adapters/primary/web/v1/audit_logs_router.py) y pruebas. Las pantallas de usuarios y bitácora quedan fuera del alcance de esos PR según sus historias de Jira. |
 | Contingencia manual · US-14 backend | Implementado localmente; pruebas confirmadas por Diego | `/contracts/manual` crea cliente/cotización/pago/evento/reservas/contrato de manera atómica, con evidencia e idempotencia. Reutiliza el almacén de `/manual-bookings`, cuya revisión separada se conserva. |
@@ -70,7 +70,7 @@ La base del frontend ([SCRUM-53](https://eventprofessional.atlassian.net/browse/
 
 | Tarea y resultado comprobable | Estado | Dependencia / evidencia |
 | :--- | :--- | :--- |
-| [x] Modelar `Contract`, estados administrativos, repositorio, correlativo y un solo contrato vigente por evento. | Implementado localmente, incluida transición de firma | [Especificación E2](../02-arquitectura/09-spec-e2-contratos-pdf.md), migraciones `0006_contract_management` y `0007_contract_signature`. |
+| [x] Modelar `Contract`, estados administrativos, repositorio, correlativo y un solo contrato vigente por evento. | Implementado localmente, incluida transición de firma | [Especificación E2](../02-arquitectura/09-spec-e2-contratos-pdf.md), migraciones `0007_contract_management` y `0008_contract_signature`. |
 | [x] Integrar emisión PDF tras el adelanto verificado, con datos, importes, extras y observaciones; regenerar al editar notas antes de firmar. | Implementado localmente | Christian debe entregar el evento existente en la verificación genérica. El flujo manual ya lo crea. [Especificación E2](../02-arquitectura/09-spec-e2-contratos-pdf.md). |
 | [ ] Acordar con Nicolas quién copia `quotes.observations` a `events.client_observations`; incluir el mismo texto literal en el PDF y cronograma. | Decisión de integración pendiente | [Pregunta abierta de E1](../02-arquitectura/08-spec-e1-contrato-cotizacion.md#6-preguntas-abiertas). |
 | [x] Implementar listado, detalle, PDF, reenvío y anulación con permisos y auditoría; agregar emisión administrativa idempotente y edición de observaciones. | Implementado localmente | [Contrato REST `/contracts`](../04-api/01-especificacion-endpoints-rest.md#210-módulo-contratos-y-firma-electrónica-contracts). |
@@ -87,7 +87,7 @@ La base del frontend ([SCRUM-53](https://eventprofessional.atlassian.net/browse/
 | [ ] Validar certificado PKCS#12 y PDF sellado dentro de Docker. | Adaptador y prueba con certificado efímero escritos; ejecución pendiente | [Implementación y configuración](../02-arquitectura/09-spec-e2-contratos-pdf.md). |
 | [x] Completar validación pública y consumo único del token, con bloqueo por evento. | Backend implementado localmente; pruebas confirmadas por Diego | [API de firma](../04-api/01-especificacion-endpoints-rest.md#get-contractssigntoken). |
 | [x] Implementar resumen público y PDF con token: `GET /contracts/sign/{token}` y `/pdf`. | Backend implementado localmente; sin frontend | Respuestas sin caché y redacción del access log. |
-| [x] Generar OTP de 6 dígitos, guardar HMAC, limitar solicitudes e intentos, verificar y emitir `otp_proof` breve; encolar código redactable. | Backend implementado localmente; pruebas confirmadas por Diego | Contadores persistentes en `0007_contract_signature`; integración con outbox de Mathias. |
+| [x] Generar OTP de 6 dígitos, guardar HMAC, limitar solicitudes e intentos, verificar y emitir `otp_proof` breve; encolar código redactable. | Backend implementado localmente; pruebas confirmadas por Diego | Contadores persistentes en `0008_contract_signature`; integración con outbox de Mathias. |
 | [x] Validar PNG y aceptación, estampar firma, sellar PAdES, guardar SHA-256/IP/User-Agent/fecha; contrato `SIGNED` y evento `SCHEDULED` atómicos. | Backend implementado localmente; requiere certificado configurado y validación | Nicolas consume el nuevo estado. [ADR-07](../02-arquitectura/04-adr-decisiones-arquitectura.md). |
 | [x] Auditar `CONTRACT_SIGNED` y encolar copia del PDF sellado como `DOCUMENT`. | Backend implementado localmente; entrega WhatsApp por validar | Worker y gateway de Mathias. |
 | [x] Ejecutar casos de expiración, OTP incorrecto, repetición, concurrencia y rollback. | Pruebas confirmadas por Diego desde su terminal | [Comandos](../02-arquitectura/09-spec-e2-contratos-pdf.md#comandos-para-diego-powershell). |
@@ -123,7 +123,7 @@ Los puntos de conexión y tareas están en la [guía de coordinación E2](coordi
 
 1. Pruebas confirmadas por Diego desde terminal. Conservar los comandos documentados para regresiones posteriores; el agente no vuelve a ejecutar pruebas por indicación expresa.
 2. Configurar certificado PKCS#12, dominio del enlace y worker/gateway; verificar la entrega de OTP y PDF con Mathias, incluida la plantilla fuera de ventana.
-3. Revisar el PR de backend y coordinar migraciones `0006` y `0007`, despliegue y alineación del backlog de Jira con la asignación a Diego.
+3. Revisar el PR de backend y coordinar migraciones E2 `0007` y `0008`, despliegue y alineación del backlog de Jira con la asignación a Diego.
 4. Coordinar con Christian la creación de eventos del flujo conversacional y con Nicolas la copia inicial de observaciones. La contingencia manual ya crea el evento y sus notas; la firma ya implementa `SCHEDULED`.
 
 El frontend queda fuera de esta continuación por indicación de Diego; sus tareas se conservan como referencia, sin tratarlas como trabajo de backend pendiente.

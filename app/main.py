@@ -23,6 +23,7 @@ from app.infrastructure.adapters.primary.web.v1 import (
     manual_contracts_router,
     overrides_router,
     payments_router,
+    quotes_router,
     users_router,
 )
 from app.infrastructure.adapters.primary.webhooks import chatwoot_webhook
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     application.include_router(manual_contracts_router.router, prefix=settings.api_v1_prefix)
     application.include_router(contract_signing_router.router, prefix=settings.api_v1_prefix)
     application.include_router(contracts_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(quotes_router.router, prefix=settings.api_v1_prefix)
     application.include_router(events_router.router, prefix=settings.api_v1_prefix)
     application.include_router(financial_router.router, prefix=settings.api_v1_prefix)
     application.include_router(catalog_router.router, prefix=settings.api_v1_prefix)
