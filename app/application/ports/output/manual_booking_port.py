@@ -41,6 +41,8 @@ class ManualBooking:
     contract_id: UUID | None = None
     contract_number: str | None = None
     pdf_path: str | None = None
+    client_id: UUID | None = None
+    event_code: str | None = None
 
 
 class IManualBookingStore(Protocol):
@@ -65,10 +67,12 @@ class IManualBookingStore(Protocol):
         event_id: UUID,
         contract_id: UUID,
         contract_number: str,
-        pdf_path: str,
+        pdf_path: str | None,
         window: TimeWindow,
         requirements: tuple[InventoryRequirementDTO, ...],
         override_reason: str | None = None,
+        *,
+        draft: bool = False,
     ) -> ManualBooking: ...
 
     async def list_recent(
