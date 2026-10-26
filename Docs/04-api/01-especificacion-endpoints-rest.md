@@ -1269,19 +1269,48 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 * **Descripción:** Indicadores clave (KPIs) del dashboard ejecutivo (RF-25): utilidad neta mensual comparada con meses anteriores, volumen de eventos por paquete y temática, ranking de extras y distribución por distrito. Solo considera eventos `SETTLED`.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Query Params:** `year=2026`, `month=10`, `compare_months=3` (cantidad de meses previos a comparar; por defecto `3`).
+* `year` y `month` son obligatorios: años `1..9998`, meses `1..12`.
+  `compare_months` admite `1..12`: tres meses previos más el seleccionado producen
+  cuatro puntos. Parámetros desconocidos y ventanas anteriores al año 1: `422`.
+* **Período y fuentes:** fecha local `events.event_date`, rangos `[inicio, fin)`.
+  La serie abarca toda la ventana; rankings y distribuciones, solo el mes seleccionado.
+  Ingreso y costos proceden de `event_financial_snapshots`, incluidos históricos
+  `LEGACY_BACKFILL`, conforme a RN-08. No se reconstruyen importes desde pagos o catálogo.
+* **Comparación:** `absolute_change` es actual menos anterior, con signo.
+  `percentage_change = (actual - anterior) / abs(anterior) * 100`, redondeado
+  con `Decimal`, `ROUND_HALF_UP` y dos decimales. Si anterior es cero: `0.00`
+  cuando actual también es cero; en otro caso, `null`. Se admiten pérdidas.
+* **Rankings:** paquetes y temáticas por eventos descendentes; extras por
+  `SUM(quote_extras.quantity)` descendente; distritos por utilidad descendente.
+  Desempates por nombre e identificador, o distrito. Se devuelven todas las categorías
+  con actividad, también las inactivas; nombres vigentes del catálogo. Sin temática:
+  `theme_id: null`, `name: "Sin temática"`. Las extensiones de duración no son extras.
+* **Sin actividad:** meses completos con utilidad cero y distribuciones vacías.
+* **Errores:** `401` (`invalid-credentials`, cuenta ausente o inactiva), `403`
+  (`forbidden`), `422` (`validation-error`), `409` (`financial-data-inconsistent`,
+  instantánea ausente o importes inválidos en cualquier mes de la ventana).
+  Todos usan `application/problem+json`; no se devuelve un dashboard parcial.
 * **Response `200 OK`:**
   ```json
   {
     "period": "2026-10",
     "net_profit_by_month": [
+      {"period": "2026-07", "net_profit": 9000.00},
       {"period": "2026-08", "net_profit": 9400.00},
       {"period": "2026-09", "net_profit": 10250.00},
       {"period": "2026-10", "net_profit": 11000.00}
     ],
+    "net_profit_comparison": {
+      "previous_period": "2026-09",
+      "current_net_profit": 11000.00,
+      "previous_net_profit": 10250.00,
+      "absolute_change": 750.00,
+      "percentage_change": 7.32
+    },
     "events_by_package": [{"package_id": "e4b2d5a1-...", "name": "Hora Loca Medium", "events": 11}],
     "events_by_theme": [{"theme_id": "t1-...", "name": "Selva", "events": 9}],
     "top_extras": [{"extra_id": "x1-...", "name": "Muñeco Gorila Gigante", "times_hired": 14}],
-    "events_by_district": [{"district": "Miraflores", "events": 7}]
+    "events_by_district": [{"district": "Miraflores", "events": 7, "net_profit": 3500.00}]
   }
   ```
 
