@@ -8,6 +8,11 @@ from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.dtos.quote_dto import (
+    BankTransferInstructionDTO,
+    PaymentInstructionsDTO,
+    WalletInstructionDTO,
+)
 from app.application.ports.input.client_read_port import IFindClientsPort, IGetClientPort
 from app.application.ports.input.event_extension_port import (
     IRegisterEventExtensionPort,
@@ -122,12 +127,14 @@ from app.application.use_cases.payment.list_payments import ListPaymentsUseCase
 from app.application.use_cases.payment.refund_payment import RefundPaymentUseCase
 from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
+from app.application.use_cases.quote.cancel_quote import CancelQuoteUseCase
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
 from app.application.use_cases.quote.create_quote import CreateQuoteUseCase
 from app.application.use_cases.quote.expire_due_quotes import ExpireDueQuotesUseCase
 from app.application.use_cases.quote.get_quote import GetQuoteUseCase
 from app.application.use_cases.quote.list_quotes import ListQuotesUseCase
 from app.application.use_cases.quote.override_mobility import OverrideQuoteMobilityUseCase
+from app.application.use_cases.quote.pay_advance import PayAdvanceUseCase
 from app.application.use_cases.quote.prepare_budget import PrepareBudgetUseCase
 from app.application.use_cases.quote.refund_manual_booking import RefundManualBookingUseCase
 from app.application.use_cases.quote.register_manual_booking import RegisterManualBookingUseCase
@@ -174,11 +181,6 @@ from app.infrastructure.adapters.secondary.external_services.chatwoot.chatwoot_m
 )
 from app.infrastructure.adapters.secondary.external_services.fake_messaging_adapter import (
     FakeMessagingAdapter,
-)
-from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
-    FakeCancelQuote,
-    FakePayAdvance,
-    FakeQuoteStore,
 )
 from app.infrastructure.adapters.secondary.external_services.fake_route_estimator_adapter import (
     FakeRouteEstimatorAdapter,
@@ -1081,11 +1083,6 @@ def get_refund_manual_booking_use_case(
 # cambios no choquen en el mismo fragmento del archivo.
 
 
-@lru_cache
-def get_fake_quote_store() -> FakeQuoteStore:
-    return FakeQuoteStore()
-
-
 # --- E1 contrato: cotizacion (Brenis) ---
 
 
@@ -1138,14 +1135,42 @@ def get_expire_due_quotes_use_case(session: AsyncSession) -> IExpireDueQuotesPor
 # --- E1 contrato: cotizacion (Christian) ---
 
 
-@lru_cache
-def get_pay_advance_use_case() -> IPayAdvancePort:
-    return FakePayAdvance(get_fake_quote_store(), clock=get_clock_port())
+def _payment_instructions() -> PaymentInstructionsDTO:
+    settings = get_settings()
+    holder = settings.payment_account_holder
+    return PaymentInstructionsDTO(
+        yape=WalletInstructionDTO(phone=settings.payment_yape_number, holder=holder),
+        plin=WalletInstructionDTO(phone=settings.payment_plin_number, holder=holder),
+        bank_transfer=BankTransferInstructionDTO(
+            bank=settings.payment_bank_name,
+            account=settings.payment_bank_account,
+            cci=settings.payment_bank_cci,
+            holder=holder,
+        ),
+    )
 
 
-@lru_cache
-def get_cancel_quote_use_case() -> ICancelQuotePort:
-    return FakeCancelQuote(get_fake_quote_store(), clock=get_clock_port())
+def build_pay_advance_use_case(session: AsyncSession) -> IPayAdvancePort:
+    return PayAdvanceUseCase(
+        get_quote_repository(session),
+        get_catalog_read_port(session),
+        get_availability_port(session),
+        get_clock_port(),
+        _payment_instructions(),
+        recheck_minutes=get_settings().availability_recheck_minutes,
+    )
+
+
+def get_pay_advance_use_case(
+    session: Annotated[AsyncSession, Depends(get_quote_write_session, scope="function")],
+) -> IPayAdvancePort:
+    return build_pay_advance_use_case(session)
+
+
+def get_cancel_quote_use_case(
+    session: Annotated[AsyncSession, Depends(get_quote_write_session, scope="function")],
+) -> ICancelQuotePort:
+    return CancelQuoteUseCase(get_quote_repository(session))
 
 
 # --- E1 contrato: cotizacion (Nicolas) ---
@@ -1179,13 +1204,12 @@ def get_bot_lock() -> ICacheLockPort:
 def build_bot_transaction(session: AsyncSession) -> BotTransaction:
     """Casos de uso del bot sobre la sesión de un turno (spec 08, sección 6, pregunta 5).
 
-    CreateQuote real y EnqueueMessage comparten sesión y commit de la unidad de trabajo.
-    PayAdvance conserva la implementación de Christian; su integración no cambia este puerto.
+    CreateQuote, PayAdvance y EnqueueMessage comparten sesión y commit de la unidad de trabajo.
     """
 
     return BotTransaction(
         create_quote=build_create_quote_use_case(session),
-        pay_advance=get_pay_advance_use_case(),
+        pay_advance=build_pay_advance_use_case(session),
         enqueue_message=get_enqueue_message_use_case(session),
         catalog=get_catalog_read_port(session),
         conversation_links=sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(

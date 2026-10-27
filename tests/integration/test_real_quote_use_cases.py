@@ -5,7 +5,7 @@ from decimal import Decimal
 from functools import lru_cache
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
@@ -13,10 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.application.dtos.availability_dto import AvailabilityResult, AvailabilityStatus
+from app.application.dtos.quote_dto import (
+    BankTransferInstructionDTO,
+    PaymentInstructionsDTO,
+    WalletInstructionDTO,
+)
+from app.application.use_cases.quote.cancel_quote import CancelQuoteUseCase
 from app.application.use_cases.quote.create_quote import CreateQuoteUseCase
 from app.application.use_cases.quote.expire_due_quotes import ExpireDueQuotesUseCase
 from app.application.use_cases.quote.get_quote import GetQuoteUseCase
 from app.application.use_cases.quote.list_quotes import ListQuotesUseCase
+from app.application.use_cases.quote.pay_advance import PayAdvanceUseCase
 from app.domain.entities.quote import QuoteStatus
 from app.domain.exceptions.quote_exceptions import RouteEstimationError
 from app.domain.exceptions.resource_exceptions import ValidationError
@@ -49,10 +56,12 @@ from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_q
 )
 from tests.application.quote_ports_contract import (
     PACKAGE_ID,
+    CancelQuoteContract,
     CreateQuoteContract,
     ExpireDueQuotesContract,
     GetQuoteContract,
     ListQuotesContract,
+    PayAdvanceContract,
     create_input,
 )
 from tests.domain.financial_support import default_engine
@@ -314,6 +323,41 @@ class TestRealExpireQuotes(RealHooks, ExpireDueQuotesContract):
         assert job.minute is None
 
 
+class TestRealPayAdvance(RealHooks, PayAdvanceContract):
+    def make_port(self):
+        return PayAdvanceUseCase(
+            self.repository,
+            SqlAlchemyCatalogReadRepository(self.session),
+            self.availability,
+            self.clock,
+            PaymentInstructionsDTO(
+                yape=WalletInstructionDTO(phone="900000000", holder="Titular"),
+                plin=WalletInstructionDTO(phone="900000000", holder="Titular"),
+                bank_transfer=BankTransferInstructionDTO(
+                    bank="Banco",
+                    account="000-00000000-0-00",
+                    cci="00000000000000000000",
+                    holder="Titular",
+                ),
+            ),
+            recheck_minutes=60,
+        )
+
+    def arrange(self, port, scenario):
+        # El contrato siembra una cotización recién enviada; para forzar la revalidación
+        # en los escenarios de disponibilidad se adelanta la ventana de comprobación.
+        if scenario in (FakeScenario.AVAILABILITY_CONFLICT, FakeScenario.SIMULTANEOUS_THRESHOLD):
+            port._recheck_minutes = -1
+        else:
+            port._recheck_minutes = 60
+        super().arrange(port, scenario)
+
+
+class TestRealCancelQuote(RealHooks, CancelQuoteContract):
+    def make_port(self):
+        return CancelQuoteUseCase(self.repository)
+
+
 class TestQuoteHttp(RealHooks):
     @pytest.fixture
     async def http(self, monkeypatch):
@@ -394,6 +438,64 @@ class TestQuoteHttp(RealHooks):
         assert response.status_code == 409
         assert response.json()["handoff_available"] is True
         assert response.json()["alternatives"]
+
+    async def test_pay_advance_and_cancel_http_flow(self, http):
+        created = await http.post("/api/v1/quotes", json=self.payload())
+        assert created.status_code == 201, created.text
+        quote_id = created.json()["quote_id"]
+        paid = await http.post(f"/api/v1/quotes/{quote_id}/pay-advance")
+        assert paid.status_code == 200, paid.text
+        body = paid.json()
+        assert body["status"] == "PAYMENT_STARTED"
+        assert body["rechecked"] is False
+        assert body["payment_instructions"]["yape"]["phone"] == "900000000"
+        assert body["payment_instructions"]["bank_transfer"]["cci"] == "00000000000000000000"
+        again = await http.post(f"/api/v1/quotes/{quote_id}/pay-advance")
+        assert again.status_code == 200
+        assert again.json()["payment_deadline"] == body["payment_deadline"]
+        cancelled = await http.post(
+            f"/api/v1/quotes/{quote_id}/cancel", json={"reason": "Cliente desistió"}
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["status"] == "CANCELLED"
+        repeated = await http.post(f"/api/v1/quotes/{quote_id}/cancel")
+        assert repeated.status_code == 409
+        assert repeated.json()["type"].endswith("invalid-quote-state")
+        with Session(self.sync) as session:
+            assert session.get(QuoteModel, UUID(quote_id)).status == "CANCELLED"
+
+    async def test_pay_advance_rechecks_availability_and_hides_payment_data(self, http):
+        created = await http.post("/api/v1/quotes", json=self.payload())
+        quote_id = created.json()["quote_id"]
+        with self.sync.begin() as conn:
+            conn.execute(
+                text("UPDATE quotes SET sent_at = sent_at - interval '90 minutes' WHERE id=:id"),
+                {"id": quote_id},
+            )
+        self.arrange(None, FakeScenario.AVAILABILITY_CONFLICT)
+        response = await http.post(f"/api/v1/quotes/{quote_id}/pay-advance")
+        assert response.status_code == 409, response.text
+        problem = response.json()
+        assert problem["alternatives"]
+        assert problem["handoff_available"] is True
+        assert "payment_instructions" not in problem
+        self.arrange(None, FakeScenario.OK)
+        paid = await http.post(f"/api/v1/quotes/{quote_id}/pay-advance")
+        assert paid.status_code == 200, paid.text
+        assert paid.json()["status"] == "PAYMENT_STARTED"
+        assert paid.json()["rechecked"] is True
+
+    async def test_lifecycle_endpoints_require_manager_role(self, http):
+        from app.domain.value_objects.role import Role
+        from app.infrastructure.adapters.primary.web.deps import AuthContext
+
+        self.auth = AuthContext(self.user_id, Role.OPERADOR)
+        unknown = uuid4()
+        assert (await http.post(f"/api/v1/quotes/{unknown}/pay-advance")).status_code == 403
+        assert (await http.post(f"/api/v1/quotes/{unknown}/cancel")).status_code == 403
+        self.auth = AuthContext(self.user_id, Role.ENCARGADO)
+        assert (await http.post(f"/api/v1/quotes/{unknown}/pay-advance")).status_code == 404
+        assert (await http.post(f"/api/v1/quotes/{unknown}/cancel")).status_code == 404
 
     async def test_http_rollback_after_persistence_failure(self, http, monkeypatch):
         original = SqlAlchemyQuoteRepository.add
