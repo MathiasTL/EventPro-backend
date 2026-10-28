@@ -31,8 +31,17 @@ services:
 
   # En el servidor, la API solo debe ser alcanzable a traves de Caddy (que bloquea el webhook
   # interno de Chatwoot). Se retira la publicacion del puerto 8000 del compose base.
+  #
+  # IP real del cliente: Uvicorn solo confia en 127.0.0.1 por defecto, asi que sin esto
+  # `request.client.host` seria la IP de Caddy y los limites por IP (login, cotizaciones, firma)
+  # serian globales. Se confia solo en el rango privado de Docker (172.16.0.0/12, donde cae
+  # `eventpro_network`); como el puerto no se publica, unicamente contenedores de esa red
+  # (Caddy) llegan a la API. Caddy sobrescribe X-Forwarded-For con la IP que ve (no tiene
+  # `trusted_proxies`), por lo que un cliente no puede falsearla.
   api:
     ports: !reset []
+    environment:
+      FORWARDED_ALLOW_IPS: "172.16.0.0/12"
 
 volumes:
   caddy_data:

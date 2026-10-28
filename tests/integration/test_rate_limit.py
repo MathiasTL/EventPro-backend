@@ -36,8 +36,12 @@ async def test_rate_limit_resets_between_tests(infra: None) -> None:
     assert response.status_code == 401
 
 
-async def test_signature_otp_limit_uses_redis_per_ip(infra: None, monkeypatch) -> None:
-    from app.infrastructure.adapters.primary.web.rate_limit import limiter
-    from tests.unit.test_signature_rate_limit import assert_otp_limit
+async def test_signature_limits_use_redis_per_ip(infra: None) -> None:
+    from tests.rate_limit_support import OTP_VERIFY, assert_blocked_after_limit, signing_app
 
-    await assert_otp_limit(monkeypatch, limiter._storage)
+    # `_reset_rate_limit` ya enlaza el limiter al Redis real de la sesión.
+    app, service = signing_app()
+
+    await assert_blocked_after_limit(app, OTP_VERIFY)
+
+    assert service.verify_otp.await_count == OTP_VERIFY.limit + 1

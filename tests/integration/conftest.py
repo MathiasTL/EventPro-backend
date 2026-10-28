@@ -60,17 +60,16 @@ def database_url() -> str:
 def _reset_rate_limit(infra: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Aísla el limiter de slowapi (compartido por IP 'testclient' en todo el proceso)."""
     from limits.storage import storage_from_string
-    from limits.strategies import FixedWindowRateLimiter
 
     from app.infrastructure.adapters.primary.web.rate_limit import limiter
+    from tests.rate_limit_support import bind_storage
 
     # El módulo puede importarse antes de que infra exporte el puerto aleatorio.
     # Reenlazar el singleton conserva los decoradores y evita tocar el Redis local.
     settings = get_settings()
-    storage = storage_from_string(f"redis://{settings.redis_host}:{settings.redis_port}/0")
-    monkeypatch.setattr(limiter, "_storage", storage)
-    monkeypatch.setattr(limiter, "_limiter", FixedWindowRateLimiter(storage))
-    monkeypatch.setattr(limiter, "_storage_dead", False)
+    bind_storage(
+        monkeypatch, storage_from_string(f"redis://{settings.redis_host}:{settings.redis_port}/0")
+    )
 
     limiter.reset()
     yield

@@ -50,7 +50,7 @@ def error(exc: SignatureError) -> ProblemError:
 
 
 @router.get("/{token}")
-@limiter.shared_limit("30/minute", scope="signature-view")
+@limiter.shared_limit("30/minute", scope="signature-read")
 async def view_contract(request: Request, token: str, use_case: UseCase) -> JSONResponse:
     try:
         contract, data = await use_case.resolve(token)
@@ -83,7 +83,7 @@ async def view_contract(request: Request, token: str, use_case: UseCase) -> JSON
 
 
 @router.get("/{token}/pdf")
-@limiter.shared_limit("30/minute", scope="signature-pdf")
+@limiter.shared_limit("30/minute", scope="signature-read")
 async def public_pdf(request: Request, token: str, use_case: UseCase) -> Response:
     try:
         return Response(
