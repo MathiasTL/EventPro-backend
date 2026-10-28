@@ -417,6 +417,36 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
   * **Cuando** selecciona el mes actual,
   * **Entonces** el panel carga gráficos interactivos mostrando la comparación de rentabilidad vs. mes anterior y el ranking de extras contratados.
 
+**Contrato backend US-22:** `GET /api/v1/reports/dashboard` requiere cuenta activa
+`ENCARGADO` o `SUPERADMIN`, `year=1..9998`, `month=1..12` y admite
+`compare_months=1..12` (por defecto `3`, meses previos además del seleccionado).
+La utilidad usa las instantáneas de US-21; solo participan eventos `SETTLED`
+por fecha local del servicio. El frontend consume estos datos para sus gráficos.
+
+**Criterios verificables adicionales:**
+
+* **Dado** un período válido, **cuando** se consulta con tres meses de comparación,
+  **entonces** se obtienen cuatro meses consecutivos en orden cronológico,
+  comparación contra el mes inmediatamente anterior y rankings solo del mes elegido.
+* **Dado** un mes sin eventos liquidados, **cuando** se consulta,
+  **entonces** su utilidad es cero y sus distribuciones son listas vacías.
+* **Dado** un evento con varios extras, **cuando** se agregan los indicadores,
+  **entonces** no se duplican ingresos, costos ni conteos de eventos; el ranking
+  de extras suma sus cantidades contratadas.
+* **Dada** utilidad anterior cero, **cuando** se calcula la variación,
+  **entonces** se devuelve cero si la actual también es cero, o `null` en otro caso.
+  Para bases distintas de cero se divide la diferencia entre el valor absoluto anterior.
+* **Dado** un evento liquidado sin instantánea dentro de la ventana,
+  **cuando** se consulta, **entonces** se devuelve `409 financial-data-inconsistent`
+  sin dashboard parcial. Parámetros inválidos: `422`; sin sesión: `401`;
+  rol insuficiente: `403`, todos con Problem Details.
+
+La respuesta conserva series y distribuciones de RF-25 y agrega
+`net_profit_comparison` y `events_by_district[].net_profit`. Los extras se ordenan
+por unidades y los distritos por utilidad; se incluyen categorías inactivas con
+actividad y el grupo `theme_id: null`, `name: "Sin temática"` cuando corresponda.
+No requiere migración posterior a `0009_inbox_support`.
+
 ---
 
 ## 9. Épica 8: Administración de la Plataforma

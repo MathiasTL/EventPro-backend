@@ -96,6 +96,7 @@ class QuoteModel(Base):
     )
     manual_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     observations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     extras: Mapped[list["QuoteExtraModel"]] = relationship(
         lazy="selectin",

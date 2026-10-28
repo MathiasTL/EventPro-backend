@@ -124,6 +124,17 @@ La reconstrucción histórica usa costos vigentes al migrar, marcada
 utilidad y margen con `Decimal`, `ROUND_HALF_UP` y dos decimales. Las pérdidas son
 válidas; con ingreso cero el margen es `0.00`. No hay cierre programado en US-21.
 
+**Dashboard US-22 (RF-25):** reutiliza las instantáneas y el cálculo de utilidad
+de US-21, solo para eventos `SETTLED` según `events.event_date`. La comparación
+mensual usa `(utilidad_actual - utilidad_anterior) / abs(utilidad_anterior) * 100`,
+con `Decimal`, `ROUND_HALF_UP` y dos decimales. Si ambas utilidades son cero,
+la variación es `0.00`; si solo la anterior es cero, es `null`. Las pérdidas
+son válidas y la diferencia monetaria conserva su signo.
+El ranking de extras suma unidades cotizadas, no extensiones de duración ni
+cantidad de pagos. La utilidad por distrito agrega los mismos importes congelados.
+No se descuentan nuevamente elencos ni costos del catálogo vigente. Una instantánea
+ausente o inválida en cualquier mes solicitado impide devolver resultados parciales.
+
 ---
 
 ### RN-09: Plazo del Adelanto, Vigencia de la Cotización y Revalidación de Disponibilidad

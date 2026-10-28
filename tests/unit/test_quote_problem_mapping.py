@@ -8,6 +8,7 @@ from app.domain.exceptions.quote_exceptions import (
     AvailabilityConflictError,
     ClientNotFoundError,
     InvalidQuoteStateError,
+    PaymentUnderReviewError,
     QuoteExpiredError,
     QuoteNotFoundError,
     SimultaneousThresholdExceededError,
@@ -32,6 +33,13 @@ def test_quote_expired_maps_to_410() -> None:
     assert problem.status == 410
     assert problem.suffix == "quote-expired"
     assert problem.title == "Recurso expirado"
+
+
+def test_payment_under_review_maps_to_409() -> None:
+    problem = quote_error_to_problem(PaymentUnderReviewError("Hay un pago en verificación."))
+    assert problem.status == 409
+    assert problem.suffix == "payment-under-review"
+    assert problem.title == "Conflicto"
 
 
 def test_problem_json_is_rendered_by_the_installed_handler() -> None:

@@ -194,6 +194,7 @@ Registra las solicitudes de cotización generadas por WhatsApp o por panel admin
 | `status` | `VARCHAR(30)` | NO | `'SENT'` | CHECK in (`SENT`, `PAYMENT_STARTED`, `CONVERTED`, `EXPIRED`, `CANCELLED`) | Estado de la cotización (ver RN, sección 3.1). |
 | `sent_at` | `TIMESTAMPTZ` | NO | - | - | Momento de envío al cliente; inicia el plazo del adelanto y el cómputo de `AVAILABILITY_RECHECK_MINUTES`. |
 | `expires_at` | `TIMESTAMPTZ` | NO | - | INDEX | `sent_at` + `ADVANCE_DEADLINE_HOURS`; al vencer sin comprobante la cotización pasa a `EXPIRED`. |
+| `cancellation_reason` | `TEXT` | SÍ | `NULL` | - | Motivo de la cancelación manual (`CANCELLED`). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de generación. |
 
 *Restricciones de tabla:*

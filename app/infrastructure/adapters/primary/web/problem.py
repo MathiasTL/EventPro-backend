@@ -11,6 +11,7 @@ from app.domain.exceptions.quote_exceptions import (
     AvailabilityRejectedError,
     ClientNotFoundError,
     InvalidQuoteStateError,
+    PaymentUnderReviewError,
     QuoteExpiredError,
     QuoteNotFoundError,
     SimultaneousThresholdExceededError,
@@ -72,6 +73,7 @@ QuoteContractError = (
     | SimultaneousThresholdExceededError
     | QuoteExpiredError
     | InvalidQuoteStateError
+    | PaymentUnderReviewError
     | QuoteNotFoundError
     | ClientNotFoundError
     | ValidationError
@@ -83,9 +85,9 @@ _AVAILABILITY_TITLE = "Sin disponibilidad para la fecha y el horario"
 def quote_error_to_problem(exc: QuoteContractError) -> ProblemError:
     """Traduce los errores del contrato de cotización a su problema HTTP.
 
-    Disponibilidad y estado inválido: 409; vencida: 410; cotización o cliente inexistente:
-    404 (``not-found``); validación: 422. Los errores de disponibilidad añaden las
-    extensiones ``alternatives`` y ``handoff_available``.
+    Disponibilidad, estado inválido y pago en verificación: 409; vencida: 410; cotización o
+    cliente inexistente: 404 (``not-found``); validación: 422. Los errores de disponibilidad
+    añaden las extensiones ``alternatives`` y ``handoff_available``.
     """
 
     if isinstance(exc, AvailabilityRejectedError):
