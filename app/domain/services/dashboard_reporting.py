@@ -56,7 +56,18 @@ class DashboardReportingService:
                 previous.period, current.net_profit, previous.net_profit, change, percentage
             ),
             tuple(sorted(data.packages, key=lambda row: (-row.events, row.name, row.package_id))),
-            tuple(sorted(data.themes, key=lambda row: (-row.events, row.name, str(row.theme_id)))),
+            # Sin temática (theme_id None) va al final de cada empate, sin comparar etiquetas.
+            tuple(
+                sorted(
+                    data.themes,
+                    key=lambda row: (
+                        -row.events,
+                        row.theme_id is None,
+                        row.name or "",
+                        str(row.theme_id),
+                    ),
+                )
+            ),
             tuple(sorted(data.extras, key=lambda row: (-row.times_hired, row.name, row.extra_id))),
             districts,
         )

@@ -85,19 +85,22 @@ def dashboard_statement(window: DashboardWindow) -> Select[Any]:
     )
     current = select(base).where(base.c.event_date >= window.current.start).cte("current_events")
 
-    def totals() -> list[ColumnElement[Any]]:
+    def totals(source: Any = base) -> list[ColumnElement[Any]]:
         return [
             func.count().label("events"),
-            *(cast(func.sum(base.c[name]), String).label(name) for name in _AMOUNTS),
+            *(cast(func.sum(source.c[name]), String).label(name) for name in _AMOUNTS),
         ]
 
     month = func.date_trunc("month", base.c.event_date)
     monthly = select(func.to_char(month, "YYYY-MM").label("period"), *totals()).group_by(month)
     # Las sumas financieras siempre parten de una fila por evento, sin unir extras.
+    # Clave normalizada (espacios recortados y colapsados, sin distinguir mayúsculas); el nombre
+    # mostrado es la variante más frecuente del grupo (empate: la menor), con su capitalización.
+    cleaned = func.trim(func.regexp_replace(current.c.district, r"\s+", " ", "g"))
     districts = (
-        select(base.c.district, *totals())
-        .where(base.c.event_date >= window.current.start)
-        .group_by(base.c.district)
+        select(func.mode().within_group(cleaned).label("district"), *totals(current))
+        .select_from(current)
+        .group_by(func.lower(cleaned))
     )
     packages = (
         select(PackageModel.id.label("id"), PackageModel.name, func.count().label("events"))
@@ -109,7 +112,7 @@ def dashboard_statement(window: DashboardWindow) -> Select[Any]:
     themes = (
         select(
             ThemeModel.id.label("id"),
-            func.coalesce(ThemeModel.name, "Sin temática").label("name"),
+            ThemeModel.name.label("name"),
             func.count().label("events"),
         )
         .select_from(current)
@@ -134,13 +137,22 @@ def dashboard_statement(window: DashboardWindow) -> Select[Any]:
             for name in _AMOUNTS
         )
     )
+    missing_filter = base.c.snapshot_id.is_(None)
     return select(
         select(func.count())
         .select_from(base)
-        .where(base.c.snapshot_id.is_(None))
+        .where(missing_filter)
         .scalar_subquery()
         .label("missing"),
+        select(func.array_agg(base.c.id))
+        .where(missing_filter)
+        .scalar_subquery()
+        .label("missing_event_ids"),
         select(func.count()).select_from(base).where(invalid).scalar_subquery().label("invalid"),
+        select(func.array_agg(base.c.id))
+        .where(invalid)
+        .scalar_subquery()
+        .label("invalid_event_ids"),
         _collection(monthly).label("months"),
         _collection(packages).label("packages"),
         _collection(themes).label("themes"),
@@ -166,6 +178,8 @@ class SqlAlchemyDashboardRepository:
                 period=window.current.label,
                 missing_snapshots=row.missing,
                 invalid_snapshots=row.invalid,
+                missing_event_ids=sorted(str(event_id) for event_id in row.missing_event_ids or ()),
+                invalid_event_ids=sorted(str(event_id) for event_id in row.invalid_event_ids or ()),
             )
             raise FinancialDataInconsistentError(
                 "Existen eventos liquidados sin instantánea o con importes contables inválidos."

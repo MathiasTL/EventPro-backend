@@ -53,7 +53,7 @@ class PackageMetric:
 @dataclass(frozen=True)
 class ThemeMetric:
     theme_id: UUID | None
-    name: str
+    name: str | None
     events: int
 
 

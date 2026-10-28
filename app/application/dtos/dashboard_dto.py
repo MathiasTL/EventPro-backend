@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from decimal import Decimal
-
-from app.domain.value_objects.dashboard import ExtraRanking, PackageMetric, ThemeMetric
+from uuid import UUID
 
 
 @dataclass(frozen=True)
@@ -34,11 +33,32 @@ class DistrictMetricDTO:
 
 
 @dataclass(frozen=True)
+class PackageMetricDTO:
+    package_id: UUID
+    name: str
+    events: int
+
+
+@dataclass(frozen=True)
+class ThemeMetricDTO:
+    theme_id: UUID | None
+    name: str
+    events: int
+
+
+@dataclass(frozen=True)
+class ExtraRankingDTO:
+    extra_id: UUID
+    name: str
+    times_hired: int
+
+
+@dataclass(frozen=True)
 class ExecutiveDashboardDTO:
     period: str
     net_profit_by_month: tuple[MonthlyProfitDTO, ...]
     net_profit_comparison: ProfitComparisonDTO
-    events_by_package: tuple[PackageMetric, ...]
-    events_by_theme: tuple[ThemeMetric, ...]
-    top_extras: tuple[ExtraRanking, ...]
+    events_by_package: tuple[PackageMetricDTO, ...]
+    events_by_theme: tuple[ThemeMetricDTO, ...]
+    top_extras: tuple[ExtraRankingDTO, ...]
     events_by_district: tuple[DistrictMetricDTO, ...]

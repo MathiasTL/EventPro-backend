@@ -55,3 +55,20 @@ async def test_inconsistent_data_is_propagated():
     port.error = FinancialDataInconsistentError("Missing snapshot")
     with pytest.raises(FinancialDataInconsistentError):
         await GetExecutiveDashboardUseCase(port).execute(ExecutiveDashboardRequest(2026, 10))
+
+
+async def test_untagged_theme_label_is_resolved_in_application_layer():
+    theme = uuid4()
+    port = DashboardReadPort(
+        DashboardReadData(
+            packages=(PackageMetric(uuid4(), "Paquete", 1),),
+            themes=(ThemeMetric(None, None, 1), ThemeMetric(theme, "Sin temática", 1)),
+        )
+    )
+    result = await GetExecutiveDashboardUseCase(port).execute(ExecutiveDashboardRequest(2026, 10))
+    assert [(row.theme_id, row.name) for row in result.events_by_theme] == [
+        (theme, "Sin temática"),
+        (None, "Sin temática"),
+    ]
+    assert type(result.events_by_package[0]).__module__ == "app.application.dtos.dashboard_dto"
+    assert type(result.events_by_theme[0]).__module__ == "app.application.dtos.dashboard_dto"

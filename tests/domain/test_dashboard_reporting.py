@@ -107,13 +107,17 @@ def test_rankings_are_deterministic_and_immutable():
     first, second = UUID(int=1), UUID(int=2)
     data = DashboardReadData(
         packages=(PackageMetric(second, "A", 2), PackageMetric(first, "A", 2)),
-        themes=(ThemeMetric(None, "Sin temática", 1), ThemeMetric(first, "Selva", 2)),
+        themes=(
+            ThemeMetric(None, None, 1),
+            ThemeMetric(second, "Zeta", 1),
+            ThemeMetric(first, "Selva", 2),
+        ),
         extras=(ExtraRanking(second, "B", 3), ExtraRanking(first, "A", 3)),
         districts=(DistrictTotals("A", totals("-2")), DistrictTotals("B", totals("50"))),
     )
     result = DashboardReportingService.build(DashboardWindow.create(2026, 10), data)
     assert result.events_by_package[0].package_id == first
-    assert result.events_by_theme[0].theme_id == first
+    assert [row.theme_id for row in result.events_by_theme] == [first, second, None]
     assert result.top_extras[0].extra_id == first
     assert result.events_by_district[0].district == "B"
     with pytest.raises(FrozenInstanceError):

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import delete, text, update
 from sqlalchemy import event as sql_event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 from testcontainers.community.postgres import PostgresContainer
 
 from app.application.dtos.dashboard_dto import ExecutiveDashboardRequest
@@ -341,3 +342,52 @@ async def test_api_real_repository_and_fresh_rbac(db, catalog):
             ).status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_districts_group_by_normalized_name(db, catalog):
+    session, _ = db
+    for name in ("Miraflores", "miraflores ", " MIRAFLORES", "Miraflores\t"):
+        event, _ = await seed(session, catalog)
+        event.district = name
+    other, _ = await seed(session, catalog)
+    other.district = "San  Juan de Lurigancho"
+    await session.flush()
+    result = await report(session)
+    assert [(row.district, row.events, row.net_profit) for row in result.events_by_district] == [
+        ("Miraflores", 4, Decimal("1800.00")),
+        ("San Juan de Lurigancho", 1, Decimal("450.00")),
+    ]
+
+
+async def test_untagged_theme_is_distinct_from_theme_named_sin_tematica(db, catalog):
+    session, _ = db
+    package, _, gorilla, dj, client = catalog
+    homonym = ThemeModel(name="Sin temática")
+    session.add(homonym)
+    await session.flush()
+    await seed(session, (package, homonym, gorilla, dj, client))
+    await seed(session, catalog, with_theme=False)
+    repository = SqlAlchemyDashboardRepository(session)
+    data = await repository.get_dashboard(DashboardWindow.create(2026, 10))
+    assert {(row.theme_id, row.name) for row in data.themes} == {
+        (homonym.id, "Sin temática"),
+        (None, None),
+    }
+    result = await report(session)
+    assert [(row.theme_id, row.name) for row in result.events_by_theme] == [
+        (homonym.id, "Sin temática"),
+        (None, "Sin temática"),
+    ]
+
+
+async def test_inconsistency_log_includes_offending_event_ids(db, catalog):
+    session, _ = db
+    first, _ = await seed(session, catalog, snapshot=False)
+    second, _ = await seed(session, catalog, snapshot=False)
+    await seed(session, catalog)
+    with capture_logs() as logs, pytest.raises(FinancialDataInconsistentError):
+        await report(session)
+    (entry,) = [row for row in logs if row["event"] == "dashboard_data_inconsistent"]
+    assert entry["missing_snapshots"] == 2
+    assert entry["missing_event_ids"] == sorted([str(first.id), str(second.id)])
+    assert entry["invalid_event_ids"] == []

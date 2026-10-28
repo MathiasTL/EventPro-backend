@@ -78,7 +78,7 @@ async def test_nullable_percentage_theme_and_numeric_money(setup):
     app, port = setup
     port.data = DashboardReadData(
         months=(MonthlyTotals("2026-10", totals("-12.35")),),
-        themes=(ThemeMetric(None, "Sin temática", 1),),
+        themes=(ThemeMetric(None, None, 1),),
     )
     response = await get(app, {"year": 2026, "month": 10, "compare_months": 1}, auth())
     assert response.status_code == 200
