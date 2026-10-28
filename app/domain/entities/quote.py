@@ -84,7 +84,7 @@ class Quote:
     status: QuoteStatus = QuoteStatus.SENT
     manual_request_hash: str | None = None
     observations: str | None = None
-    # Motivo de la cancelación: solo vive en memoria (no hay columna; lo audita el caso de uso).
+    # Motivo de la cancelación (columna ``quotes.cancellation_reason``).
     cancellation_reason: str | None = None
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

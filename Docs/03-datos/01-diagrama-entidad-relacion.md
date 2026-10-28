@@ -182,6 +182,7 @@ erDiagram
         varchar(30) status "default 'SENT'; CHECK in (SENT, PAYMENT_STARTED, CONVERTED, EXPIRED, CANCELLED)"
         timestamptz sent_at
         timestamptz expires_at "INDEX"
+        text cancellation_reason "NULL"
         timestamptz created_at "default CURRENT_TIMESTAMP"
     }
 

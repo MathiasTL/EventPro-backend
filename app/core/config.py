@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # --- Cotización y movilidad (E1, valores aprobados por el negocio, RN-03) ---
     advance_deadline_hours: int = Field(default=24, gt=0)
+    # Ventana tras el envío a partir de la cual «Pagar adelanto» revalida disponibilidad (US-07).
+    availability_recheck_minutes: int = Field(default=60, gt=0)
     promotora_base_latitude: Decimal = Field(default=Decimal("-12.0864"), ge=-90, le=90)
     promotora_base_longitude: Decimal = Field(default=Decimal("-77.0328"), ge=-180, le=180)
     mobility_rate_per_km: Decimal = Field(default=Decimal("1.00"), ge=0, decimal_places=2)
@@ -100,6 +102,14 @@ class Settings(BaseSettings):
     # --- Almacenamiento de comprobantes/evidencias (E5) ---
     storage_backend: str = "local"
     local_storage_path: str = "./uploads"
+
+    # --- Instrucciones de pago del adelanto (E1/E5, US-07); revisión de Diego ---
+    payment_yape_number: str = "900000000"
+    payment_plin_number: str = "900000000"
+    payment_bank_name: str = "Banco de ejemplo"
+    payment_bank_account: str = "000-00000000-0-00"
+    payment_bank_cci: str = "00000000000000000000"
+    payment_account_holder: str = "Nombre del titular"
 
     # --- Contratos (E2); enlace web, no la URL de la API ---
     contract_frontend_url: str = "http://localhost:3000"

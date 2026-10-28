@@ -43,10 +43,10 @@ from app.domain.entities.quote import QuoteSource, QuoteStatus
 from app.domain.exceptions.quote_exceptions import (
     AvailabilityRejectedError,
     InvalidQuoteStateError,
+    PaymentUnderReviewError,
     QuoteExpiredError,
-    QuoteNotFoundError,
 )
-from app.domain.exceptions.resource_exceptions import ValidationError
+from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
 from app.domain.value_objects.outbox import MessageType
 
 MAX_TOOL_ITERATIONS = 5
@@ -283,21 +283,7 @@ class ConversationAgent:
                 await link_created_quote(tx, message.conversation_id, quote, self._clock.utcnow())
                 await _enqueue(tx, message, texts.quote_summary(summary_session, quote))
         except AvailabilityRejectedError as error:
-            return _ToolOutcome(
-                {
-                    "ok": False,
-                    "error": "availability_rejected",
-                    "message": str(error),
-                    "alternatives": [
-                        {
-                            "date": alternative.event_date.isoformat(),
-                            "time": f"{alternative.event_time:%H:%M}",
-                        }
-                        for alternative in error.alternatives
-                    ],
-                    "handoff_available": error.handoff_available,
-                }
-            )
+            return _availability_outcome(error)
         except _BadArguments as error:
             return _ToolOutcome({"ok": False, "error": "validation", "message": str(error)})
         except ValidationError as error:
@@ -373,7 +359,15 @@ class ConversationAgent:
                 await _enqueue(tx, message, texts.payment_instructions(result))
         except QuoteExpiredError:
             return _ToolOutcome({"ok": False, "error": "quote_expired"})
-        except (InvalidQuoteStateError, QuoteNotFoundError):
+        except PaymentUnderReviewError:
+            return _ToolOutcome({"ok": False, "error": "payment_under_review"})
+        except AvailabilityRejectedError as error:
+            # Cupo ocupado o aprobación manual al revalidar: la transacción se revirtió, no se
+            # encoló nada y el agente puede ofrecer las alternativas.
+            return _availability_outcome(error)
+        except (InvalidQuoteStateError, ResourceNotFoundError):
+            # ``QuoteNotFoundError`` es un ``ResourceNotFoundError``; también cubre el paquete
+            # que ya no está disponible.
             return _ToolOutcome({"ok": False, "error": "quote_unavailable"})
         session.payment_started = True
         return _ToolOutcome(
@@ -427,6 +421,24 @@ def _parse_arguments(raw: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise _BadArguments("Los argumentos deben ser un objeto JSON.")
     return parsed
+
+
+def _availability_outcome(error: AvailabilityRejectedError) -> _ToolOutcome:
+    return _ToolOutcome(
+        {
+            "ok": False,
+            "error": "availability_rejected",
+            "message": str(error),
+            "alternatives": [
+                {
+                    "date": alternative.event_date.isoformat(),
+                    "time": f"{alternative.event_time:%H:%M}",
+                }
+                for alternative in error.alternatives
+            ],
+            "handoff_available": error.handoff_available,
+        }
+    )
 
 
 def _request_handoff(arguments: dict[str, Any]) -> _ToolOutcome:

@@ -9,7 +9,7 @@ class IPayAdvancePort(Protocol):
         """Revalida disponibilidad si corresponde y pasa a PAYMENT_STARTED (idempotente).
 
         No confirma la transacción. Lanza ``QuoteNotFoundError``, ``QuoteExpiredError``,
-        ``InvalidQuoteStateError``, ``AvailabilityConflictError`` o
+        ``InvalidQuoteStateError``, ``PaymentUnderReviewError``, ``AvailabilityConflictError`` o
         ``SimultaneousThresholdExceededError``; en los dos últimos no revela datos de pago.
         """
 
