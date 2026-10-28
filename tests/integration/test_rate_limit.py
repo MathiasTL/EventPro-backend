@@ -34,3 +34,10 @@ async def test_login_rate_limit_after_five_attempts(infra: None) -> None:
 async def test_rate_limit_resets_between_tests(infra: None) -> None:
     response = await _login_wrong_password()
     assert response.status_code == 401
+
+
+async def test_signature_otp_limit_uses_redis_per_ip(infra: None, monkeypatch) -> None:
+    from app.infrastructure.adapters.primary.web.rate_limit import limiter
+    from tests.unit.test_signature_rate_limit import assert_otp_limit
+
+    await assert_otp_limit(monkeypatch, limiter._storage)
