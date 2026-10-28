@@ -50,7 +50,7 @@ def error(exc: SignatureError) -> ProblemError:
 
 
 @router.get("/{token}")
-@limiter.limit("30/minute")
+@limiter.shared_limit("30/minute", scope="signature-read")
 async def view_contract(request: Request, token: str, use_case: UseCase) -> JSONResponse:
     try:
         contract, data = await use_case.resolve(token)
@@ -83,7 +83,7 @@ async def view_contract(request: Request, token: str, use_case: UseCase) -> JSON
 
 
 @router.get("/{token}/pdf")
-@limiter.limit("30/minute")
+@limiter.shared_limit("30/minute", scope="signature-read")
 async def public_pdf(request: Request, token: str, use_case: UseCase) -> Response:
     try:
         return Response(
@@ -96,7 +96,7 @@ async def public_pdf(request: Request, token: str, use_case: UseCase) -> Respons
 
 
 @router.post("/{token}/otp")
-@limiter.limit("10/hour")
+@limiter.shared_limit("10/hour", scope="signature-otp-request")
 async def request_otp(
     request: Request,
     token: str,
@@ -110,7 +110,7 @@ async def request_otp(
 
 
 @router.post("/{token}/otp/verify")
-@limiter.limit("30/hour")
+@limiter.shared_limit("20/hour", scope="signature-otp-verify")
 async def verify_otp(
     request: Request,
     token: str,
@@ -131,7 +131,7 @@ async def verify_otp(
 
 
 @router.post("/{token}")
-@limiter.limit("10/hour")
+@limiter.shared_limit("10/hour", scope="signature-submit")
 async def sign_contract(
     request: Request,
     token: str,

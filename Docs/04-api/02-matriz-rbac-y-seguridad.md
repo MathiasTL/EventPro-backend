@@ -189,7 +189,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 1. **Access Token:**
    * Algoritmo: HMAC-SHA256 (`HS256`) o Asimétrico (`RS256`). Biblioteca: **PyJWT** (ADR-09).
    * Tiempo de vida: **60 minutos**.
-   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`. El claim `role` es **informativo** (se emite en el login); la autorización se resuelve con la cuenta en PostgreSQL, como describe la sección 3.2.
+   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`. Se exige la presencia de `sub`, `exp` e `iat` al validar; los tokens sin estos claims o vencidos se rechazan. El claim `role` es **informativo** (se emite en el login); la autorización se resuelve con la cuenta en PostgreSQL, como describe la sección 3.2.
 2. **Refresh Token:**
    * UUID aleatorio criptográfico opaco; solo se almacena su hash en la tabla `refresh_tokens`.
    * Tiempo de vida: **7 días**.
@@ -212,7 +212,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 ## 4. Políticas de Seguridad de la API (OWASP Top 10)
 
 1. **CORS (Cross-Origin Resource Sharing):** Restringido explícitamente a los dominios del frontend de la promotora (`https://app.eventpro.pe`) y `localhost` en desarrollo.
-2. **Rate Limiting:** Implementado con `slowapi` sobre Redis (ADR-09). Un exceso responde `429` con el tipo de error `rate-limit-exceeded` y la cabecera `Retry-After`:
+2. **Rate Limiting:** Implementado con `slowapi` sobre Redis (ADR-09). Un exceso responde `429` con el tipo de error `rate-limit-exceeded` y la cabecera `Retry-After`. Los límites por IP dependen de que la API vea la IP real del cliente: tras Caddy requieren `FORWARDED_ALLOW_IPS` (ver [Docker e infraestructura, sección 4](../05-operaciones/02-docker-e-infraestructura-local.md#4-archivos-compose-y-combinaciones)):
 
    | Endpoint | Límite |
    | :--- | :--- |
@@ -220,7 +220,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
    | `POST /quotes` | Máximo 30 solicitudes por minuto por IP. |
    | `POST /contracts/sign/{token}/otp` | Máximo 3 solicitudes por contrato cada 10 minutos y 10 por IP por hora; reenvío no antes de 60 segundos. |
    | `POST /contracts/sign/{token}/otp/verify` | Máximo 5 intentos fallidos por OTP (`otp_attempts`); al superarlos se invalida el OTP. Adicionalmente, 20 intentos por IP por hora. |
-   | `GET /contracts/sign/{token}` y `GET /contracts/sign/{token}/pdf` | Máximo 30 solicitudes por minuto por IP, para dificultar la enumeración de tokens. |
+   | `GET /contracts/sign/{token}` y `GET /contracts/sign/{token}/pdf` | Máximo 30 solicitudes por minuto por IP, para dificultar la enumeración de tokens (un único contador compartido por ambas rutas). |
 
 3. **Firma del Webhook de Chatwoot:** `POST /webhooks/chatwoot` exige las cabeceras `X-Chatwoot-Timestamp` (marca de tiempo Unix en segundos) y `X-Chatwoot-Signature: sha256=<hex>`, el HMAC-SHA256 de `"{X-Chatwoot-Timestamp}.{cuerpo crudo}"` calculado con `CHATWOOT_WEBHOOK_SECRET`. Se recalcula y se compara en tiempo constante antes de procesar el evento, y se rechazan las marcas de tiempo con más de 5 minutos de antigüedad (mitiga la repetición de peticiones capturadas). Sin firma válida responde `401` (`invalid-webhook-signature`), no se encola nada y se registra el intento. El endpoint es **solo interno**: el proxy inverso lo bloquea hacia internet y únicamente es accesible desde la red interna de Docker. Sin `CHATWOOT_WEBHOOK_SECRET` configurado la ruta falla cerrada: todas las peticiones reciben `401`, y en `staging` y `production` el proceso no arranca sin ese secreto. El procesamiento es idempotente por `X-Chatwoot-Delivery` (deduplicación en Redis, TTL de 7 días; sin la cabecera se usa el resumen de la firma verificada). **Limitación conocida:** esa cabecera no forma parte de la firma, así que un reenvío capturado con la cabecera alterada pasa la deduplicación dentro de la ventana de 5 minutos; el efecto es nulo hoy porque el registro del estado de entrega es idempotente y solo avanza. Los logs no incluyen el cuerpo, el secreto ni la firma recibida. La firma `X-Hub-Signature-256` de Meta y el reto de verificación de suscripción los valida ahora el propio Chatwoot en su webhook público, no EventPro; EventPro ya no expone ningún endpoint hacia Meta.
 4. **Seguridad del OTP:** código de 6 dígitos generado con un generador criptográfico, almacenado solo con hash (`otp_hash`), con vigencia de 10 minutos, intentos limitados y entrega por WhatsApp a través de `outbox_messages` (el contenido del OTP se elimina del `payload` tras el envío).

@@ -1,5 +1,7 @@
 # Coordinaciones de integración E2 — Diego
 
+> **Actualización del 28 de octubre de 2026:** E2 está integrada por PR #34. Hay cambios posteriores de integración de contratos en `develop` (PR #36). La tabla de seguimiento inferior refleja evidencia pendiente de registrar, no ausencia de implementación. Consultar [revisión actual](../06-revision-backend-diego.md) para resultados automatizados y límites de la validación operativa. No se declara completada una coordinación sin su evidencia correspondiente.
+
 **Responsable de E2:** Diego. **Fecha:** 20 de octubre de 2026. **Alcance:** backend.
 
 La implementación actual de E2 y su [especificación](../../02-arquitectura/09-spec-e2-contratos-pdf.md) son la referencia de integración. Cada integrante adapta sus casos de uso, adaptadores y configuración a las entradas, salidas y estados que E2 ya utiliza. Las diferencias de formato se resuelven en el módulo del integrante, manteniendo estable la interfaz E2.

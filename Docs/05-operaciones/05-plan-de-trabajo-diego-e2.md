@@ -1,5 +1,7 @@
 # Plan de trabajo de Diego — Épica E2
 
+> **Actualización del 28 de octubre de 2026:** el corte siguiente se conserva como historial. Contratos, modo manual y firma ya están integrados en `develop` mediante el PR #34; no están pendientes de crear o fusionar ese PR. La revisión y continuación actual están en [revisión backend Diego](06-revision-backend-diego.md), sobre `34b4e2f`. Se corrigieron los claims obligatorios del JWT y los límites por IP de la firma; pruebas y pendientes operativos se registran allí. Las menciones históricas a no ejecutar pruebas no describen la autorización posterior de Diego para esta revisión y corrección. Las casillas antiguas no certifican el estado actual de despliegue.
+
 **Corte de revisión:** 20 de octubre de 2026 · rama `develop` (`97835c1`).
 
 Diego es responsable de **identidad, seguridad, usuarios, auditoría, plataforma común, contratos y firma electrónica**. Los PR de plataforma, US-23 y US-24 ya están integrados en `develop`; las historias de usuarios y bitácora quedaron marcadas como **Finalizado** en Jira a solicitud de Diego. También provee servicios transversales al equipo y revisa los cambios en `app/core/` y en `shared/` del frontend.

@@ -34,3 +34,14 @@ async def test_login_rate_limit_after_five_attempts(infra: None) -> None:
 async def test_rate_limit_resets_between_tests(infra: None) -> None:
     response = await _login_wrong_password()
     assert response.status_code == 401
+
+
+async def test_signature_limits_use_redis_per_ip(infra: None) -> None:
+    from tests.rate_limit_support import OTP_VERIFY, assert_blocked_after_limit, signing_app
+
+    # `_reset_rate_limit` ya enlaza el limiter al Redis real de la sesión.
+    app, service = signing_app()
+
+    await assert_blocked_after_limit(app, OTP_VERIFY)
+
+    assert service.verify_otp.await_count == OTP_VERIFY.limit + 1

@@ -60,6 +60,20 @@ def test_decode_access_token_rejects_expired():
         decode_access_token(token, SECRET)
 
 
+@pytest.mark.parametrize("claim", ["sub", "iat", "exp"])
+@pytest.mark.parametrize("null_value", [False, True])
+def test_access_token_requires_identity_and_temporal_claims(claim, null_value):
+    now = dt.now(UTC)
+    payload = {"sub": "user", "iat": now, "exp": now + timedelta(minutes=5)}
+    if null_value:
+        payload[claim] = None
+    else:
+        del payload[claim]
+    token = jwt.encode(payload, SECRET, algorithm=JWT_ALGORITHM)
+    with pytest.raises(jwt.MissingRequiredClaimError):
+        decode_access_token(token, SECRET)
+
+
 def test_new_refresh_token_is_unique_32_hex():
     a, b = new_refresh_token(), new_refresh_token()
     assert a != b
