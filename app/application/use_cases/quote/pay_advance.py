@@ -19,6 +19,7 @@ from app.domain.exceptions.quote_exceptions import (
     AvailabilityAlternative,
     AvailabilityConflictError,
     InvalidQuoteStateError,
+    PaymentUnderReviewError,
     QuoteExpiredError,
     QuoteNotFoundError,
     SimultaneousThresholdExceededError,
@@ -55,14 +56,21 @@ class PayAdvanceUseCase:
             raise QuoteExpiredError("La cotización venció.")
         if quote.status in (QuoteStatus.CONVERTED, QuoteStatus.CANCELLED):
             raise InvalidQuoteStateError(f"La cotización está {quote.status.value}.")
+        now = self._clock.utcnow()
+        # El vencimiento manda sobre la idempotencia y la revalidación: una cotización vencida que
+        # aún no barrió el cron no devuelve instrucciones ni consulta cupo.
+        if now >= quote.expires_at:
+            # El cron no vence una cotización con un pago en verificación: se informa de eso.
+            if quote.status is QuoteStatus.PAYMENT_STARTED and (
+                await self._quotes.has_payment_in_review(quote_id)
+            ):
+                raise PaymentUnderReviewError(
+                    "Hay un pago en verificación: un encargado lo está revisando."
+                )
+            raise QuoteExpiredError("La cotización venció.")
         # Idempotente: la segunda pulsación devuelve las mismas instrucciones y plazo.
         if quote.status is QuoteStatus.PAYMENT_STARTED:
             return self._result(quote, AvailabilityStatus.AVAILABLE, rechecked=False)
-
-        now = self._clock.utcnow()
-        # El vencimiento manda sobre la revalidación: no se consulta cupo de una cotización vencida.
-        if now >= quote.expires_at:
-            raise QuoteExpiredError("La cotización venció.")
         rechecked = now - quote.sent_at > timedelta(minutes=self._recheck_minutes)
         availability = AvailabilityStatus.AVAILABLE
         if rechecked:

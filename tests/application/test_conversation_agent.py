@@ -24,6 +24,8 @@ from app.application.use_cases.bot.agent_session import (
     trim_history,
 )
 from app.application.use_cases.bot.bot_session import BotSession, BotStep
+from app.domain.exceptions.quote_exceptions import PaymentUnderReviewError
+from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
 from app.infrastructure.adapters.secondary.external_services.fake_quote_use_cases import (
     FakeScenario,
 )
@@ -247,6 +249,75 @@ async def test_expired_and_invalid_quote_states_are_tool_results_for_the_payment
 
     (_, expired) = _tool_results(model)[-2:]
     assert expired == {"ok": False, "error": "quote_expired"}
+    assert (await _agent_session(bot)).payment_started is False
+    assert "Yape" not in "".join(bot.sent)
+
+
+@pytest.mark.parametrize(
+    "scenario", [FakeScenario.AVAILABILITY_CONFLICT, FakeScenario.SIMULTANEOUS_THRESHOLD]
+)
+async def test_a_payment_blocked_by_availability_returns_alternatives_without_instructions(
+    scenario: FakeScenario,
+) -> None:
+    bot, model = _agent_bot(
+        call("create_quote", **QUOTE_ARGS),
+        say("Cotizado."),
+        call("pay_advance"),
+        say("Ese horario ya no está libre."),
+    )
+    await bot.say("confirmo")
+    bot.pay_advance.scenario = scenario
+
+    reply = await bot.say("pagar")
+
+    assert reply == "Ese horario ya no está libre."
+    result = _tool_results(model)[-1]
+    assert result["ok"] is False
+    assert result["error"] == "availability_rejected"
+    assert result["alternatives"] == [{"date": "2026-10-15", "time": "18:00"}]
+    assert (await _agent_session(bot)).payment_started is False
+    assert "Yape" not in "".join(bot.sent)
+
+
+async def test_a_payment_under_review_is_a_tool_result_without_instructions() -> None:
+    bot, model = _agent_bot(
+        call("create_quote", **QUOTE_ARGS),
+        say("Cotizado."),
+        call("pay_advance"),
+        say("Tu pago ya está en verificación."),
+    )
+    await bot.say("confirmo")
+
+    async def under_review(quote_id: Any) -> Any:
+        raise PaymentUnderReviewError("Hay un pago en verificación.")
+
+    bot.pay_advance.execute = under_review
+
+    reply = await bot.say("pagar")
+
+    assert reply == "Tu pago ya está en verificación."
+    assert _tool_results(model)[-1] == {"ok": False, "error": "payment_under_review"}
+    assert "Yape" not in "".join(bot.sent)
+
+
+async def test_a_package_that_is_no_longer_available_is_a_tool_result_for_the_payment() -> None:
+    bot, model = _agent_bot(
+        call("create_quote", **QUOTE_ARGS),
+        say("Cotizado."),
+        call("pay_advance"),
+        say("Ese paquete ya no está disponible."),
+    )
+    await bot.say("confirmo")
+
+    async def package_gone(quote_id: Any) -> Any:
+        raise ResourceNotFoundError("El paquete de la cotización ya no está disponible.")
+
+    bot.pay_advance.execute = package_gone
+
+    reply = await bot.say("pagar")
+
+    assert reply == "Ese paquete ya no está disponible."
+    assert _tool_results(model)[-1] == {"ok": False, "error": "quote_unavailable"}
     assert (await _agent_session(bot)).payment_started is False
     assert "Yape" not in "".join(bot.sent)
 

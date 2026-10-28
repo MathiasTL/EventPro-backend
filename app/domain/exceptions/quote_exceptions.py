@@ -19,6 +19,12 @@ class QuoteExpiredError(DomainError):
     code = "quote-expired"
 
 
+class PaymentUnderReviewError(DomainError):
+    """La cotización venció, pero tiene un pago en verificación que debe resolverse primero."""
+
+    code = "payment-under-review"
+
+
 class RouteEstimationError(DomainError):
     """El estimador de rutas no pudo calcular distancia y duración.
 

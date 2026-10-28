@@ -11,6 +11,7 @@ from app.application.ports.input.quote_lifecycle_port import ICancelQuotePort, I
 from app.domain.exceptions.quote_exceptions import (
     AvailabilityConflictError,
     InvalidQuoteStateError,
+    PaymentUnderReviewError,
     QuoteExpiredError,
     QuoteNotFoundError,
     SimultaneousThresholdExceededError,
@@ -46,6 +47,7 @@ async def pay_advance(
         QuoteNotFoundError,
         QuoteExpiredError,
         InvalidQuoteStateError,
+        PaymentUnderReviewError,
         ValidationError,
     ) as exc:
         raise quote_error_to_problem(exc) from exc

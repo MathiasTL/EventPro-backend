@@ -19,6 +19,7 @@ from app.domain.entities.quote import Quote, QuoteStatus
 from app.domain.exceptions.quote_exceptions import (
     AvailabilityConflictError,
     InvalidQuoteStateError,
+    PaymentUnderReviewError,
     QuoteExpiredError,
     QuoteNotFoundError,
     SimultaneousThresholdExceededError,
@@ -186,6 +187,42 @@ async def test_pay_advance_is_idempotent_from_payment_started() -> None:
     assert result.payment_deadline == quote.expires_at
     quotes.save.assert_not_awaited()
     availability.check_availability.assert_not_awaited()
+
+
+async def test_pay_advance_payment_started_past_the_deadline_raises_expired() -> None:
+    quote = _quote()
+    quote.status = QuoteStatus.PAYMENT_STARTED
+    port, quotes, availability = _port(quote, now=quote.expires_at)
+
+    with pytest.raises(QuoteExpiredError):
+        await port.execute(quote.id)
+
+    quotes.save.assert_not_awaited()
+    availability.check_availability.assert_not_awaited()
+
+
+async def test_pay_advance_expired_with_a_payment_in_review_raises_under_review() -> None:
+    quote = _quote()
+    quote.status = QuoteStatus.PAYMENT_STARTED
+    port, quotes, availability = _port(quote, now=quote.expires_at)
+    quotes.has_payment_in_review.return_value = True
+
+    with pytest.raises(PaymentUnderReviewError):
+        await port.execute(quote.id)
+
+    quotes.has_payment_in_review.assert_awaited_once_with(quote.id)
+    quotes.save.assert_not_awaited()
+    availability.check_availability.assert_not_awaited()
+
+
+async def test_pay_advance_not_expired_payment_started_does_not_check_the_review() -> None:
+    quote = _quote()
+    quote.status = QuoteStatus.PAYMENT_STARTED
+    port, quotes, _ = _port(quote, now=NOW + timedelta(hours=2))
+
+    await port.execute(quote.id)
+
+    quotes.has_payment_in_review.assert_not_awaited()
 
 
 async def test_pay_advance_unknown_quote_raises_not_found() -> None:

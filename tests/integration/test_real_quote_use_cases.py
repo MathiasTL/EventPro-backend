@@ -357,6 +357,18 @@ class TestRealCancelQuote(RealHooks, CancelQuoteContract):
     def make_port(self):
         return CancelQuoteUseCase(self.repository)
 
+    async def test_cancellation_reason_is_persisted_and_reloaded(self, port):
+        quote_id = self.seed_quote(QuoteStatus.SENT)
+
+        await port.execute(quote_id, "Cliente desistió")
+        await self.session.commit()
+
+        async with AsyncSession(self.engine, expire_on_commit=False) as fresh:
+            reloaded = await SqlAlchemyQuoteRepository(fresh).get_by_id(quote_id)
+        assert reloaded is not None
+        assert reloaded.status is QuoteStatus.CANCELLED
+        assert reloaded.cancellation_reason == "Cliente desistió"
+
 
 class TestQuoteHttp(RealHooks):
     @pytest.fixture

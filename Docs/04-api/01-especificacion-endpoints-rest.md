@@ -602,7 +602,7 @@ Los clientes se crean o actualizan automáticamente al generar una cotización (
   }
   ```
   Cuando el motivo es la superación de `SIMULTANEOUS_SHOWS_THRESHOLD`, el tipo de error es `simultaneous-threshold-exceeded`.
-* **Otros errores:** `410` (`quote-expired`, la cotización está `EXPIRED`), `409` (`invalid-quote-state`, la cotización está `CONVERTED` o `CANCELLED`).
+* **Otros errores:** `410` (`quote-expired`, la cotización está `EXPIRED` o venció sin pago en verificación), `409` (`payment-under-review`, la cotización venció pero tiene un pago en verificación), `409` (`invalid-quote-state`, la cotización está `CONVERTED` o `CANCELLED`).
 
 #### `POST /quotes/{id}/cancel`
 * **Descripción:** Cancela la cotización (`SENT` o `PAYMENT_STARTED` → `CANCELLED`). Si existe un pago `PENDING_VERIFICATION` o `REQUIRES_MANUAL_APPROVAL`, la cancelación se rechaza (`409`, `invalid-quote-state`): primero debe resolverse el pago.

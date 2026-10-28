@@ -58,6 +58,8 @@ vuelve a intentarlo.
 cotización ya creada. La herramienta envía por sí misma los datos de pago; después indica \
 brevemente que debe enviar la captura del comprobante por este chat y que un encargado la \
 validará. No des datos de pago por tu cuenta.
+- Si pay_advance devuelve payment_under_review, explica al cliente que su pago ya está en \
+verificación y que un encargado le confirmará el resultado; no vuelvas a pedirle el pago.
 - Si el cliente quiere cambiar algo después de cotizar, crea una cotización nueva con los datos \
 actualizados, previa confirmación.
 - Si el cliente pide hablar con una persona, o no logras entenderlo tras intentarlo, llama a \
