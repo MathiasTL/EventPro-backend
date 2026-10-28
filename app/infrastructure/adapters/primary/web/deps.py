@@ -64,18 +64,18 @@ def _unauthorized() -> HTTPException:
 
 async def _authenticate(
     token: str, settings: Settings, users: IUserRepositoryPort
-) -> tuple[AuthContext, float | None]:
+) -> tuple[AuthContext, float]:
     """Valida el JWT y lo contrasta con la cuenta vigente; devuelve también su ``exp``."""
     try:
         payload = decode_access_token(token, settings.secret_key)
         user_id = UUID(str(payload["sub"]))
+        # `decode_access_token` exige `exp`; un valor no numérico invalida el token en toda ruta.
+        expires_at = float(str(payload["exp"]))
     except Exception as exc:
         raise _unauthorized() from exc
     user = await users.get_by_id(user_id)
     if user is None or not user.is_active:
         raise _unauthorized()
-    exp = payload.get("exp")
-    expires_at = float(exp) if isinstance(exp, int | float) else None
     return AuthContext(user_id=user_id, role=user.role), expires_at
 
 
@@ -121,6 +121,4 @@ async def get_stream_auth_context(
         raise _unauthorized()
     context, expires_at = await _authenticate(access_token.strip(), settings, users)
     _ensure_role(context, (Role.ENCARGADO, Role.SUPERADMIN))
-    if expires_at is None:
-        raise _unauthorized()
     return StreamAuthContext(context=context, expires_at=expires_at)

@@ -130,6 +130,26 @@ async def test_it_rejects_a_token_without_exp(app: FastAPI) -> None:
     assert (await _get(app, {"access_token": token})).status_code == 401
 
 
+async def test_it_accepts_a_numeric_string_exp_like_regular_routes(app: FastAPI) -> None:
+    token = jwt.encode(
+        {"sub": str(uuid4()), "iat": int(time.time()), "exp": str(int(time.time()) + 300)},
+        get_settings().secret_key,
+        algorithm=JWT_ALGORITHM,
+    )
+
+    assert (await _get(app, {"access_token": token})).status_code == 200
+
+
+async def test_it_rejects_a_non_numeric_exp(app: FastAPI) -> None:
+    token = jwt.encode(
+        {"sub": str(uuid4()), "iat": int(time.time()), "exp": "soon"},
+        get_settings().secret_key,
+        algorithm=JWT_ALGORITHM,
+    )
+
+    assert (await _get(app, {"access_token": token})).status_code == 401
+
+
 async def test_it_rejects_an_inactive_account(app: FastAPI) -> None:
     auth_support.CURRENT.is_active = False
     try:
