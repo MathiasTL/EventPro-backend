@@ -189,7 +189,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 1. **Access Token:**
    * Algoritmo: HMAC-SHA256 (`HS256`) o Asimétrico (`RS256`). Biblioteca: **PyJWT** (ADR-09).
    * Tiempo de vida: **60 minutos**.
-   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`. El claim `role` es **informativo** (se emite en el login); la autorización se resuelve con la cuenta en PostgreSQL, como describe la sección 3.2.
+   * Payload: `sub` (User UUID), `role` (`ENCARGADO`), `exp`, `iat`. Se exige la presencia de `sub`, `exp` e `iat` al validar; los tokens sin estos claims o vencidos se rechazan. El claim `role` es **informativo** (se emite en el login); la autorización se resuelve con la cuenta en PostgreSQL, como describe la sección 3.2.
 2. **Refresh Token:**
    * UUID aleatorio criptográfico opaco; solo se almacena su hash en la tabla `refresh_tokens`.
    * Tiempo de vida: **7 días**.

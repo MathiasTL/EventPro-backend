@@ -1,7 +1,9 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
+import jwt
 import pytest
 
 from app.core.config import get_settings
@@ -110,3 +112,19 @@ async def test_errors_are_problem_json_and_validate_inputs(api):
     assert (
         await client.post("/api/v1/contracts", json={"event_id": "no"}, headers=auth)
     ).status_code == 422
+
+
+@pytest.mark.parametrize("invalid", ["sub", "iat", "exp", "invalid-sub", "expired"])
+async def test_malformed_or_expired_access_token_returns_401(api, invalid):
+    client, _ = api
+    now = datetime.now(UTC)
+    claims = {"sub": str(uuid4()), "iat": now, "exp": now + timedelta(minutes=5)}
+    if invalid == "invalid-sub":
+        claims["sub"] = "not-a-uuid"
+    elif invalid == "expired":
+        claims["exp"] = now - timedelta(minutes=1)
+    else:
+        del claims[invalid]
+    token = jwt.encode(claims, get_settings().secret_key, algorithm="HS256")
+    response = await client.get("/api/v1/contracts", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
