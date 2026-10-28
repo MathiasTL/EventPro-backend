@@ -19,6 +19,7 @@ from app.infrastructure.adapters.primary.web.v1 import (
     contracts_router,
     conversations_router,
     crew_router,
+    dashboard_router,
     events_router,
     financial_router,
     manual_bookings_router,
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
     application.include_router(clients_router.router, prefix=settings.api_v1_prefix)
     application.include_router(events_router.router, prefix=settings.api_v1_prefix)
     application.include_router(financial_router.router, prefix=settings.api_v1_prefix)
+    application.include_router(dashboard_router.router, prefix=settings.api_v1_prefix)
     application.include_router(catalog_router.router, prefix=settings.api_v1_prefix)
     application.include_router(crew_router.router, prefix=settings.api_v1_prefix)
     application.include_router(overrides_router.router, prefix=settings.api_v1_prefix)

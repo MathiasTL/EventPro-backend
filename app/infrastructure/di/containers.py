@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.ports.input.client_read_port import IFindClientsPort, IGetClientPort
+from app.application.ports.input.dashboard_port import IGetExecutiveDashboardPort
 from app.application.ports.input.event_extension_port import (
     IRegisterEventExtensionPort,
     ISettleEventPort,
@@ -85,6 +86,7 @@ from app.application.use_cases.event.get_event_schedule import GetEventScheduleU
 from app.application.use_cases.event.register_event_extension import RegisterEventExtensionUseCase
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
+from app.application.use_cases.financial.get_executive_dashboard import GetExecutiveDashboardUseCase
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
 from app.application.use_cases.messaging.conversation_assignment import (
     ReleaseConversation,
@@ -229,6 +231,9 @@ from app.infrastructure.adapters.secondary.persistence.repositories import (
 )
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_contract_repository import (  # noqa: E501
     SqlAlchemyContractRepository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_dashboard_repository import (  # noqa: E501
+    SqlAlchemyDashboardRepository,
 )
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
     SqlAlchemyFinancialRepository,
@@ -746,6 +751,12 @@ def get_financial_pnl_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> IGetFinancialPnlPort:
     return GetFinancialPnlUseCase(SqlAlchemyFinancialRepository(session))
+
+
+def get_executive_dashboard_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IGetExecutiveDashboardPort:
+    return GetExecutiveDashboardUseCase(SqlAlchemyDashboardRepository(session))
 
 
 @lru_cache
