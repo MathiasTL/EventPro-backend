@@ -777,6 +777,24 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
 * **Response `200 OK`:** `{"payment_id": "pay-11a2...", "validation_status": "REFUNDED"}`
 * **Errores:** `409` (`invalid-payment-state`, el pago no está en `REFUND_PENDING`).
 
+#### `POST` Notificaciones de Mercado Pago (ruta a definir por el constructor)
+* **Descripción:** Receptor público de las notificaciones de pago de Mercado Pago para el link de pago del adelanto (spec 10, secciones 4.1 y 8). La notificación solo avisa que existe un pago: el cuerpo nunca se toma como prueba de aprobación. El manejador invoca `ProcessMercadoPagoPayment(mp_payment_id)`, que consulta `GET /v1/payments/{id}` en Mercado Pago y valida estado `approved`, `transaction_amount` igual al adelanto de la cotización, `currency_id = PEN`, `external_reference` igual al id de la cotización y `date_approved` dentro de la vigencia del link. Ante cualquier discrepancia el pago pasa a aprobación manual y no se crea evento. El mismo caso de uso lo ejecutan la tarea periódica de consulta y la comprobación «ya pagué» del bot.
+* **Ruta:** la ruta exacta la define el constructor (spec 10, sección 10). La `notification_url` enviada en la preferencia debe ser HTTPS pública.
+* **Seguridad:** Sin JWT; autenticado por firma. Exposición pública: el proxy inverso (`deploy/Caddyfile`) solo bloquea hacia internet el webhook de Chatwoot, por lo que una ruta nueva en `api` queda pública sin cambiar el proxy. Debe validar la cabecera `x-signature` (HMAC sobre `data.id`, `x-request-id` y `ts`, con la clave secreta de notificaciones configurada por variable de entorno) y rechazar notificaciones fuera de una ventana de repetición (por ejemplo, 5 minutos). Ver la matriz de seguridad.
+* **Idempotencia:** el pago se inserta con `mp_payment_id` único (insert-on-conflict-do-nothing); si ya existía, termina sin efectos. Luego bloquea la cotización con `SELECT ... FOR UPDATE` en la misma transacción (spec 10, sección 4.9).
+* **Response:** `2xx` cuando la notificación se procesó o ya estaba procesada. Ante fallas transitorias (por ejemplo, Mercado Pago no responde) responde `5xx` para que Mercado Pago reintente; la tarea periódica es el respaldo. El código de estado y el cuerpo exactos los define el constructor.
+* **Errores:** `401` (firma inválida, ausente o fuera de la ventana de repetición; mismo criterio de falla cerrada que el webhook de Chatwoot) y `5xx` transitorio, según lo anterior.
+
+#### Consulta de pagos pendientes de validar (ruta a definir por el constructor)
+* **Descripción:** Consulta que alimenta el indicador persistente del panel (spec 10, sección 4.5): pagos que requieren una acción del encargado (captura o aviso de pago sin pago de Mercado Pago, sobrecupo, conflicto, discrepancia de monto, moneda o referencia, y duplicado en `REFUND_PENDING`). No es la lista actual de sobrecupo y no agrega tablas. Puede exponerse como filtro de `GET /payments` o como endpoint propio; el constructor decide el nombre y la forma.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+
+#### Cambios en los contratos de pago por el link de Mercado Pago (spec 10, D9)
+* **`PATCH /payments/{id}/verify` y `POST /overrides/payments/{id}/approve-simultaneous`:** no requieren `event_id` en la petición ni en el panel. Al aprobar, el evento se crea a partir de la cotización (origen `WHATSAPP`, en `AWAITING_SIGNATURE`) y se devuelve en `event_created_id`; el contrato lo emite luego `issue_for_event`. El encargado solo aprueba o rechaza.
+* **Pagos con `payment_method = MERCADO_PAGO`:** `GET /payments` y `GET /payments/{id}` admiten ese valor. No tienen imagen de evidencia (`evidence_path` nulo), por lo que `GET /payments/{id}/evidence` no aplica; el detalle debe exponer los datos de Mercado Pago (id de pago, estado, `date_approved`). Un pago aprobado automáticamente tiene `verified_by_user_id` nulo y la auditoría lo registra como acción del sistema. Los nombres exactos de los campos nuevos los define el constructor.
+* **`POST /payments/advance`:** sin cambios; sigue siendo el camino manual (`YAPE`, `PLIN` o `BANK_TRANSFER`).
+* **`PATCH /payments/{id}/refund`:** sin cambios de contrato; también cubre el pago duplicado de Mercado Pago, que queda en `REFUND_PENDING` y se devuelve a mano (spec 10, sección 9.1).
+
 ---
 
 ### 2.10 Módulo: Contratos y Firma Electrónica (`/contracts`)
