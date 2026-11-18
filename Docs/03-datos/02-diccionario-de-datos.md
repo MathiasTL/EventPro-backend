@@ -195,6 +195,7 @@ Registra las solicitudes de cotización generadas por WhatsApp o por panel admin
 | `sent_at` | `TIMESTAMPTZ` | NO | - | - | Momento de envío al cliente; inicia el plazo del adelanto y el cómputo de `AVAILABILITY_RECHECK_MINUTES`. |
 | `expires_at` | `TIMESTAMPTZ` | NO | - | INDEX | `sent_at` + `ADVANCE_DEADLINE_HOURS`; al vencer sin comprobante la cotización pasa a `EXPIRED`. |
 | `cancellation_reason` | `TEXT` | SÍ | `NULL` | - | Motivo de la cancelación manual (`CANCELLED`). |
+| Preferencia y link de pago de Mercado Pago | Por definir | SÍ | `NULL` | - | Columnas nuevas por definir (id de la preferencia, URL del link, fecha de vencimiento del link y marca de link anulado; spec 10, secciones 4.1, 4.4 y 9.1). Nombres, tipos y si viven en `quotes` o en una tabla propia: nombre a definir por el constructor (spec 10, sección 10). |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha y hora de generación. |
 
 *Restricciones de tabla:*
@@ -297,25 +298,27 @@ Registro de pagos de una cotización: adelanto (`ADVANCE`, con ciclo de verifica
 | `quote_id` | `UUID` | NO | - | FK (`quotes.id`), INDEX | Cotización a la que pertenece el pago. |
 | `event_id` | `UUID` | SÍ | `NULL` | FK (`events.id`), INDEX | Evento asociado; nulo mientras el adelanto no se valida (el evento aún no existe). |
 | `concept` | `VARCHAR(20)` | NO | - | CHECK in (`ADVANCE`, `BALANCE`, `EXTENSION`) | Concepto del pago. |
-| `payment_method` | `VARCHAR(30)` | NO | - | CHECK in (`YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`) | Medio de pago utilizado. UI: «Yape», «Plin», «Transferencia bancaria», «Efectivo». |
+| `payment_method` | `VARCHAR(30)` | NO | - | CHECK in (`YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`, `MERCADO_PAGO`) | Medio de pago utilizado. UI: «Yape», «Plin», «Transferencia bancaria», «Efectivo», «Mercado Pago». `MERCADO_PAGO` se agrega para el link de pago del adelanto (spec 10, sección 9.1); requiere ampliar el CHECK `ck_payments_payment_method` en una migración nueva. |
 | `amount` | `NUMERIC(10,2)` | NO | - | CHECK (`amount > 0`) | Monto pagado en Soles (PEN). |
-| `evidence_path` | `VARCHAR(255)` | NO | - | - | Ruta de la evidencia: captura del comprobante (`ADVANCE`) o foto tomada in situ de la pantalla de Yape/Plin o del efectivo (`BALANCE`, `EXTENSION`). |
+| `evidence_path` | `VARCHAR(255)` | NO (SÍ si `payment_method = MERCADO_PAGO`) | - | - | Ruta de la evidencia: captura del comprobante (`ADVANCE`) o foto tomada in situ de la pantalla de Yape/Plin o del efectivo (`BALANCE`, `EXTENSION`). Es nulo solo cuando el medio es `MERCADO_PAGO` (sin imagen; la pantalla de evidencia muestra los datos del pago). Requiere migración nueva (spec 10, sección 9.1). |
 | `transaction_reference` | `VARCHAR(60)` | SÍ | `NULL` | - | Número de operación bancaria o de Yape. |
 | `validation_status` | `VARCHAR(30)` | NO | `'PENDING_VERIFICATION'` | CHECK in (`PENDING_VERIFICATION`, `REQUIRES_MANUAL_APPROVAL`, `VERIFIED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED`) | Estado del pago (ver RN, sección 3.2). Los pagos `BALANCE` y `EXTENSION` nacen en `VERIFIED`. |
 | `rejection_reason` | `TEXT` | SÍ | `NULL` | - | Motivo de rechazo para el flujo de reintento. |
-| `verified_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que validó el adelanto o aprobó el sobrecupo. |
+| `verified_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que validó el adelanto o aprobó el sobrecupo. Nulo en un pago `MERCADO_PAGO` verificado por el sistema; la auditoría registra la acción como realizada por el sistema (spec 10, sección 9.1). |
 | `verified_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha de verificación. |
 | `registered_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Operador o encargado que registró el cobro in situ; nulo en `ADVANCE` (lo envía el cliente por WhatsApp). |
 | `audit_status` | `VARCHAR(20)` | SÍ | `NULL` | CHECK in (`UNREVIEWED`, `REVIEWED`, `FLAGGED`) | Auditoría posterior del encargado (ver RN, sección 3.2); nulo en `ADVANCE`, `UNREVIEWED` al registrar un `BALANCE` o `EXTENSION`. |
 | `audited_by_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX | Encargado que revisó o marcó el cobro. |
 | `audited_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora de la auditoría. |
 | `audit_notes` | `TEXT` | SÍ | `NULL` | - | Observaciones de la auditoría (obligatorias al marcar `FLAGGED`). |
+| `mp_payment_id` | Por definir (identificador de pago de Mercado Pago) | SÍ | `NULL` | UNIQUE (índice único) | Identificador del pago en Mercado Pago. Garantiza la idempotencia de `ProcessMercadoPagoPayment` (spec 10, sección 4.9). Columna nueva; el nombre y el tipo finales los define el constructor. |
 | `created_at` | `TIMESTAMPTZ` | NO | `CURRENT_TIMESTAMP` | - | Fecha de carga o registro del pago. |
 
 *Restricciones de tabla:*
 * `CHECK ((concept = 'ADVANCE') = (audit_status IS NULL))`: solo los cobros in situ se auditan.
 * `CHECK (concept = 'ADVANCE' OR (validation_status = 'VERIFIED' AND registered_by_user_id IS NOT NULL AND event_id IS NOT NULL))`: `BALANCE` y `EXTENSION` se registran como verificados, por un usuario identificado y sobre un evento existente.
 * `CHECK (audit_status IS DISTINCT FROM 'FLAGGED' OR audit_notes IS NOT NULL)`
+* Spec 10 (sección 9.1): `evidence_path` puede ser nulo solo cuando `payment_method = 'MERCADO_PAGO'`, y `verified_by_user_id` puede ser nulo en un pago `VERIFIED` solo con ese medio. La forma exacta de estas restricciones la define el constructor. El pago duplicado de Mercado Pago pasa a `REFUND_PENDING` sin evento (nueva transición de dominio).
 
 ---
 

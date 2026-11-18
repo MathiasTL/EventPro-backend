@@ -39,7 +39,7 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 * **Traspaso a Encargado y Bandeja de Conversaciones:** El bot deriva la conversación a un encargado cuando el cliente lo pide, cuando no logra entenderlo o ante un error; los encargados toman la conversación, responden desde la plataforma EventPro (respetando la ventana de servicio de 24 h de WhatsApp), la devuelven al bot y ven las actualizaciones en tiempo real. Chatwoot nunca es visible para los usuarios.
 * **Motor de Cotización y Cálculo de Movilidad:** Integración con Google Maps Platform (Distance Matrix / Directions) para el cálculo de distancia y tiempo (ida y vuelta) con recargo comercial (+15%) y posibilidad de exención si el cliente provee movilidad.
 * **Control de Disponibilidad y Reglas de Despacho:** Validación de elencos freelance e inventario de mobiliario; cálculo de tiempos de traslado entre eventos y aprobación manual cuando se supere el umbral de shows simultáneos (solapamiento real de intervalos, por defecto más de 3 eventos con adelanto validado).
-* **Gestión de Pagos y Comprobantes:** Registro de anticipos (10% sobre servicios base) mediante billeteras digitales (Yape / Plin) o transferencias bancarias; subida de capturas y flujo de verificación con reintentos.
+* **Gestión de Pagos y Comprobantes:** Registro de anticipos (10% sobre servicios base) mediante un **link de pago de Mercado Pago** (Checkout Pro) que el bot envía junto con la cotización y cuya aprobación se confirma consultando el pago en Mercado Pago (spec 10); como camino manual alternativo, billeteras digitales (Yape / Plin) o transferencias bancarias, con subida de capturas y flujo de verificación con reintentos.
 * **Contratos Inteligentes en PDF y Firma Electrónica:** Emisión automatizada del contrato PDF con desglose estricto de conceptos y soporte para modo manual de respaldo; firma electrónica propia (enlace por WhatsApp, OTP, firma manuscrita y sello PAdES).
 * **Cronograma Operativo Centralizado:** Tablero calendarizado con filtros temporales y visualización prominente de observaciones del cliente por evento.
 * **Protocolo de Ejecución y Liquidación en Vivo:** Regla estricta de cobro del saldo pendiente antes de iniciar el show, registro de extensiones de tiempo post-evento y cierre contable de servicio.
@@ -47,7 +47,7 @@ Al mismo tiempo, incorpora **mecanismos de control y aprobación humana** en pun
 
 ### 3.2 Fuera del Alcance (Out of Scope - Fases Posteriores)
 * Emisión automática de comprobantes electrónicos SUNAT (Boletas / Facturas electrónicas vía PSE/OSE). En esta fase los cobros quedan registrados como transacciones internas.
-* Cobros con tarjeta de crédito mediante pasarelas internacionales (Stripe, Mercado Pago Web Checkout); el canal principal es transferencias y billeteras locales peruanas (Yape).
+* Cobros mediante otras pasarelas de pago (por ejemplo, Stripe, Culqi, Niubiz, Izipay). El cobro del adelanto por link de Mercado Pago está dentro del alcance (sección 3.1); el saldo se sigue cobrando en el lugar el día del evento.
 * Aplicación móvil nativa (iOS / Android) y PWA instalable. Los operadores y los clientes usan la **web móvil** (diseño *mobile-first*, ver RNF-06); la instalación como PWA queda para una fase posterior.
 
 ---
