@@ -71,6 +71,16 @@ class SqlAlchemyContractRepository:
         )
         return to_contract(row) if row else None
 
+    async def event_observations(self, event_id: UUID) -> str | None:
+        result = await self._session.execute(
+            select(EventModel.client_observations).where(EventModel.id == event_id)
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise ResourceNotFoundError("Evento no encontrado")
+        (observations,) = row._tuple()
+        return observations
+
     async def event_data(self, event_id: UUID, *, lock: bool = False) -> ContractData:
         query = select(EventModel).where(EventModel.id == event_id)
         if lock:

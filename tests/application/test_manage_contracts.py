@@ -153,6 +153,7 @@ async def test_real_pdf_has_amounts_extras_and_literal_observations(
     for expected in [
         "CTR-2026-0001",
         "José Pérez",
+        f"Total: S/ {data.total:.2f}",
         f"Adelanto cobrado: S/ {data.advance:.2f}",
         f"Saldo de servicios: S/ {pending_lines[0]}",
         f"Movilidad pendiente: S/ {pending_lines[1]}",

@@ -46,8 +46,9 @@ class ManageContracts:
 
     async def detail(self, contract_id: UUID) -> tuple[Contract, str | None]:
         contract = await self.get(contract_id)
-        event = await self._repo.event_data(contract.event_id)
-        return contract, event.observations
+        if contract.status not in (ContractStatus.DRAFT, ContractStatus.ISSUED):
+            return contract, None
+        return contract, await self._repo.event_observations(contract.event_id)
 
     async def list(self, filters: ContractFilters) -> ContractPage:
         if filters.page < 1 or not 1 <= filters.page_size <= 100:

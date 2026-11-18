@@ -1,6 +1,5 @@
 """Plantilla de contratos RF-13; ReportLab portable, ejecutado fuera del event loop."""
 
-from decimal import Decimal
 from functools import partial
 
 from starlette.concurrency import run_in_threadpool
@@ -12,10 +11,6 @@ from app.infrastructure.adapters.secondary.storage.document_pdf import render_do
 
 class ReportLabContractPdf:
     async def render(self, contract: Contract, data: ContractData) -> bytes:
-        zero = Decimal(0)
-        pending_total = max(data.total - data.advance, zero)
-        pending_services = max(data.services - data.advance, zero)
-        pending_mobility = pending_total - pending_services
         paragraphs = [
             "CONTRATO DE PRESTACIÓN DE SERVICIOS — EventPro",
             f"Cliente: {data.client_name}",
@@ -29,9 +24,9 @@ class ReportLabContractPdf:
             f"Subtotal de servicios: S/ {data.services:.2f}",
             f"Movilidad: S/ {data.mobility:.2f}",
             f"Total: S/ {data.total:.2f} | Adelanto cobrado: S/ {data.advance:.2f}",
-            f"Saldo de servicios: S/ {pending_services:.2f}",
-            f"Movilidad pendiente: S/ {pending_mobility:.2f}",
-            f"Saldo total pendiente: S/ {pending_total:.2f}",
+            f"Saldo de servicios: S/ {data.pending_services:.2f}",
+            f"Movilidad pendiente: S/ {data.pending_mobility:.2f}",
+            f"Saldo total pendiente: S/ {data.pending_balance:.2f}",
             "OBSERVACIONES ESPECIALES DEL CLIENTE",
             *(data.observations.splitlines() if data.observations else ["Sin observaciones"]),
             "CLÁUSULAS PARTICULARES",
