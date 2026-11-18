@@ -72,7 +72,7 @@ async def view_contract(request: Request, token: str, use_case: UseCase) -> JSON
                     },
                     "total_amount": data.total,
                     "advance_paid": data.advance,
-                    "pending_balance": data.total - data.advance,
+                    "pending_balance": data.pending_balance,
                     "pdf_url": f"{request.url.path}/pdf",
                     "token_expires_at": contract.signature_token_expires_at,
                 }

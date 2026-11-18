@@ -794,7 +794,7 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
 * **Descripción:** Cambia la nota del evento y regenera el PDF antes de firmar; audita valores previos/nuevos. Un contrato emitido rota el enlace y reinicia OTP; un borrador conserva `DRAFT` sin envío.
 * **Seguridad:** `ENCARGADO` o `SUPERADMIN`.
 * **Request:** `{"client_observations":"texto literal o null"}`; el campo es obligatorio y admite hasta 5000 caracteres. Para borrar la nota, enviar JSON `null`, no la cadena `"null"`.
-* **Respuesta:** `200 OK`, detalle actualizado. `404` inexistente; `409 invalid-contract-state` si está firmado/anulado o el evento no admite cambios; `422` validación.
+* **Respuesta:** `200 OK`, detalle actualizado con `client_observations` (texto o `null`). `404` inexistente; `409 invalid-contract-state` si está firmado/anulado o el evento no admite cambios; `422` validación.
 
 El contrato se crea automáticamente al validar el adelanto (RF-13): se compila el PDF, el contrato pasa a `ISSUED` y se envía por WhatsApp un enlace de firma de un solo uso (`/contracts/sign/{token}`). El `{token}` es un valor criptográfico aleatorio con expiración (`signature_token_expires_at`); solo se almacena su hash. Un token solo da acceso al contrato al que pertenece. La firma electrónica es un flujo propio (ADR-07): visualización, OTP por WhatsApp, firma manuscrita y sello PAdES.
 
@@ -823,7 +823,7 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
   ```
 
 #### `GET /contracts/{id}`
-* **Descripción:** Detalle del contrato: estado, vigencia del enlace de firma y metadatos de la firma (si está firmado).
+* **Descripción:** Detalle del contrato con estado, vigencia del enlace y metadatos de firma. `client_observations` contiene la nota actual del evento en `DRAFT` e `ISSUED` y es `null` en `SIGNED` y `VOIDED`.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`. Los usuarios `OPERADOR` no tienen acceso a contratos.
 * **Response `200 OK`:**
   ```json
@@ -833,6 +833,7 @@ El contrato se crea automáticamente al validar el adelanto (RF-13): se compila 
     "event_id": "evt-77a8...",
     "status": "SIGNED",
     "is_manual_mode": false,
+    "client_observations": null,
     "custom_clauses": null,
     "signature_token_expires_at": "2026-09-30T20:50:00Z",
     "signed_at": "2026-09-23T21:05:00Z",

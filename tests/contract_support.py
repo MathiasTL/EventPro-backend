@@ -69,6 +69,10 @@ class MemoryContracts:
                 return deepcopy(contract)
         return None
 
+    async def event_observations(self, event_id):
+        assert event_id == self.data.event_id
+        return self.data.observations
+
     async def event_data(self, event_id, *, lock=False):
         assert event_id == self.data.event_id
         return self.data

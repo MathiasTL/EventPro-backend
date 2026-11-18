@@ -18,6 +18,7 @@ from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import AuthContext, require_role
 from app.infrastructure.adapters.primary.web.problem import ProblemError
 from app.infrastructure.adapters.primary.web.schemas.contract_schemas import (
+    ContractDetailResponse,
     ContractObservationsRequest,
     ContractPageResponse,
     ContractRead,
@@ -92,10 +93,15 @@ async def issue_contract(
         raise problem(exc) from exc
 
 
-@router.get("/{contract_id}", response_model=ContractRead)
-async def get_contract(contract_id: UUID, context: Staff, use_case: UseCase) -> ContractRead:
+@router.get("/{contract_id}", response_model=ContractDetailResponse)
+async def get_contract(
+    contract_id: UUID, context: Staff, use_case: UseCase
+) -> ContractDetailResponse:
     try:
-        return read(await use_case.get(contract_id))
+        contract, observations = await use_case.detail(contract_id)
+        return ContractDetailResponse(
+            **read(contract).model_dump(), client_observations=observations
+        )
     except DomainError as exc:
         raise problem(exc) from exc
 
@@ -143,20 +149,21 @@ async def void_contract(
         raise problem(exc) from exc
 
 
-@router.patch("/{contract_id}/observations", response_model=ContractRead)
+@router.patch("/{contract_id}/observations", response_model=ContractDetailResponse)
 async def update_observations(
     contract_id: UUID,
     payload: ContractObservationsRequest,
     context: Staff,
     transaction: Transaction,
     use_case: UseCase,
-) -> ContractRead:
+) -> ContractDetailResponse:
     """Regenera el PDF y rota el enlace antes de la firma; conserva notas y auditoría juntas."""
     try:
-        return read(
-            await use_case.update_observations(
-                contract_id, payload.client_observations, context.user_id
-            )
+        contract = await use_case.update_observations(
+            contract_id, payload.client_observations, context.user_id
+        )
+        return ContractDetailResponse(
+            **read(contract).model_dump(), client_observations=payload.client_observations
         )
     except DomainError as exc:
         raise problem(exc) from exc

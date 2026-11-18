@@ -1,16 +1,20 @@
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
 import jwt
 import pytest
 
+from app.application.use_cases.contract.sign_contract import SignContract
 from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.secondary.persistence.database import get_contract_write_session
-from app.infrastructure.di.containers import get_contract_use_case
+from app.infrastructure.di.containers import get_contract_use_case, get_sign_contract_use_case
 from app.main import create_app
 from tests import auth_support
 from tests.contract_support import setup_contracts
@@ -57,7 +61,9 @@ async def test_full_management_http_flow_hides_secrets(api):
     ]:
         assert secret not in body
     key = body["contract_id"]
-    assert (await client.get(f"/api/v1/contracts/{key}", headers=auth)).status_code == 200
+    detail = await client.get(f"/api/v1/contracts/{key}", headers=auth)
+    assert detail.status_code == 200
+    assert detail.json()["client_observations"] == repo.data.observations
     page = await client.get("/api/v1/contracts?status=ISSUED&is_manual_mode=false", headers=auth)
     assert page.json()["total"] == 1
     pdf = await client.get(f"/api/v1/contracts/{key}/pdf", headers=auth)
@@ -72,10 +78,24 @@ async def test_full_management_http_flow_hides_secrets(api):
         headers=auth,
     )
     assert changed.status_code == 200
+    assert changed.json()["client_observations"] == "Sin ruido"
+    detail = await client.get(f"/api/v1/contracts/{key}", headers=auth)
+    assert detail.json()["client_observations"] == "Sin ruido"
+    cleared = await client.patch(
+        f"/api/v1/contracts/{key}/observations",
+        json={"client_observations": None},
+        headers=auth,
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["client_observations"] is None
     voided = await client.post(
         f"/api/v1/contracts/{key}/void", json={"reason": "Cambio del cliente"}, headers=auth
     )
     assert voided.json()["status"] == "VOIDED"
+    repo.data = replace(repo.data, observations="Nota de un contrato posterior")
+    detail = await client.get(f"/api/v1/contracts/{key}", headers=auth)
+    assert detail.status_code == 200
+    assert detail.json()["client_observations"] is None
     assert (
         await client.post(f"/api/v1/contracts/{key}/resend-link", headers=auth)
     ).status_code == 409
@@ -128,3 +148,21 @@ async def test_malformed_or_expired_access_token_returns_401(api, invalid):
     token = jwt.encode(claims, get_settings().secret_key, algorithm="HS256")
     response = await client.get("/api/v1/contracts", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
+
+
+async def test_public_signature_balance_is_zero_when_advance_exceeds_total():
+    app = create_app()
+    manager, repo, _, _, _ = setup_contracts()
+    contract = await manager.issue_for_event(repo.data.event_id)
+    data = replace(repo.data, advance=repo.data.total + Decimal("20"))
+    signing = AsyncMock(spec=SignContract)
+    signing.resolve.return_value = (contract, data)
+    app.dependency_overrides[get_sign_contract_use_case] = lambda: signing
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        response = await client.get("/api/v1/contracts/sign/test-token")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["pending_balance"] == 0

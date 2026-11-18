@@ -34,6 +34,18 @@ class ContractData:
     observations: str | None
     event_started: bool = False
 
+    @property
+    def pending_balance(self) -> Decimal:
+        return max(self.total - self.advance, Decimal(0))
+
+    @property
+    def pending_services(self) -> Decimal:
+        return max(self.services - self.advance, Decimal(0))
+
+    @property
+    def pending_mobility(self) -> Decimal:
+        return self.pending_balance - self.pending_services
+
 
 @dataclass(frozen=True)
 class ContractFilters:
