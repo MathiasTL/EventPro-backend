@@ -1,6 +1,7 @@
 import hashlib
 from dataclasses import replace
 from datetime import timedelta
+from decimal import Decimal
 from io import BytesIO
 from uuid import uuid4
 
@@ -129,16 +130,33 @@ async def test_rejects_unknown_contract_invalid_pagination_and_payment_event():
         await service.prepare_payment_event(repo.data.event_id, repo.data.quote_id)
 
 
-async def test_real_pdf_has_amounts_extras_and_literal_observations():
-    service, repo, _, _, _ = setup_contracts(real_pdf=True)
+@pytest.mark.parametrize(
+    ("mobility", "advance", "pending_lines"),
+    [
+        ("80", "100", ("900.00", "80.00", "980.00")),
+        ("0", "100", ("900.00", "0.00", "900.00")),
+        ("80", "1020", ("0.00", "60.00", "60.00")),
+    ],
+)
+async def test_real_pdf_has_amounts_extras_and_literal_observations(
+    mobility, advance, pending_lines
+):
+    data = contract_data(
+        mobility=Decimal(mobility),
+        total=Decimal("1000") + Decimal(mobility),
+        advance=Decimal(advance),
+    )
+    service, repo, _, _, _ = setup_contracts(data, real_pdf=True)
     contract = await service.issue_for_event(repo.data.event_id)
     content = await service.pdf(contract.id)
     text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(content)).pages)
     for expected in [
         "CTR-2026-0001",
         "José Pérez",
-        "1080.00",
-        "980.00",
+        f"Adelanto cobrado: S/ {data.advance:.2f}",
+        f"Saldo de servicios: S/ {pending_lines[0]}",
+        f"Movilidad pendiente: S/ {pending_lines[1]}",
+        f"Saldo total pendiente: S/ {pending_lines[2]}",
         "Burbujas",
         "Sin reggaetón",
         "Sorpresa al minuto 45 <especial>",

@@ -14,7 +14,7 @@ Prefijo `/api/v1`; todas las rutas requieren cuenta activa `ENCARGADO` o `SUPERA
 | --- | --- |
 | `GET /contracts` | Filtros `status`, `event_id`, `is_manual_mode`, `page >= 1`, `page_size` de 1 a 100; respuesta `items`, `page`, `page_size`, `total`. Orden descendente por fecha e ID. |
 | `POST /contracts` | `{"event_id":"<uuid>"}`; emite o recupera el contrato vigente con 200. Sirve para recuperar eventos anteriores al despliegue o emitir después de una anulación. No crea eventos ni verifica pagos. |
-| `GET /contracts/{id}` | Estado, número, evento, modo manual y metadatos administrativos de firma. |
+| `GET /contracts/{id}` | Estado, número, evento, modo manual, observaciones actuales del evento (`client_observations`) y metadatos administrativos de firma. |
 | `GET /contracts/{id}/pdf` | PDF binario con `Cache-Control: private, no-store`. Un borrador devuelve 404. Si hay evidencia de firma devuelve el PDF sellado, incluso después de anular; conserva la evidencia anterior. |
 | `POST /contracts/{id}/resend-link` | Solo `ISSUED`: reemplaza token, reinicia OTP y encola el nuevo enlace; la respuesta incluye su vencimiento, nunca el token en claro. |
 | `PATCH /contracts/{id}/observations` | `{"client_observations":"texto o null"}` (campo obligatorio, máximo 5000 caracteres). Cambia la nota del evento, que lee el cronograma, y regenera PDF con auditoría. En `ISSUED` rota el enlace; un borrador permanece `DRAFT` sin enviar enlace. Un cambio idéntico no regenera. |

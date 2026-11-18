@@ -57,7 +57,9 @@ async def test_full_management_http_flow_hides_secrets(api):
     ]:
         assert secret not in body
     key = body["contract_id"]
-    assert (await client.get(f"/api/v1/contracts/{key}", headers=auth)).status_code == 200
+    detail = await client.get(f"/api/v1/contracts/{key}", headers=auth)
+    assert detail.status_code == 200
+    assert detail.json()["client_observations"] == repo.data.observations
     page = await client.get("/api/v1/contracts?status=ISSUED&is_manual_mode=false", headers=auth)
     assert page.json()["total"] == 1
     pdf = await client.get(f"/api/v1/contracts/{key}/pdf", headers=auth)
@@ -72,6 +74,8 @@ async def test_full_management_http_flow_hides_secrets(api):
         headers=auth,
     )
     assert changed.status_code == 200
+    detail = await client.get(f"/api/v1/contracts/{key}", headers=auth)
+    assert detail.json()["client_observations"] == "Sin ruido"
     voided = await client.post(
         f"/api/v1/contracts/{key}/void", json={"reason": "Cambio del cliente"}, headers=auth
     )

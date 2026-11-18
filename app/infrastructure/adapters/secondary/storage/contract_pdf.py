@@ -11,6 +11,9 @@ from app.infrastructure.adapters.secondary.storage.document_pdf import render_do
 
 class ReportLabContractPdf:
     async def render(self, contract: Contract, data: ContractData) -> bytes:
+        pending_total = max(data.total - data.advance, 0)
+        pending_services = max(data.services - data.advance, 0)
+        pending_mobility = pending_total - pending_services
         paragraphs = [
             "CONTRATO DE PRESTACIÓN DE SERVICIOS — EventPro",
             f"Cliente: {data.client_name}",
@@ -23,8 +26,10 @@ class ReportLabContractPdf:
             *data.extras,
             f"Subtotal de servicios: S/ {data.services:.2f}",
             f"Movilidad: S/ {data.mobility:.2f}",
-            f"Total: S/ {data.total:.2f} | Adelanto verificado: S/ {data.advance:.2f}",
-            f"Saldo pendiente (incluye movilidad): S/ {max(data.total - data.advance, 0):.2f}",
+            f"Total: S/ {data.total:.2f} | Adelanto cobrado: S/ {data.advance:.2f}",
+            f"Saldo de servicios: S/ {pending_services:.2f}",
+            f"Movilidad pendiente: S/ {pending_mobility:.2f}",
+            f"Saldo total pendiente: S/ {pending_total:.2f}",
             "OBSERVACIONES ESPECIALES DEL CLIENTE",
             *(data.observations.splitlines() if data.observations else ["Sin observaciones"]),
             "CLÁUSULAS PARTICULARES",
