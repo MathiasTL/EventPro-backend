@@ -23,6 +23,10 @@ class ContractRead(BaseModel):
     created_at: datetime
 
 
+class ContractDetailResponse(ContractRead):
+    client_observations: str | None
+
+
 class ContractPageResponse(BaseModel):
     items: list[ContractRead]
     page: int
