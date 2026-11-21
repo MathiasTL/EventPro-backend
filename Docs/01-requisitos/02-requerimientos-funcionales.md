@@ -343,6 +343,15 @@
 
 ---
 
+### RF-24.1: Cobros del Período y Saldos por Cobrar
+* **Descripción:** Como extensión de RF-24, el sistema consulta el movimiento de pagos y los saldos pendientes de eventos del período semanal o mensual mediante `GET /reports/financial/collections`. Este reporte no altera el P&L de US-21 ni su selección exclusiva de eventos `SETTLED`.
+* **Entradas:** Pagos, cotizaciones y eventos; período con la misma validación de RF-24.
+* **Procesamiento:** Agrupar pagos verificados por adelanto, saldo y extensión según la fecha local de Lima de la verificación (o creación si no existe); mostrar por separado pagos pendientes de verificación y devoluciones según su creación. Para eventos no liquidados ni cancelados cuya fecha de servicio pertenece al período, sumar el saldo positivo entre el total final del evento y todos los pagos verificados de su cotización. Si el total final no es positivo, usar el total cotizado.
+* **Salidas:** Importes y contadores de cobros, pendientes de verificación, devoluciones y eventos con saldo por cobrar; período vacío con ceros.
+* **Prioridad:** Alta.
+
+---
+
 ### RF-25: Dashboard Ejecutivo de Desempeño
 * **Descripción:** El sistema debe mostrar en el panel administrativo tableros gráficos interactivos con indicadores clave de rendimiento (KPIs).
 * **Entradas:** Datos consolidados del módulo financiero y del cronograma.

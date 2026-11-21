@@ -405,6 +405,22 @@ Las presentes **Historias de Usuario (US)** complementan la especificación de r
 
 ---
 
+### US-21.1: Consultar Cobros del Período
+* **Mapeo:** RF-24.1
+* **Prioridad:** Must have | **Estimación:** 3 SP
+* **Narrativa:**
+  * **Como** encargado de la promotora,
+  * **Quiero** consultar los cobros verificados, pagos pendientes de verificación, devoluciones y saldos por cobrar de un período,
+  * **Para** conocer el movimiento de dinero y los importes aún pendientes de eventos activos.
+* **Criterios de Aceptación:**
+  * **Dado** un evento del período con un adelanto verificado de S/ 100,00 y total final de S/ 1.080,50, **cuando** consulto el reporte, **entonces** el adelanto cobrado es S/ 100,00 y el saldo por cobrar es S/ 980,50.
+  * **Dado** un período sin pagos ni eventos pendientes, **cuando** consulto el reporte, **entonces** recibo `200` con importes y contadores en cero.
+  * Los pagos rechazados no se contabilizan como cobrados; los pendientes de verificación se presentan por separado. Los eventos `SETTLED` y `CANCELLED` no se incluyen en saldos por cobrar.
+
+> Esta historia extiende RF-24 con un reporte independiente. No cambia el P&L de US-21 ni la regla RN-08 de eventos `SETTLED`.
+
+---
+
 ### US-22: Dashboard Ejecutivo de Indicadores de Negocio
 * **Mapeo:** RF-25
 * **Prioridad:** Should have | **Estimación:** 3 SP
@@ -714,6 +730,7 @@ No requiere migración posterior a `0009_inbox_support`.
 | **RF-22** | Ajuste Manual del Intervalo entre Shows | **US-20** | Épica 6: Overrides Manuales | Should have |
 | **RF-23** | Modo Manual de Creación de Contratos | **US-14** | Épica 4: Contratos y Firma | Must have |
 | **RF-24** | Consolidación Automática de Ingresos y Costos | **US-21** | Épica 7: Analítica Financiera | Must have |
+| **RF-24.1** | Cobros del Período y Saldos por Cobrar | **US-21.1** | Épica 7: Analítica Financiera | Must have |
 | **RF-25** | Dashboard Ejecutivo de Desempeño | **US-22** | Épica 7: Analítica Financiera | Should have |
 | **RF-26** | Gestión de Usuarios del Panel y Roles | **US-23** | Épica 8: Administración de la Plataforma | Must have |
 | **RF-27** | Consulta de la Bitácora de Auditoría | **US-24** | Épica 8: Administración de la Plataforma | Should have |
@@ -723,4 +740,4 @@ No requiere migración posterior a `0009_inbox_support`.
 | **RF-31** | Bandeja de Conversaciones en EventPro | **US-28, US-30** | Épica 9: Atención Humana y Bandeja | Must have |
 | **RF-32** | Actualización en Tiempo Real de la Bandeja | **US-31** | Épica 9: Atención Humana y Bandeja | Should have |
 
-> **Criterio de prioridad:** el catálogo de RF es la fuente de verdad (Alta = *Must have*, Media = *Should have*, Baja = *Could have*). La prioridad de cada fila de la matriz es la del RF; la prioridad de una historia es la mayor de los RF que cubre. Cobertura: 32 RF y 32 historias; cada RF tiene al menos una historia.
+> **Criterio de prioridad:** el catálogo de RF es la fuente de verdad (Alta = *Must have*, Media = *Should have*, Baja = *Could have*). La prioridad de cada fila de la matriz es la del RF; la prioridad de una historia es la mayor de los RF que cubre. Cobertura: 32 RF y 32 historias principales, más la extensión RF-24.1 / US-21.1; cada RF tiene al menos una historia.

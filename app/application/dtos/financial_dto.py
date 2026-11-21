@@ -28,3 +28,47 @@ class FinancialPnlDTO:
     direct_costs: FinancialDirectCostsDTO
     net_profit: Decimal
     profit_margin_percentage: Decimal
+
+
+@dataclass(frozen=True)
+class FinancialCollectedDTO:
+    advance: Decimal
+    balance: Decimal
+    extension: Decimal
+    total: Decimal
+    payments_count: int
+
+
+@dataclass(frozen=True)
+class FinancialPendingVerificationDTO:
+    amount: Decimal
+    payments_count: int
+
+
+@dataclass(frozen=True)
+class FinancialRefundsDTO:
+    refund_pending: Decimal
+    refunded: Decimal
+
+
+@dataclass(frozen=True)
+class FinancialReceivableDTO:
+    amount: Decimal
+    events_count: int
+
+
+@dataclass(frozen=True)
+class FinancialCollectionsTotalsDTO:
+    collected: FinancialCollectedDTO
+    pending_verification: FinancialPendingVerificationDTO
+    refunds: FinancialRefundsDTO
+    receivable: FinancialReceivableDTO
+
+
+@dataclass(frozen=True)
+class FinancialCollectionsDTO:
+    period: str
+    collected: FinancialCollectedDTO
+    pending_verification: FinancialPendingVerificationDTO
+    refunds: FinancialRefundsDTO
+    receivable: FinancialReceivableDTO

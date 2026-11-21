@@ -48,3 +48,44 @@ class FinancialPnlResponse(BaseModel):
     direct_costs: FinancialDirectCostsResponse
     net_profit: FinancialAmount
     profit_margin_percentage: FinancialAmount
+
+
+class FinancialCollectedResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    advance: FinancialAmount
+    balance: FinancialAmount
+    extension: FinancialAmount
+    total: FinancialAmount
+    payments_count: int
+
+
+class FinancialPendingVerificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    amount: FinancialAmount
+    payments_count: int
+
+
+class FinancialRefundsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    refund_pending: FinancialAmount
+    refunded: FinancialAmount
+
+
+class FinancialReceivableResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    amount: FinancialAmount
+    events_count: int
+
+
+class FinancialCollectionsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    period: str
+    collected: FinancialCollectedResponse
+    pending_verification: FinancialPendingVerificationResponse
+    refunds: FinancialRefundsResponse
+    receivable: FinancialReceivableResponse
