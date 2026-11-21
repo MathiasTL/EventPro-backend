@@ -56,8 +56,9 @@ _EMPTY_SETTLE_REQUEST = SettleEventRequest()
     response_model=list[EventScheduleResponse],
     summary="Consultar el cronograma de eventos",
     description=(
-        "Slice 1: filtros inclusivos por fechas y estado. Los datos de cliente, paquete, "
-        "temática y elenco provienen de fakes temporales. OPERADOR requiere una asignación. "
+        "Filtros inclusivos por fechas y estado. Los datos de cliente, paquete y temática "
+        "provienen de la cotización; los elencos, de sus asignaciones. OPERADOR requiere "
+        "un elenco activo asignado. "
         "district, theme_id y crew_id se incorporarán en una entrega posterior."
     ),
     responses={

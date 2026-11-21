@@ -147,15 +147,16 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | `POST /events/{id}/cancel` | Sí | Sí | - | - | Libera inventario y anula el contrato. |
 | `PATCH /overrides/crew-assignments/{id}/transit-interval` | Sí | Sí | - | - | Audita `OVERRIDE_TRANSIT_INTERVAL`. |
 
-> **US-17 parcial:** `/start` reutiliza el Fake de asignaciones de US-16. Su
-> respuesta `403` para IDs fuera del alcance del operador es una excepción
+> **US-17 parcial:** `/start` consulta las asignaciones reales de `crews` y
+> `crew_assignments`. Su respuesta `403` para IDs fuera del alcance del operador
+> es una excepción
 > explícita a la regla general de `404` del módulo. El Fake de pagos no registra
 > cobros y, por defecto, no confirma ningún saldo; el registro con fotografía
 > en `/check-in-and-collect` sigue pendiente de implementación.
 
-> **US-18:** reutiliza el puerto de asignaciones y su Fake reemplazable mientras
-> E3 integra la lectura real. Sus rutas aplican la regla general `404` para IDs
-> fuera del alcance del operador, conservando la excepción `403` de `/start`.
+> **US-18:** reutiliza el puerto de asignaciones con lectura real. Sus rutas
+> aplican la regla general `404` para IDs fuera del alcance del operador,
+> conservando la excepción `403` de `/start`.
 > El usuario registrador procede del JWT; no puede elegirse en el formulario.
 > La auditoría y la consulta del comprobante siguen usando las rutas y permisos
 > de E5 para `ENCARGADO` y `SUPERADMIN`.
