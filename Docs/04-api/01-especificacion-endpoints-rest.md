@@ -1026,22 +1026,20 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
     }
   ]
   ```
-  `client_name` se obtiene de `clients` a través de la cotización del evento.
+  `client_name`, `package_name` y `theme_name` se obtienen de `clients`, `packages` y `themes` a través de la cotización del evento. Una cotización sin temática muestra `Sin temática`.
 
-> **Implementación provisional — US-16, Slice 1:** la ruta publicada es
+> **US-16, Slice 1:** la ruta publicada es
 > `GET /api/v1/events/schedule`. Se implementan `from_date`, `to_date` y `status`
 > (opcionales, combinables, límites inclusivos). `district`, `theme_id` y `crew_id`
 > responden `422` hasta la entrega de esos filtros. Un rango invertido también
 > responde `422`; sin coincidencias se devuelve `[]`. El orden es fecha, hora e ID.
 >
-> Los eventos se consultan en PostgreSQL. Mientras E1/E3 integran sus tablas, los
-> puertos de enriquecimiento se conectan a fakes reemplazables en DI: sin datos
-> asociados devuelven `Cliente pendiente de integración`, `Paquete pendiente de
-> integración`, `Temática pendiente de integración` y `crews: []`. No se insertan
-> datos simulados en la base. `ENCARGADO` y `SUPERADMIN` pueden consultar todos los
-> eventos; `OPERADOR` solo los IDs asignados por el fake y, sin asignaciones,
-> recibe `403` indicando que requiere asignación activa. Esta excepción temporal
-> se sustituirá por la lectura de `crews.user_id` y `crew_assignments`.
+> Los eventos, detalles de la cotización y elencos asignados se consultan en
+> PostgreSQL. Un evento sin elencos asignados devuelve `crews: []`; si falta una
+> cotización, se usan nombres de respaldo y se registra una advertencia.
+> `ENCARGADO` y `SUPERADMIN` pueden consultar todos los eventos; `OPERADOR` solo
+> los eventos asignados a su elenco activo mediante `crews.user_id` y
+> `crew_assignments`. Sin asignaciones activas recibe `403`.
 > `client_observations` conserva el texto literal y puede ser `null`; las horas
 > se serializan como `HH:MM` y el saldo como número JSON en PEN, calculado con
 > decimales: `max(final_total_amount - advance_paid - pre_show_balance_paid - extra_hours_amount, 0)`.
@@ -1050,7 +1048,7 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 > adicionales, incluso al cruzar medianoche o extenderse varios días. El horario
 > contratado en PostgreSQL se conserva. La comprobación de disponibilidad usa
 > asignaciones y reservas reales; el enriquecimiento y autorización del operador
-> siguen usando el puerto Fake hasta la integración E3.
+> utilizan las asignaciones reales de `crew_assignments`.
 
 #### `GET /events/{id}`
 * **Descripción:** Detalle operativo del evento: datos de la locación, observaciones, extras, elencos asignados, desglose económico y pagos registrados.
@@ -1134,13 +1132,13 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
   `403` (`forbidden`, sin asignación), `404` (`not-found`, evento inexistente
   dentro del alcance autorizado), `409` (`invalid-event-state`),
   `422` (`validation-error`, UUID/cuerpo inválidos).
-* **Dependencias provisionales:** se reutiliza el Fake de asignaciones de US-16.
-  `FakePreShowPaymentVerificationAdapter` recibe un mapa `event_id -> Money`
+* **Dependencias provisionales:** la asignación del operador se consulta en
+  `crews` y `crew_assignments`. `FakePreShowPaymentVerificationAdapter` recibe un mapa `event_id -> Money`
   con el total `BALANCE` verificado; sin entrada devuelve cero. La DI por defecto
   usa un mapa vacío: no autoriza un evento con saldo pendiente, aunque
   `events.pre_show_balance_paid` aparente estar pagado. Para una demostración o
-  test se inyecta un Fake configurado mediante `get_pre_show_payment_verification_port`
-  y `get_crew_schedule_read_port`; no hay un endpoint para simular pagos.
+  test se inyecta un Fake configurado mediante `get_pre_show_payment_verification_port`;
+  no hay un endpoint para simular pagos.
   E5 sustituirá el Fake por su lectura real de pagos `BALANCE` en `VERIFIED`.
 * **Límite de la entrega:** no crea pagos ni recibe evidencia; el flujo completo
   de US-17 requiere los endpoints siguientes. `show_started_at` corresponde a
