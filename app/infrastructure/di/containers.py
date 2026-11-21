@@ -193,10 +193,6 @@ from app.infrastructure.adapters.secondary.external_services.fake_messaging_adap
 from app.infrastructure.adapters.secondary.external_services.fake_route_estimator_adapter import (
     FakeRouteEstimatorAdapter,
 )
-from app.infrastructure.adapters.secondary.external_services.fake_schedule_adapters import (
-    FakeCrewScheduleReadAdapter,
-    FakeQuoteScheduleReadAdapter,
-)
 from app.infrastructure.adapters.secondary.external_services.openai.openai_language_model_adapter import (  # noqa: E501
     OpenAILanguageModelAdapter,
 )
@@ -245,6 +241,10 @@ from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_d
 )
 from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_financial_repository import (  # noqa: E501
     SqlAlchemyFinancialRepository,
+)
+from app.infrastructure.adapters.secondary.persistence.repositories.sqlalchemy_schedule_read_adapters import (  # noqa: E501
+    SqlAlchemyCrewScheduleReadAdapter,
+    SqlAlchemyQuoteScheduleReadAdapter,
 )
 from app.infrastructure.adapters.secondary.persistence.sqlalchemy_bot_unit_of_work import (
     SqlAlchemyBotUnitOfWork,
@@ -375,14 +375,16 @@ def get_list_audit_logs_use_case() -> ListAuditLogsUseCase:
     return ListAuditLogsUseCase(get_audit_log_port())
 
 
-@lru_cache
-def get_quote_schedule_read_port() -> IQuoteScheduleReadPort:
-    return FakeQuoteScheduleReadAdapter()
+def get_quote_schedule_read_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IQuoteScheduleReadPort:
+    return SqlAlchemyQuoteScheduleReadAdapter(session)
 
 
-@lru_cache
-def get_crew_schedule_read_port() -> ICrewScheduleReadPort:
-    return FakeCrewScheduleReadAdapter()
+def get_crew_schedule_read_port(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ICrewScheduleReadPort:
+    return SqlAlchemyCrewScheduleReadAdapter(session)
 
 
 @lru_cache
@@ -929,8 +931,6 @@ def clear_application_caches() -> None:
     get_list_audit_logs_use_case.cache_clear()
     get_evidence_storage.cache_clear()
     get_extension_evidence_storage.cache_clear()
-    get_quote_schedule_read_port.cache_clear()
-    get_crew_schedule_read_port.cache_clear()
     get_pre_show_payment_verification_port.cache_clear()
     get_clock_port.cache_clear()
     get_mobility_tariff.cache_clear()
