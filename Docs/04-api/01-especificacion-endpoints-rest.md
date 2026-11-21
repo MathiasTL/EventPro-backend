@@ -1340,6 +1340,24 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
   }
   ```
 
+#### `GET /reports/financial/collections`
+* **Descripción:** Cobros del período (RF-24.1, US-21.1), separados del P&L de US-21. Muestra pagos verificados, pagos pendientes de verificación, devoluciones y saldos por cobrar. No modifica el criterio `SETTLED` ni el cálculo de utilidad del P&L.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
+* **Query Params:** Los mismos que `/reports/financial/pnl`: `period_type=MONTHLY|WEEKLY`, `year` y `month` o `week`, con las mismas reglas de validación y respuesta `422`.
+* **Período:** Rango interno `[inicio, fin)`; `period` conserva el formato `YYYY-MM` o `YYYY-Www`. La fecha del pago es la fecha local de Lima de `coalesce(verified_at, created_at)` para pagos `VERIFIED`; los pendientes y las devoluciones se agrupan por `created_at` en Lima.
+* **Cálculo:** `collected` suma pagos `VERIFIED` por concepto `ADVANCE`, `BALANCE` y `EXTENSION`. `pending_verification` suma `PENDING_VERIFICATION` y `REQUIRES_MANUAL_APPROVAL`. `refunds` presenta `REFUND_PENDING` y `REFUNDED` de adelantos como información; no se resta de `collected`. `receivable` considera eventos del período por `event_date`, excepto `SETTLED` y `CANCELLED`, y suma por evento `max(total esperado − pagos VERIFIED de su cotización en cualquier fecha, 0)`. El total esperado es `events.final_total_amount` cuando es positivo; en otro caso, `quotes.total_amount`. El contador incluye solo eventos con saldo positivo.
+* **Respuesta sin datos:** `200` con importes y contadores en cero. **Errores:** `401` sin autenticación, `403` rol no permitido, `422` período inválido.
+* **Response `200 OK`:**
+  ```json
+  {
+    "period": "2026-11",
+    "collected": {"advance": 100.00, "balance": 0.00, "extension": 0.00, "total": 100.00, "payments_count": 1},
+    "pending_verification": {"amount": 0.00, "payments_count": 0},
+    "refunds": {"refund_pending": 0.00, "refunded": 0.00},
+    "receivable": {"amount": 980.50, "events_count": 1}
+  }
+  ```
+
 ---
 
 ### 2.14 Módulo: Conversaciones (`/conversations`)
