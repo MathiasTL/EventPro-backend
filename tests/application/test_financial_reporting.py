@@ -3,8 +3,18 @@ from uuid import uuid4
 
 import pytest
 
-from app.application.dtos.financial_dto import FinancialPnlRequest
+from app.application.dtos.financial_dto import (
+    FinancialCollectedDTO,
+    FinancialCollectionsTotalsDTO,
+    FinancialPendingVerificationDTO,
+    FinancialPnlRequest,
+    FinancialReceivableDTO,
+    FinancialRefundsDTO,
+)
 from app.application.use_cases.event.settle_event import SettleEventUseCase
+from app.application.use_cases.financial.get_financial_collections import (
+    GetFinancialCollectionsUseCase,
+)
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
 from app.domain.exceptions.financial_exceptions import FinancialDataInconsistentError
 from app.domain.exceptions.resource_exceptions import ResourceNotFoundError, ValidationError
@@ -30,6 +40,34 @@ class ReadPort:
             Money(Decimal(1000)),
             Money(Decimal(500)),
         )
+
+
+class CollectionsReadPort(ReadPort):
+    async def get_collections(self, period):
+        self.periods.append(period)
+        return FinancialCollectionsTotalsDTO(
+            FinancialCollectedDTO(Decimal("100.00"), Decimal(0), Decimal(0), Decimal("100.00"), 1),
+            FinancialPendingVerificationDTO(Decimal("40.00"), 1),
+            FinancialRefundsDTO(Decimal(0), Decimal(0)),
+            FinancialReceivableDTO(Decimal("980.50"), 1),
+        )
+
+
+async def test_collections_maps_aggregate_and_reuses_period_validation():
+    port = CollectionsReadPort()
+    result = await GetFinancialCollectionsUseCase(port).execute(
+        FinancialPnlRequest(PeriodType.MONTHLY, 2026, month=11)
+    )
+    assert result.period == "2026-11"
+    assert result.collected.advance == Decimal("100.00")
+    assert result.pending_verification.payments_count == 1
+    assert result.receivable.amount == Decimal("980.50")
+    assert port.periods[0].start.isoformat() == "2026-11-01"
+    with pytest.raises(ValidationError):
+        await GetFinancialCollectionsUseCase(port).execute(
+            FinancialPnlRequest(PeriodType.WEEKLY, 2021, week=53)
+        )
+    assert len(port.periods) == 1
 
 
 async def test_report_maps_domain_calculation():

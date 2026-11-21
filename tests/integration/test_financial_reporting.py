@@ -1,7 +1,7 @@
 """US-21: PostgreSQL real, reportes, cierre atómico y migración histórica."""
 
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import Mock
 from uuid import uuid4
@@ -21,6 +21,9 @@ from alembic import command
 from app.application.dtos.event_schedule_dto import ScheduleActor
 from app.application.dtos.financial_dto import FinancialPnlRequest
 from app.application.use_cases.event.settle_event import SettleEventUseCase
+from app.application.use_cases.financial.get_financial_collections import (
+    GetFinancialCollectionsUseCase,
+)
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
 from app.core.config import get_settings
 from app.core.security import create_access_token
@@ -168,6 +171,148 @@ async def report(factory, year=2026, month=10, week=None):
                 week=week,
             )
         )
+
+
+async def collections_report(factory, year=2026, month=11):
+    async with factory() as session:
+        return await GetFinancialCollectionsUseCase(SqlAlchemyFinancialRepository(session)).execute(
+            FinancialPnlRequest(PeriodType.MONTHLY, year, month=month)
+        )
+
+
+async def insert_collection_payment(
+    factory,
+    evt,
+    *,
+    amount,
+    status,
+    created_at,
+    verified_at=None,
+):
+    async with factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO payments "
+                "(quote_id,event_id,concept,payment_method,amount,evidence_path,"
+                "validation_status,created_at,verified_at) "
+                "VALUES (:q,:e,'ADVANCE','YAPE',:amount,'receipt.png',:status,:created,:verified)"
+            ),
+            {
+                "q": evt.quote_id,
+                "e": evt.id,
+                "amount": amount,
+                "status": status,
+                "created": created_at,
+                "verified": verified_at,
+            },
+        )
+        await session.commit()
+
+
+def test_collections_uses_lima_payment_dates_and_event_receivables(db):
+    async def exercise():
+        engine = build_engine(db)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            evt, _ = await seed(factory, day=date(2026, 11, 30), status=EventStatus.SCHEDULED)
+            async with factory() as session:
+                await session.execute(
+                    text(
+                        "UPDATE events SET final_total_amount=1080.50,advance_paid=100,"
+                        "pre_show_balance_paid=0 WHERE id=:e"
+                    ),
+                    {"e": evt.id},
+                )
+                await session.execute(
+                    text("UPDATE quotes SET total_amount=1080.50 WHERE id=:q"),
+                    {"q": evt.quote_id},
+                )
+                await session.commit()
+            await insert_collection_payment(
+                factory,
+                evt,
+                amount=Decimal("100.00"),
+                status="VERIFIED",
+                created_at=datetime(2026, 11, 28, 12, tzinfo=UTC),
+                verified_at=datetime(2026, 12, 1, 4, 30, tzinfo=UTC),
+            )
+            await insert_collection_payment(
+                factory,
+                evt,
+                amount=Decimal("40.00"),
+                status="PENDING_VERIFICATION",
+                created_at=datetime(2026, 11, 16, 15, tzinfo=UTC),
+            )
+            await insert_collection_payment(
+                factory,
+                evt,
+                amount=Decimal("30.00"),
+                status="REJECTED",
+                created_at=datetime(2026, 11, 17, 15, tzinfo=UTC),
+            )
+            await seed(factory, day=date(2026, 11, 15), status=EventStatus.SETTLED)
+            await seed(factory, day=date(2026, 11, 16), status=EventStatus.CANCELLED)
+
+            result = await collections_report(factory)
+            assert result.period == "2026-11"
+            assert result.collected.advance == Decimal("100.00")
+            assert result.collected.total == Decimal("100.00")
+            assert result.collected.payments_count == 1
+            assert result.pending_verification.amount == Decimal("40.00")
+            assert result.pending_verification.payments_count == 1
+            assert result.refunds.refund_pending == 0
+            assert result.refunds.refunded == 0
+            assert result.receivable.amount == Decimal("980.50")
+            assert result.receivable.events_count == 1
+
+            await insert_collection_payment(
+                factory,
+                evt,
+                amount=Decimal("20.00"),
+                status="REFUND_PENDING",
+                created_at=datetime(2026, 11, 18, 12, tzinfo=UTC),
+            )
+            await insert_collection_payment(
+                factory,
+                evt,
+                amount=Decimal("10.00"),
+                status="REFUNDED",
+                created_at=datetime(2026, 11, 19, 12, tzinfo=UTC),
+            )
+            with_refunds = await collections_report(factory)
+            assert with_refunds.collected.total == Decimal("100.00")
+            assert with_refunds.refunds.refund_pending == Decimal("20.00")
+            assert with_refunds.refunds.refunded == Decimal("10.00")
+            assert with_refunds.receivable.amount == Decimal("980.50")
+
+            async with factory() as session:
+                await session.execute(
+                    text("UPDATE quotes SET total_amount=2000 WHERE id=:q"),
+                    {"q": evt.quote_id},
+                )
+                await session.commit()
+            assert (await collections_report(factory)).receivable.amount == Decimal("980.50")
+            async with factory() as session:
+                await session.execute(
+                    text("UPDATE events SET final_total_amount=0 WHERE id=:e"),
+                    {"e": evt.id},
+                )
+                await session.commit()
+            assert (await collections_report(factory)).receivable.amount == Decimal("1900.00")
+
+            empty = await collections_report(factory, year=2027, month=1)
+            assert empty.collected.total == 0
+            assert empty.collected.payments_count == 0
+            assert empty.pending_verification.amount == 0
+            assert empty.pending_verification.payments_count == 0
+            assert empty.refunds.refund_pending == 0
+            assert empty.refunds.refunded == 0
+            assert empty.receivable.amount == 0
+            assert empty.receivable.events_count == 0
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise())
 
 
 def test_ten_settled_events_have_exact_profit_and_no_join_multiplication(db):

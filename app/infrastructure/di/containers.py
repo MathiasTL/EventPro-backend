@@ -21,7 +21,10 @@ from app.application.ports.input.event_extension_port import (
 )
 from app.application.ports.input.event_schedule_port import IGetEventSchedulePort
 from app.application.ports.input.event_start_port import IStartEventPort
-from app.application.ports.input.financial_report_port import IGetFinancialPnlPort
+from app.application.ports.input.financial_report_port import (
+    IGetFinancialCollectionsPort,
+    IGetFinancialPnlPort,
+)
 from app.application.ports.input.quote_create_port import ICreateQuotePort
 from app.application.ports.input.quote_expiry_port import IExpireDueQuotesPort
 from app.application.ports.input.quote_lifecycle_port import ICancelQuotePort, IPayAdvancePort
@@ -92,6 +95,9 @@ from app.application.use_cases.event.register_event_extension import RegisterEve
 from app.application.use_cases.event.settle_event import SettleEventUseCase
 from app.application.use_cases.event.start_event import StartEventUseCase
 from app.application.use_cases.financial.get_executive_dashboard import GetExecutiveDashboardUseCase
+from app.application.use_cases.financial.get_financial_collections import (
+    GetFinancialCollectionsUseCase,
+)
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
 from app.application.use_cases.messaging.conversation_assignment import (
     ReleaseConversation,
@@ -753,6 +759,12 @@ def get_financial_pnl_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> IGetFinancialPnlPort:
     return GetFinancialPnlUseCase(SqlAlchemyFinancialRepository(session))
+
+
+def get_financial_collections_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IGetFinancialCollectionsPort:
+    return GetFinancialCollectionsUseCase(SqlAlchemyFinancialRepository(session))
 
 
 def get_executive_dashboard_use_case(

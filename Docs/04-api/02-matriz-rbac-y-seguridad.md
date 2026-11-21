@@ -166,6 +166,7 @@ Esta matriz y la [Especificación de Endpoints REST](01-especificacion-endpoints
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | `GET /reports/dashboard` | Sí | Sí | - | - | KPIs de RF-25. |
 | `GET /reports/financial/pnl` | Sí | Sí | - | - | Utilidad neta (RF-24). |
+| `GET /reports/financial/collections` | Sí | Sí | - | - | Cobros y saldos por cobrar (RF-24.1); separado del P&L. |
 
 ### 2.10 Conversaciones (Bandeja de WhatsApp)
 

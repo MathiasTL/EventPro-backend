@@ -3,6 +3,9 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from app.application.use_cases.financial.get_financial_collections import (
+    GetFinancialCollectionsUseCase,
+)
 from app.application.use_cases.financial.get_financial_pnl import GetFinancialPnlUseCase
 from app.core.config import get_settings
 from app.core.security import create_access_token
@@ -10,7 +13,7 @@ from app.domain.exceptions.financial_exceptions import FinancialDataInconsistent
 from app.domain.value_objects.role import Role
 from app.infrastructure.di import containers
 from app.main import create_app
-from tests.application.test_financial_reporting import ReadPort
+from tests.application.test_financial_reporting import CollectionsReadPort, ReadPort
 from tests.auth_support import CURRENT, install, set_role
 
 
@@ -21,6 +24,9 @@ def setup():
     CURRENT.is_active = True
     app.dependency_overrides[containers.get_financial_pnl_use_case] = lambda: (
         GetFinancialPnlUseCase(port)
+    )
+    app.dependency_overrides[containers.get_financial_collections_use_case] = lambda: (
+        GetFinancialCollectionsUseCase(port)
     )
     yield app, port
     CURRENT.is_active = True
@@ -43,6 +49,71 @@ async def get(app, *, params=None, headers=None):
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         return await client.get("/api/v1/reports/financial/pnl", params=params, headers=headers)
+
+
+async def get_collections(app, *, params=None, headers=None):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        return await client.get(
+            "/api/v1/reports/financial/collections", params=params, headers=headers
+        )
+
+
+@pytest.mark.parametrize("role", [Role.ENCARGADO, Role.SUPERADMIN])
+async def test_collections_contract(role):
+    app, port = create_app(), CollectionsReadPort()
+    install(app)
+    CURRENT.is_active = True
+    app.dependency_overrides[containers.get_financial_collections_use_case] = lambda: (
+        GetFinancialCollectionsUseCase(port)
+    )
+    try:
+        response = await get_collections(
+            app, params={"period_type": "MONTHLY", "year": 2026, "month": 11}, headers=auth(role)
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "period": "2026-11",
+            "collected": {
+                "advance": 100.0,
+                "balance": 0.0,
+                "extension": 0.0,
+                "total": 100.0,
+                "payments_count": 1,
+            },
+            "pending_verification": {"amount": 40.0, "payments_count": 1},
+            "refunds": {"refund_pending": 0.0, "refunded": 0.0},
+            "receivable": {"amount": 980.5, "events_count": 1},
+        }
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"period_type": "MONTHLY", "year": 2026},
+        {"period_type": "WEEKLY", "year": 2021, "week": 53},
+    ],
+)
+async def test_collections_invalid_period_is_422(setup, params):
+    app, port = setup
+    response = await get_collections(app, params=params, headers=auth())
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert port.periods == []
+
+
+async def test_collections_rejects_operator(setup):
+    app, port = setup
+    response = await get_collections(
+        app,
+        params={"period_type": "MONTHLY", "year": 2026, "month": 11},
+        headers=auth(Role.OPERADOR),
+    )
+    assert response.status_code == 403
+    assert port.periods == []
 
 
 @pytest.mark.parametrize("role", [Role.ENCARGADO, Role.SUPERADMIN])
