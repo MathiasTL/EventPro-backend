@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -15,6 +16,9 @@ from app.application.use_cases.payment.audit_payment import AuditPaymentUseCase
 from app.application.use_cases.payment.get_payment import GetPaymentUseCase
 from app.application.use_cases.payment.list_payments import ListPaymentsUseCase
 from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
+from app.application.use_cases.payment.register_payment_receipt import (
+    RegisterPaymentReceiptUseCase,
+)
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
 from app.domain.entities.payment import (
     Payment,
@@ -23,7 +27,9 @@ from app.domain.entities.payment import (
     PaymentMethod,
     PaymentValidationStatus,
 )
+from app.domain.entities.quote import QuoteStatus
 from app.domain.exceptions.payment_exceptions import InvalidPaymentStateError
+from app.domain.exceptions.quote_exceptions import InvalidQuoteStateError, QuoteNotFoundError
 from app.domain.exceptions.resource_exceptions import (
     ResourceInUseError,
     ResourceNotFoundError,
@@ -161,3 +167,65 @@ async def test_audit_requires_in_situ_payment() -> None:
                 audit_status=PaymentAuditStatus.REVIEWED,
             )
         )
+
+
+class _QuoteStub:
+    def __init__(self, quote: object | None) -> None:
+        self._quote = quote
+
+    async def get_by_id(self, quote_id: UUID) -> object | None:
+        return self._quote
+
+
+def _receipt_use_case(
+    quote: object | None, repo: FakePaymentRepository
+) -> RegisterPaymentReceiptUseCase:
+    return RegisterPaymentReceiptUseCase(
+        _QuoteStub(quote),  # type: ignore[arg-type]
+        RegisterAdvancePaymentUseCase(repo),
+    )
+
+
+def _quote(status: QuoteStatus = QuoteStatus.PAYMENT_STARTED) -> SimpleNamespace:
+    advance = SimpleNamespace(amount=Decimal("636.80"))
+    return SimpleNamespace(status=status, liquidation=SimpleNamespace(advance_amount=advance))
+
+
+async def test_register_receipt_creates_an_unspecified_advance_for_the_quote_advance() -> None:
+    repo = FakePaymentRepository()
+    quote_id = uuid4()
+
+    await _receipt_use_case(_quote(), repo).execute(quote_id, "evidence/receipt.png")
+
+    (payment,) = repo._items
+    assert payment.quote_id == quote_id
+    assert payment.concept is PaymentConcept.ADVANCE
+    assert payment.payment_method is PaymentMethod.UNSPECIFIED
+    assert payment.amount.amount == Decimal("636.80")
+    assert payment.validation_status is PaymentValidationStatus.PENDING_VERIFICATION
+    assert payment.evidence_path == "evidence/receipt.png"
+
+
+async def test_register_receipt_does_not_duplicate_an_active_advance() -> None:
+    repo = FakePaymentRepository()
+    use_case = _receipt_use_case(_quote(), repo)
+    await use_case.execute(uuid4(), "evidence/a.png")
+    quote_id = repo._items[0].quote_id
+
+    with pytest.raises(ResourceInUseError):
+        await use_case.execute(quote_id, "evidence/b.png")
+
+    assert len(repo._items) == 1
+
+
+async def test_register_receipt_requires_a_quote_waiting_for_payment() -> None:
+    repo = FakePaymentRepository()
+
+    with pytest.raises(QuoteNotFoundError):
+        await _receipt_use_case(None, repo).execute(uuid4(), "evidence/a.png")
+    with pytest.raises(InvalidQuoteStateError):
+        await _receipt_use_case(_quote(QuoteStatus.EXPIRED), repo).execute(
+            uuid4(), "evidence/a.png"
+        )
+
+    assert repo._items == []

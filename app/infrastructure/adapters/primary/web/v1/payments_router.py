@@ -24,7 +24,6 @@ from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCas
 from app.domain.entities.payment import (
     PaymentAuditStatus,
     PaymentConcept,
-    PaymentMethod,
     PaymentValidationStatus,
 )
 from app.domain.exceptions.payment_exceptions import InvalidPaymentStateError
@@ -37,6 +36,7 @@ from app.domain.exceptions.storage_exceptions import EvidenceValidationError
 from app.domain.value_objects.role import Role
 from app.infrastructure.adapters.primary.web.deps import AuthContext, require_role
 from app.infrastructure.adapters.primary.web.problem import ProblemError
+from app.infrastructure.adapters.primary.web.schemas.payment_method import StaffPaymentMethod
 from app.infrastructure.adapters.primary.web.schemas.payment_schemas import (
     PaymentAuditRequest,
     PaymentAuditResponse,
@@ -69,7 +69,7 @@ async def register_advance_payment(
     ],
     storage: Annotated[LocalEvidenceStorage, Depends(containers.get_evidence_storage)],
     quote_id: Annotated[UUID, Form(...)],
-    payment_method: Annotated[PaymentMethod, Form(...)],
+    payment_method: Annotated[StaffPaymentMethod, Form(...)],
     amount: Annotated[Decimal, Form(...)],
     receipt_file: Annotated[UploadFile, File(...)],
     transaction_reference: Annotated[str | None, Form()] = None,

@@ -345,20 +345,20 @@ async def test_paying_without_a_quote_or_twice_never_calls_the_port_again() -> N
     assert [body for body in bot.sent if "Yape" in body] == instructions
 
 
-async def test_a_message_with_only_an_attachment_after_paying_gets_the_receipt_text() -> None:
+async def test_an_empty_message_without_attachment_after_paying_is_not_a_receipt() -> None:
     bot, model = _agent_bot(
         call("create_quote", **QUOTE_ARGS),
         say("Cotizado."),
         call("pay_advance"),
         say("Envía tu comprobante."),
+        say("Cuando pagues, envía tu comprobante."),
     )
     await bot.run("confirmo", "pagar")
-    calls_before = len(model.calls)
 
-    reply = await bot.say("")
+    await bot.say("")  # un sticker o un emoji sin adjunto
 
-    assert reply == texts.RECEIPT_RECEIVED
-    assert len(model.calls) == calls_before
+    assert model.calls[-1].messages[-1].content == ATTACHMENT_PLACEHOLDER
+    assert bot.register_receipt.registered == []
 
 
 async def test_an_attachment_before_paying_reaches_the_model_as_a_placeholder() -> None:

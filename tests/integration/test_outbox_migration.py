@@ -92,6 +92,10 @@ def test_revision_chain_is_linear_from_0003() -> None:
     inbox_revision = script.get_revision("0009_inbox_support")
     assert inbox_revision is not None
     assert inbox_revision.down_revision == "0008_contract_signature"
+    receipt_revision = script.get_revision("0011_payment_receipt")
+    assert receipt_revision is not None
+    assert receipt_revision.down_revision == "0010_quote_cancellation_reason"
+    assert script.get_heads() == ["0011_payment_receipt"]
 
 
 def test_upgrade_adds_columns_and_default_and_downgrade_restores_them(database_url: str) -> None:
@@ -251,6 +255,62 @@ def test_inbox_support_upgrade_and_downgrade(database_url: str) -> None:
             text("SELECT array_agg(chatwoot_conversation_id) FROM conversation_links")
         )
         assert remaining == [901]  # el vínculo sin cliente no es representable y se elimina
+
+    _run(database_url, after_downgrade)
+    command.upgrade(config, "head")
+
+
+async def _constraint_definition(connection, name: str) -> str:  # type: ignore[no-untyped-def]
+    return str(
+        await connection.scalar(
+            text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :name"),
+            {"name": name},
+        )
+    )
+
+
+def test_payment_receipt_upgrade_and_downgrade(database_url: str) -> None:
+    config = _config(database_url)
+    command.upgrade(config, "head")
+    command.downgrade(config, "0010_quote_cancellation_reason")
+
+    async def before(connection) -> None:  # type: ignore[no-untyped-def]
+        assert "UNSPECIFIED" not in await _constraint_definition(
+            connection, "ck_payments_payment_method"
+        )
+        with pytest.raises(IntegrityError):
+            async with connection.begin_nested():
+                await connection.execute(
+                    text(
+                        "INSERT INTO conversation_links "
+                        "(chatwoot_conversation_id, handoff_reason) VALUES (950, 'PAYMENT_RECEIPT')"
+                    )
+                )
+
+    _run(database_url, before)
+    command.upgrade(config, "0011_payment_receipt")
+
+    async def after_upgrade(connection) -> None:  # type: ignore[no-untyped-def]
+        assert "UNSPECIFIED" in await _constraint_definition(
+            connection, "ck_payments_payment_method"
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO conversation_links (chatwoot_conversation_id, handoff_reason) "
+                "VALUES (951, 'PAYMENT_RECEIPT')"
+            )
+        )
+
+    _run(database_url, after_upgrade)
+    command.downgrade(config, "0010_quote_cancellation_reason")
+
+    async def after_downgrade(connection) -> None:  # type: ignore[no-untyped-def]
+        reason = await connection.scalar(
+            text(
+                "SELECT handoff_reason FROM conversation_links WHERE chatwoot_conversation_id = 951"
+            )
+        )
+        assert reason == "BOT_ERROR"
 
     _run(database_url, after_downgrade)
     command.upgrade(config, "head")

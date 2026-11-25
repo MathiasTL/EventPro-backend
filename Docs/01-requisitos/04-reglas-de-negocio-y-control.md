@@ -181,7 +181,7 @@ ausente o inválida en cualquier mes solicitado impide devolver resultados parci
 | **PC-10** | **Persistencia de Observaciones** | Estructural | Registro de cotización y contrato | Almacenamiento en campo específico visible en PDF y cronograma para evitar extravíos. |
 | **PC-11** | **Revalidación de Disponibilidad y Vencimiento de Adelanto** | Automático | Al pulsar «Pagar adelanto» (más de `AVAILABILITY_RECHECK_MINUTES`), al subir comprobante y al validar el pago; y al vencer `ADVANCE_DEADLINE_HOURS` | Revalidación con bloqueo distribuido (Redis lock) en la validación; la cotización pasa a `EXPIRED` al vencer el plazo; si no hay cupo se ofrece otro horario o derivación al encargado. |
 | **PC-12** | **Auditoría Posterior de Cobros In Situ** | Manual | Pago `BALANCE` o `EXTENSION` registrado con evidencia | El pago nace `VERIFIED` con `audit_status = UNREVIEWED`; el encargado lo marca `REVIEWED` o `FLAGGED` (con observaciones) sin bloquear la operación. |
-| **PC-13** | **Traspaso de Conversación a Encargado** | Híbrido | El cliente pide un encargado, el bot no entiende dos veces seguidas, el bot falla (`BOT_ERROR`) o un encargado toma la conversación | La conversación pasa a `open` (modo `HUMAN`) y el bot deja de responder; aviso en tiempo real en la bandeja; el encargado devuelve la conversación al bot con `release`. |
+| **PC-13** | **Traspaso de Conversación a Encargado** | Híbrido | El cliente pide un encargado, el bot no entiende dos veces seguidas, el bot falla (`BOT_ERROR`), el cliente envía su comprobante de pago (`PAYMENT_RECEIPT`) o un encargado toma la conversación | La conversación pasa a `open` (modo `HUMAN`) y el bot deja de responder; aviso en tiempo real en la bandeja; el encargado devuelve la conversación al bot con `release`. |
 
 ---
 
@@ -313,6 +313,8 @@ stateDiagram-v2
 | Motivo de traspaso | `BOT_NOT_UNDERSTOOD` | Bot no entendió | El bot no entendió al cliente dos veces consecutivas. |
 | Motivo de traspaso | `MANUAL_TAKEOVER` | Toma manual | Un encargado tomó la conversación mientras la atendía el bot. |
 | Motivo de traspaso | `BOT_ERROR` | Error del bot | Excepción no controlada del bot; derivación automática. |
+| Motivo de traspaso | `PAYMENT_RECEIPT` | Comprobante recibido | El cliente envió el comprobante del adelanto; el bot lo registró como pago pendiente de verificación y deriva a un encargado. |
+| Medio de pago | `UNSPECIFIED` | Por confirmar | Pago registrado por el bot a partir de un comprobante de WhatsApp; el encargado confirma el medio al verificarlo. |
 | Estado comercial de la conversación | `QUOTING` | Cotizando | Sin cotización vinculada: el bot recoge los datos del evento. |
 | Estado comercial de la conversación | `QUOTE_SENT` | Cotización enviada | La cotización vinculada está `SENT` y no se ha iniciado el pago. |
 | Estado comercial de la conversación | `PAYMENT_STARTED` | Pago iniciado | La cotización vinculada está en `PAYMENT_STARTED`. |

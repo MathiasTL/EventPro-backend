@@ -29,6 +29,7 @@ class HandoffReason(StrEnum):
     BOT_NOT_UNDERSTOOD = "BOT_NOT_UNDERSTOOD"
     MANUAL_TAKEOVER = "MANUAL_TAKEOVER"
     BOT_ERROR = "BOT_ERROR"
+    PAYMENT_RECEIPT = "PAYMENT_RECEIPT"
 
 
 def _require_aware(value: datetime, name: str) -> datetime:

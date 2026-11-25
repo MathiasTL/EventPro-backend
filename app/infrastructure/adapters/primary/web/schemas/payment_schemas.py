@@ -13,6 +13,7 @@ from app.domain.entities.payment import (
     PaymentMethod,
     PaymentValidationStatus,
 )
+from app.infrastructure.adapters.primary.web.schemas.payment_method import StaffPaymentMethod
 
 ScheduleAmount = Decimal
 
@@ -83,7 +84,7 @@ class PaymentAuditResponse(BaseModel):
 
 
 class PaymentRefundRequest(BaseModel):
-    refund_method: PaymentMethod
+    refund_method: StaffPaymentMethod
     transaction_reference: str | None = None
     notes: str | None = None
 
