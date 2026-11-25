@@ -181,6 +181,17 @@ async def test_register_advance_payment_rejects_invalid_file(
     assert "JPEG, PNG, WebP o PDF" in response.json()["detail"]
 
 
+async def test_register_advance_payment_rejects_the_unspecified_method(web_app: FastAPI) -> None:
+    data, files = _multipart()
+    data["payment_method"] = PaymentMethod.UNSPECIFIED.value
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=web_app), base_url="http://test"
+    ) as client:
+        response = await client.post(ADVANCE_PATH, headers=authorization(), data=data, files=files)
+    assert response.status_code == 422
+    assert response.json()["type"].endswith("validation-error")
+
+
 async def test_register_duplicate_active_advance_conflicts(web_app: FastAPI) -> None:
     data, files = _multipart()
     async with httpx.AsyncClient(
@@ -311,3 +322,15 @@ async def test_audit_balance_payment_records_audit_log(web_app: FastAPI) -> None
     assert response.json()["audit_status"] == "REVIEWED"
     assert len(audits.records) == 1
     assert audits.records[0].action == "AUDIT_PAYMENT"
+
+
+async def test_refund_rejects_the_unspecified_method(web_app: FastAPI) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=web_app), base_url="http://test"
+    ) as client:
+        response = await client.patch(
+            f"{PATH}/{uuid4()}/refund",
+            headers=authorization(),
+            json={"refund_method": PaymentMethod.UNSPECIFIED.value},
+        )
+    assert response.status_code == 422

@@ -157,6 +157,7 @@ async def test_missing_event_and_uuid_validation(setup):
         ("agreed_rate", "NaN"),
         ("agreed_rate", "1.001"),
         ("payment_method", "UNKNOWN"),
+        ("payment_method", "UNSPECIFIED"),
         ("unexpected", "1"),
     ],
 )

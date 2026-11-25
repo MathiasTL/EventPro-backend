@@ -15,9 +15,9 @@ from pydantic import (
 )
 
 from app.application.dtos.availability_dto import AvailabilityStatus
-from app.domain.entities.payment import PaymentMethod
 from app.domain.exceptions.resource_exceptions import ValidationError as DomainValidationError
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.adapters.primary.web.schemas.payment_method import StaffPaymentMethod
 
 
 class BudgetRequest(BaseModel):
@@ -84,7 +84,7 @@ class ManualRequest(BudgetRequest):
             raise ValueError(str(exc)) from exc
 
     district: str = Field(min_length=2, max_length=80)
-    payment_method: PaymentMethod
+    payment_method: StaffPaymentMethod
     paid_amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
 
 

@@ -15,7 +15,7 @@ class ConversationLinkModel(Base):
     __table_args__ = (
         CheckConstraint(
             "handoff_reason IN ('CLIENT_REQUEST', 'BOT_NOT_UNDERSTOOD', 'MANUAL_TAKEOVER', "
-            "'BOT_ERROR')",
+            "'BOT_ERROR', 'PAYMENT_RECEIPT')",
             name="ck_conversation_links_handoff_reason",
         ),
         Index("ix_conversation_links_client_id", "client_id"),
