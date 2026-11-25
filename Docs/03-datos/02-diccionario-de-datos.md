@@ -297,7 +297,7 @@ Registro de pagos de una cotización: adelanto (`ADVANCE`, con ciclo de verifica
 | `quote_id` | `UUID` | NO | - | FK (`quotes.id`), INDEX | Cotización a la que pertenece el pago. |
 | `event_id` | `UUID` | SÍ | `NULL` | FK (`events.id`), INDEX | Evento asociado; nulo mientras el adelanto no se valida (el evento aún no existe). |
 | `concept` | `VARCHAR(20)` | NO | - | CHECK in (`ADVANCE`, `BALANCE`, `EXTENSION`) | Concepto del pago. |
-| `payment_method` | `VARCHAR(30)` | NO | - | CHECK in (`YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`) | Medio de pago utilizado. UI: «Yape», «Plin», «Transferencia bancaria», «Efectivo». |
+| `payment_method` | `VARCHAR(30)` | NO | - | CHECK in (`YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`, `UNSPECIFIED`) | Medio de pago utilizado; `UNSPECIFIED` lo asigna el bot al registrar un comprobante recibido por WhatsApp. UI: «Yape», «Plin», «Transferencia bancaria», «Efectivo», «Por confirmar». |
 | `amount` | `NUMERIC(10,2)` | NO | - | CHECK (`amount > 0`) | Monto pagado en Soles (PEN). |
 | `evidence_path` | `VARCHAR(255)` | NO | - | - | Ruta de la evidencia: captura del comprobante (`ADVANCE`) o foto tomada in situ de la pantalla de Yape/Plin o del efectivo (`BALANCE`, `EXTENSION`). |
 | `transaction_reference` | `VARCHAR(60)` | SÍ | `NULL` | - | Número de operación bancaria o de Yape. |
@@ -459,7 +459,7 @@ Vínculo entre una conversación de Chatwoot y los datos de negocio de EventPro 
 | `client_id` | `UUID` | SÍ | `NULL` | FK (`clients.id`), INDEX | Cliente de la conversación (el teléfono de WhatsApp es su clave natural); nulo mientras el contacto no corresponde a un cliente registrado, porque el vínculo no crea clientes. |
 | `quote_id` | `UUID` | SÍ | `NULL` | FK (`quotes.id`), INDEX | Cotización vigente de la conversación, si existe. |
 | `assigned_user_id` | `UUID` | SÍ | `NULL` | FK (`users.id`), INDEX parcial | Encargado que tomó la conversación; nulo mientras responde el bot o si está derivada sin asignar. |
-| `handoff_reason` | `VARCHAR(30)` | SÍ | `NULL` | CHECK in (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`) | Motivo de la última derivación a un humano; nulo si nunca fue derivada. UI: «Solicitud del cliente», «Bot no entendió», «Toma manual», «Error del bot». |
+| `handoff_reason` | `VARCHAR(30)` | SÍ | `NULL` | CHECK in (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`, `PAYMENT_RECEIPT`) | Motivo de la última derivación a un humano; nulo si nunca fue derivada. UI: «Solicitud del cliente», «Bot no entendió», «Toma manual», «Error del bot», «Comprobante recibido». |
 | `handoff_summary` | `TEXT` | SÍ | `NULL` | - | Resumen generado al derivar (datos capturados y cotización vigente). |
 | `handed_off_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora de la última derivación; permite ordenar la bandeja. |
 | `last_client_message_at` | `TIMESTAMPTZ` | SÍ | `NULL` | - | Fecha y hora del último mensaje entrante del cliente; la ventana de servicio de WhatsApp vence 24 horas después. |

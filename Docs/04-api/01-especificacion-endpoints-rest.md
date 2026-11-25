@@ -9,7 +9,7 @@
 * **Autenticación:** Cabecera HTTP `Authorization: Bearer <jwt_access_token>`. Las excepciones (endpoints públicos, de token de cliente, del webhook de Chatwoot y del stream SSE) se indican en cada endpoint y se resumen en la [Matriz RBAC](02-matriz-rbac-y-seguridad.md), que es el complemento obligatorio de este documento: ambos describen exactamente el mismo inventario de endpoints (método y ruta).
 * **Códigos de estado:** `200 OK` (lecturas y actualizaciones), `201 Created` (creaciones de recursos), `202 Accepted` (acción aceptada y procesada de forma asíncrona), `204 No Content` (acciones sin cuerpo de respuesta), `400`/`422` (validación), `401`/`403` (autenticación y autorización), `404` (recurso inexistente o fuera de alcance del rol), `409 Conflict` (conflicto de dominio), `410 Gone` (recurso vencido), `429` (límite de peticiones), `503` (dependencia no disponible).
 * **Identificadores de estado y enumeraciones:** todos los valores de enumeración de los *payloads* son códigos en inglés `UPPER_SNAKE_CASE` (ver [RN, sección 3.5](../01-requisitos/04-reglas-de-negocio-y-control.md#35-tabla-de-mapeo-código-etiqueta-de-interfaz-y-significado)). Las etiquetas en español pertenecen solo a la interfaz. Enumeraciones usadas en esta API:
-  * `payment_method`: `YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`.
+  * `payment_method`: `YAPE`, `PLIN`, `BANK_TRANSFER`, `CASH`, `UNSPECIFIED`. `UNSPECIFIED` («Por confirmar») solo lo asigna el bot cuando registra un comprobante recibido por WhatsApp; todo endpoint donde el personal elige un medio de pago (registro de adelanto, reembolso, extensión en vivo, cobro del saldo y reserva manual) lo rechaza con `422` y el encargado confirma el medio real al verificar el pago.
   * `concept` (pago): `ADVANCE`, `BALANCE`, `EXTENSION`.
   * `service_category`: `SHOW`, `DJ`, `DECORATION`, `TENTS`.
   * Estados de cotización, pago, evento, contrato y `audit_status`: los de las máquinas de estados de la sección 3 del documento de RN.
@@ -647,11 +647,11 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
 
 #### `POST /payments/advance`
 * **Descripción:** Recibe la captura del comprobante de adelanto del 10% asociado a una cotización (RF-11). Es la ruta HTTP equivalente a la recepción de la imagen por WhatsApp.
-* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN` (registro en nombre del cliente). El bot de WhatsApp ejecuta el mismo caso de uso al recibir la imagen del cliente.
+* **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN` (registro en nombre del cliente). Cuando el cliente envía por WhatsApp una imagen o un PDF del comprobante de una cotización en `PAYMENT_STARTED`, el bot registra el adelanto con el mismo caso de uso (importe igual al `advance_amount` de la cotización, `payment_method = UNSPECIFIED`, estado `PENDING_VERIFICATION`), responde una confirmación al cliente y deriva la conversación con `handoff_reason = PAYMENT_RECEIPT`. Si ya existe un adelanto pendiente o en revisión no crea otro; si el archivo no es una imagen o PDF válido (máximo 5 MB) pide reenviarlo y no registra nada.
 * **Content-Type:** `multipart/form-data`
 * **Form Data:**
   * `quote_id`: UUID de la cotización.
-  * `payment_method`: `YAPE`, `PLIN` o `BANK_TRANSFER`.
+  * `payment_method`: `YAPE`, `PLIN` o `BANK_TRANSFER` (`UNSPECIFIED` se rechaza con `422`).
   * `amount`: `100.00` (debe ser exactamente `advance_amount` de la cotización).
   * `transaction_reference`: número de operación (opcional).
   * `receipt_file`: Archivo binario (JPEG, PNG, WebP o PDF; máximo 5 MB).
@@ -1402,7 +1402,7 @@ Bandeja de conversaciones de WhatsApp dentro de EventPro (ADR-10). Chatwoot es l
     "total": 1
   }
   ```
-  `status` es `pending`, `open` o `resolved`; `handoff_reason` es `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR` o `null`; `quote_id`, `quote_status`, `assigned_user_id`, `assigned_user_name` y `handed_off_at` son `null` cuando no aplican; `client.id` es `null` si el teléfono aún no corresponde a un cliente registrado (`client.name` cae al nombre del contacto o al teléfono). `quote_status` es el estado de la cotización vinculada. `lead_status` es un estado comercial **derivado y de solo lectura**, nunca nulo: `QUOTING` (sin cotización), `QUOTE_SENT` (`SENT`), `PAYMENT_STARTED`, `CONVERTED`, `QUOTE_CLOSED` (`EXPIRED` o `CANCELLED`) y `EVENT_DONE` (evento `SETTLED` o marca manual; especificación 09, D25). Salvo `EVENT_DONE`, que admite marca manual, no se escribe. `unread_count` es el contador de mensajes del cliente sin leer, compartido entre encargados. `assigned_user_id` solo se informa cuando `status` es `open`.
+  `status` es `pending`, `open` o `resolved`; `handoff_reason` es `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`, `PAYMENT_RECEIPT` o `null`; `quote_id`, `quote_status`, `assigned_user_id`, `assigned_user_name` y `handed_off_at` son `null` cuando no aplican; `client.id` es `null` si el teléfono aún no corresponde a un cliente registrado (`client.name` cae al nombre del contacto o al teléfono). `quote_status` es el estado de la cotización vinculada. `lead_status` es un estado comercial **derivado y de solo lectura**, nunca nulo: `QUOTING` (sin cotización), `QUOTE_SENT` (`SENT`), `PAYMENT_STARTED`, `CONVERTED`, `QUOTE_CLOSED` (`EXPIRED` o `CANCELLED`) y `EVENT_DONE` (evento `SETTLED` o marca manual; especificación 09, D25). Salvo `EVENT_DONE`, que admite marca manual, no se escribe. `unread_count` es el contador de mensajes del cliente sin leer, compartido entre encargados. `assigned_user_id` solo se informa cuando `status` es `open`.
 * **Errores:** `403` (`forbidden`, `assigned_user_id` enviado por un `ENCARGADO`), `422` (`validation-error`, `q` de menos de 2 caracteres), `503` (`messaging-gateway-unavailable`).
 
 #### `GET /conversations/{id}`
