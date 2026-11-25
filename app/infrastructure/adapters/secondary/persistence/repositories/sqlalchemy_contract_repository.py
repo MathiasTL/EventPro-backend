@@ -90,14 +90,30 @@ class SqlAlchemyContractRepository:
             raise ResourceNotFoundError("Evento no encontrado")
         row = (
             await self._session.execute(
-                select(QuoteModel, ClientModel, PackageModel.name, ThemeModel.name)
+                select(
+                    QuoteModel,
+                    ClientModel,
+                    PackageModel.name,
+                    PackageModel.service_category,
+                    PackageModel.duration_minutes,
+                    PackageModel.description,
+                    ThemeModel.name,
+                )
                 .join(ClientModel, ClientModel.id == QuoteModel.client_id)
                 .join(PackageModel, PackageModel.id == QuoteModel.package_id)
                 .outerjoin(ThemeModel, ThemeModel.id == QuoteModel.theme_id)
                 .where(QuoteModel.id == event.quote_id)
             )
         ).one()
-        quote, client, package_name, theme_name = row
+        (
+            quote,
+            client,
+            package_name,
+            service_category,
+            duration_minutes,
+            package_description,
+            theme_name,
+        ) = row
         extra_rows = (
             await self._session.execute(
                 select(ExtraModel.name, QuoteExtraModel.quantity, QuoteExtraModel.subtotal)
@@ -138,6 +154,11 @@ class SqlAlchemyContractRepository:
             required_advance=quote.advance_amount,
             observations=event.client_observations,
             event_started=event.actual_start_time is not None,
+            event_code=event.event_code,
+            service_category=service_category,
+            duration_minutes=duration_minutes,
+            package_description=package_description,
+            client_provides_mobility=quote.client_provides_mobility,
         )
 
     async def next_number(self, year: int) -> str:

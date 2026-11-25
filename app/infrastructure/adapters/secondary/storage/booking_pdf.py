@@ -64,5 +64,7 @@ async def contract_pdf(booking: ManualBooking, number: str) -> bytes:
         advance=booking.paid_amount,
         required_advance=booking.advance_amount,
         observations=booking.observations,
+        event_code="EVT-" + event_id.hex[:20].upper(),
+        duration_minutes=booking.duration_minutes,
     )
     return await ReportLabContractPdf().render(contract, data)
