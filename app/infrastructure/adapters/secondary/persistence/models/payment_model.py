@@ -29,7 +29,7 @@ class PaymentModel(Base):
             "concept IN ('ADVANCE', 'BALANCE', 'EXTENSION')", name="ck_payments_concept"
         ),
         CheckConstraint(
-            "payment_method IN ('YAPE', 'PLIN', 'BANK_TRANSFER', 'CASH')",
+            "payment_method IN ('YAPE', 'PLIN', 'BANK_TRANSFER', 'CASH', 'UNSPECIFIED')",
             name="ck_payments_payment_method",
         ),
         CheckConstraint(

@@ -83,7 +83,7 @@ Las credenciales de Meta (token de *system user*, ID del número, ID de la cuent
 | `client_id` | FK opcional a `clients` (teléfono de WhatsApp como clave natural); nulo mientras el contacto no es un cliente registrado, porque el vínculo no crea clientes. |
 | `quote_id` | FK opcional a la cotización vigente. |
 | `assigned_user_id` | FK opcional al encargado que tomó la conversación. |
-| `handoff_reason` | `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR` o nulo. |
+| `handoff_reason` | `CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`, `PAYMENT_RECEIPT` o nulo. |
 | `handoff_summary` | Resumen generado al derivar (datos capturados, cotización vigente). |
 | `handed_off_at` | Fecha y hora de la última derivación. |
 | `last_client_message_at` | Último mensaje entrante del cliente; define cuándo vence la ventana de 24 h. |

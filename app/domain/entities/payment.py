@@ -22,6 +22,8 @@ class PaymentMethod(StrEnum):
     PLIN = "PLIN"
     BANK_TRANSFER = "BANK_TRANSFER"
     CASH = "CASH"
+    # Comprobante recibido por WhatsApp: el encargado confirma el medio al verificarlo.
+    UNSPECIFIED = "UNSPECIFIED"
 
 
 class PaymentValidationStatus(StrEnum):

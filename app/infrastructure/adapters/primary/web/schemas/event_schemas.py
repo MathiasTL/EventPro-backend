@@ -11,10 +11,10 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerialize
 from app.domain.entities.payment import (
     PaymentAuditStatus,
     PaymentConcept,
-    PaymentMethod,
     PaymentValidationStatus,
 )
 from app.domain.value_objects.event_status import EventStatus
+from app.infrastructure.adapters.primary.web.schemas.payment_method import StaffPaymentMethod
 
 ScheduleTime = Annotated[time, PlainSerializer(lambda value: value.strftime("%H:%M"), str)]
 ScheduleAmount = Annotated[
@@ -69,7 +69,7 @@ class EventExtensionRequest(BaseModel):
 
     extra_minutes: int = Field(gt=0, le=2147483647)
     agreed_rate: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
-    payment_method: PaymentMethod
+    payment_method: StaffPaymentMethod
     transaction_reference: str | None = Field(default=None, min_length=1, max_length=60)
     evidence_file: UploadFile
 

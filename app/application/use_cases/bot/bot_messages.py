@@ -41,8 +41,11 @@ ALREADY_PAID = (
     'comprobante y un encargado lo validará. Escribe "menú" para cotizar otro evento o '
     '"asesor" para hablar con un encargado.'
 )
-RECEIPT_RECEIVED = (
-    "Recibimos tu mensaje. Un encargado validará tu comprobante y te confirmará la reserva."
+RECEIPT_REGISTERED = (
+    "Recibimos tu comprobante. Un encargado lo validará y te confirmará la reserva."
+)
+RECEIPT_UNREADABLE = (
+    "No pudimos leer el archivo. Envía la captura del comprobante como imagen o PDF (máximo 5 MB)."
 )
 OTHER_DATE = "Elegir otra fecha u horario"
 TALK_TO_A_PERSON = "Hablar con un encargado"

@@ -158,7 +158,7 @@ Etiqueta de solo lectura en la fila y en la cabecera del hilo. No se escribe, no
 
 > **Decisión de diseño D1.** El vínculo se crea (*upsert* idempotente) al primer evento de la conversación y, si falta, también al tomar, enviar o consultar. El cliente se resuelve por teléfono y **no se crea cliente nuevo**: `client_id` pasa a ser nulo. *Por qué:* `get_or_create` nunca sobrescribe el nombre (`client_repository_port.py:16-17`), así que crear un cliente con el nombre de perfil de WhatsApp impediría que el bot guarde el nombre real; además, `clients` queda solo con quien cotiza.
 
-* **Entidad `ConversationLink`** (`app/domain/entities/conversation_link.py`), con `HandoffReason` (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`) y operaciones `register_handoff`, `assign`, `unassign`, `link_quote`, `record_client_message`.
+* **Entidad `ConversationLink`** (`app/domain/entities/conversation_link.py`), con `HandoffReason` (`CLIENT_REQUEST`, `BOT_NOT_UNDERSTOOD`, `MANUAL_TAKEOVER`, `BOT_ERROR`, `PAYMENT_RECEIPT`) y operaciones `register_handoff`, `assign`, `unassign`, `link_quote`, `record_client_message`.
 * **Puerto `IConversationLinkRepositoryPort`** (`app/application/ports/output/`), sin `commit` como los demás repositorios:
 
 | Método | Uso |
@@ -219,7 +219,7 @@ Puerto de lectura nuevo `IInboxLookupPort` con tres consultas por lote: `client_
 
 ### 6.2 Derivación del bot
 
-> **Decisión de diseño D2.** La derivación persiste en el vínculo y emite `handoff.requested`; los motivos internos del bot se traducen a `HandoffReason`: `requested`, `chosen`, `client_request` → `CLIENT_REQUEST`; `not_understood`, `bot_not_understood` → `BOT_NOT_UNDERSTOOD`; `error`, `no_catalog` → `BOT_ERROR`. *Por qué:* RF-30 y US-27 exigen motivo y resumen persistentes; `no_catalog` es una falla del sistema, no un pedido del cliente.
+> **Decisión de diseño D2.** La derivación persiste en el vínculo y emite `handoff.requested`; los motivos internos del bot se traducen a `HandoffReason`: `requested`, `chosen`, `client_request` → `CLIENT_REQUEST`; `not_understood`, `bot_not_understood` → `BOT_NOT_UNDERSTOOD`; `error`, `no_catalog` → `BOT_ERROR`; `payment_receipt` → `PAYMENT_RECEIPT` (el cliente envió el comprobante del adelanto y el bot lo registró). *Por qué:* RF-30 y US-27 exigen motivo y resumen persistentes; `no_catalog` es una falla del sistema, no un pedido del cliente.
 
 1. El bot encola el aviso al cliente (como hoy).
 2. Arma el resumen **antes** de `sessions.clear`, desde los campos estructurados de la sesión (`BotSession` o `AgentSession`) y la cotización vigente.

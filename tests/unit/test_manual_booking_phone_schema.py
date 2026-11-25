@@ -78,3 +78,9 @@ def test_schema_rejects_zero_led_numbers_with_a_validation_error(raw: str) -> No
 
     with pytest.raises(ValidationError):
         ManualRequest(**_payload(raw))
+
+
+def test_schema_rejects_the_bot_only_unspecified_payment_method() -> None:
+    payload = _payload("999999999") | {"payment_method": "UNSPECIFIED"}
+    with pytest.raises(ValidationError):
+        ManualRequest(**payload)

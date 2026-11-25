@@ -35,6 +35,7 @@ from app.application.use_cases.bot.bot_handoff import (
     agent_summary,
     link_created_quote,
     menu_summary,
+    receipt_summary,
     stored_session_summary,
 )
 from app.application.use_cases.bot.bot_input import (
@@ -50,6 +51,11 @@ from app.application.use_cases.bot.bot_input import (
     pick_option,
 )
 from app.application.use_cases.bot.bot_session import BotSession, BotStep, MenuOption
+from app.application.use_cases.bot.payment_receipt import (
+    RECEIPT_HANDOFF_REASON,
+    PaymentReceiptHandler,
+    has_attachments,
+)
 from app.core.logging import get_logger
 from app.domain.entities.quote import QuoteSource, QuoteStatus
 from app.domain.exceptions.quote_exceptions import (
@@ -114,6 +120,7 @@ class HandleIncomingMessage:
         lock: ICacheLockPort | None = None,
         agent: ConversationAgent | None = None,
         handoffs: BotHandoffRecorder | None = None,
+        receipts: PaymentReceiptHandler | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._sessions = sessions
@@ -122,6 +129,7 @@ class HandleIncomingMessage:
         self._lock = lock
         self._agent = agent
         self._handoffs = handoffs
+        self._receipts = receipts
 
     async def execute(self, message: IncomingClientMessage) -> GatewayEventOutcome:
         """``APPLIED`` si el bot respondió; ``IGNORED`` si no le tocaba o ya lo había hecho."""
@@ -162,6 +170,14 @@ class HandleIncomingMessage:
                 summary=stored_session_summary(stored),
             )
             return GatewayEventOutcome.APPLIED
+        if (
+            self._receipts is not None
+            and has_attachments(message)
+            and not asks_to_restart(normalized)
+        ):
+            awaiting = _awaiting_receipt(stored)
+            if awaiting is not None:
+                return await self._on_receipt(message, awaiting)
         session = BotSession.from_dict(stored) if stored is not None else None
         # Una conversación que cayó al motor de menús sigue en él hasta que termine o el
         # cliente escriba "menú"; ahí vuelve al agente.
@@ -177,6 +193,40 @@ class HandleIncomingMessage:
         if session is None or asks_to_restart(normalized):
             return await self._run(message, BotSession(), self._begin, text, normalized)
         return await self._run(message, session, self._advance, text, normalized)
+
+    async def _on_receipt(
+        self, message: IncomingClientMessage, awaiting: "_AwaitingReceipt"
+    ) -> GatewayEventOutcome:
+        """Comprobante del cliente (ambos motores): lo registra y deriva, o pide reenviarlo."""
+
+        receipts = self._receipts
+        if receipts is None:
+            raise RuntimeError("No hay un manejador de comprobantes configurado")
+        try:
+            result = await receipts.handle(message, awaiting.quote_id)
+        except Exception as error:
+            get_logger("bot").error(
+                "bot_turn_failed",
+                conversation_id=message.conversation_id,
+                step="receipt",
+                error_type=type(error).__name__,
+            )
+            await self._handoff(
+                message, texts.HANDOFF_ERROR, reason="error", summary=awaiting.summary
+            )
+            return GatewayEventOutcome.APPLIED
+        if result.handoff:
+            await self._handoff(
+                message,
+                result.reply,
+                reason=RECEIPT_HANDOFF_REASON,
+                summary=receipt_summary(awaiting.summary),
+            )
+            return GatewayEventOutcome.APPLIED
+        await self._reply_alone(message, result.reply)
+        awaiting.session.last_message_id = message.external_message_id
+        await self._sessions.save(message.conversation_id, awaiting.session.to_dict())
+        return GatewayEventOutcome.APPLIED
 
     async def _run_agent(
         self, message: IncomingClientMessage, session: AgentSession
@@ -573,7 +623,8 @@ class HandleIncomingMessage:
         return await self._create_quote(turn)
 
     async def _on_paid(self, turn: _Turn) -> str:
-        return texts.ALREADY_PAID if turn.text else texts.RECEIPT_RECEIVED
+        # Los comprobantes (adjuntos) los atiende ``_on_receipt`` antes de llegar aquí.
+        return texts.ALREADY_PAID
 
     def _offer_alternatives(self, session: BotSession, error: AvailabilityRejectedError) -> str:
         options = [
@@ -589,6 +640,29 @@ class HandleIncomingMessage:
         session.options = options
         session.step = BotStep.ALTERNATIVES
         return texts.prompt(session)
+
+
+@dataclass(frozen=True)
+class _AwaitingReceipt:
+    """Sesión de un cliente que ya inició el pago y debe enviar su comprobante."""
+
+    session: BotSession | AgentSession
+    quote_id: UUID
+    summary: str | None
+
+
+def _awaiting_receipt(stored: dict[str, Any] | None) -> _AwaitingReceipt | None:
+    if stored is None:
+        return None
+    menu = BotSession.from_dict(dict(stored))
+    if menu is not None:
+        if menu.step is BotStep.PAID and menu.quote_id:
+            return _AwaitingReceipt(menu, UUID(menu.quote_id), menu_summary(menu))
+        return None
+    agent = AgentSession.from_dict(stored)
+    if agent is not None and agent.payment_started and agent.quote_id:
+        return _AwaitingReceipt(agent, UUID(agent.quote_id), agent_summary(agent))
+    return None
 
 
 def _restore(snapshot: dict[str, Any]) -> BotSession:

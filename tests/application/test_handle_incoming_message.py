@@ -574,12 +574,14 @@ async def test_an_unexpected_error_hands_off_and_leaves_no_partial_message() -> 
     assert "base de datos" not in str(logs)  # el log no lleva el mensaje del error
 
 
-async def test_a_paid_conversation_reminds_the_client_and_handles_receipts() -> None:
+async def test_a_paid_conversation_reminds_the_client_without_a_receipt() -> None:
     bot = BotHarness()
     await bot.run(*HAPPY_PATH, "1")
 
     assert await bot.say("gracias") == texts.ALREADY_PAID
-    assert await bot.say("") == texts.RECEIPT_RECEIVED
+    # Sin adjunto (un sticker o un emoji) no hay comprobante que registrar.
+    assert await bot.say("") == texts.ALREADY_PAID
+    assert bot.register_receipt.registered == []
 
 
 # --- Logs ----------------------------------------------------------------------------------

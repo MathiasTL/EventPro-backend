@@ -243,7 +243,7 @@ erDiagram
         uuid quote_id FK "FK (quotes.id), INDEX"
         uuid event_id FK "NULL; FK (events.id), INDEX"
         varchar(20) concept "CHECK in (ADVANCE, BALANCE, EXTENSION)"
-        varchar(30) payment_method "CHECK in (YAPE, PLIN, BANK_TRANSFER, CASH)"
+        varchar(30) payment_method "CHECK in (YAPE, PLIN, BANK_TRANSFER, CASH, UNSPECIFIED)"
         numeric(10_2) amount "CHECK (amount > 0)"
         varchar(255) evidence_path
         varchar(60) transaction_reference "NULL"
@@ -315,7 +315,7 @@ erDiagram
         uuid client_id FK "NULL; FK (clients.id), INDEX"
         uuid quote_id FK "NULL; FK (quotes.id), INDEX"
         uuid assigned_user_id FK "NULL; FK (users.id); partial INDEX"
-        varchar(30) handoff_reason "NULL; CHECK in (CLIENT_REQUEST, BOT_NOT_UNDERSTOOD, MANUAL_TAKEOVER, BOT_ERROR)"
+        varchar(30) handoff_reason "NULL; CHECK in (CLIENT_REQUEST, BOT_NOT_UNDERSTOOD, MANUAL_TAKEOVER, BOT_ERROR, PAYMENT_RECEIPT)"
         text handoff_summary "NULL"
         timestamptz handed_off_at "NULL"
         timestamptz last_client_message_at "NULL"
