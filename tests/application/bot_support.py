@@ -13,8 +13,17 @@ from app.application.dtos.catalog_dto import (
     PackageReadDTO,
     ThemeDTO,
 )
-from app.application.dtos.gateway_event_dto import GatewayEventOutcome, IncomingClientMessage
-from app.application.dtos.messaging_dto import ConversationStatus, ConversationSummary
+from app.application.dtos.gateway_event_dto import (
+    GatewayEventOutcome,
+    IncomingClientMessage,
+    MessageDetails,
+)
+from app.application.dtos.messaging_dto import (
+    AttachmentContent,
+    ConversationStatus,
+    ConversationSummary,
+    MessageAttachment,
+)
 from app.application.ports.output.bot_unit_of_work_port import BotTransaction
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
 from app.application.ports.output.conversation_link_repository_port import (
@@ -25,7 +34,10 @@ from app.application.ports.output.messaging_port import IMessagingPort
 from app.application.use_cases.bot.agent_engine import ConversationAgent
 from app.application.use_cases.bot.bot_handoff import BotHandoffRecorder
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
+from app.application.use_cases.bot.payment_receipt import PaymentReceiptHandler
 from app.application.use_cases.messaging.enqueue_message import EnqueueMessage
+from app.domain.exceptions.resource_exceptions import ResourceNotFoundError
+from app.domain.exceptions.storage_exceptions import EvidenceValidationError
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.service_category import ServiceCategory
 from app.infrastructure.adapters.secondary.cache.in_memory_conversation_session_adapter import (
@@ -44,6 +56,9 @@ from tests.application.inbox_read_support import FakeInboxLookup
 from tests.application.outbox_support import FixedClock, InMemoryOutboxStore
 
 CONVERSATION_ID = 7
+MAX_RECEIPT_BYTES = 5 * 1024 * 1024
+INVALID_RECEIPT = b"not-an-image"
+VALID_RECEIPT = b"\x89PNG-receipt"
 PHONE = PhoneNumber("+51999111222")
 
 
@@ -133,6 +148,16 @@ class RecordingMessaging:
     def __init__(self, *, fail: bool = False) -> None:
         self.statuses: list[tuple[int, ConversationStatus]] = []
         self.fail = fail
+        self.attachments: dict[int, AttachmentContent] = {}
+        self.download_error: Exception | None = None
+
+    async def get_attachment(self, conversation_id: int, attachment_id: int) -> AttachmentContent:
+        if self.download_error is not None:
+            raise self.download_error
+        content = self.attachments.get(attachment_id)
+        if content is None:
+            raise ResourceNotFoundError("El adjunto no existe")
+        return content
 
     async def get_conversation(self, conversation_id: int) -> ConversationSummary:
         return ConversationSummary(
@@ -150,6 +175,44 @@ class RecordingMessaging:
         if self.fail:
             raise RuntimeError("gateway caido")
         self.statuses.append((conversation_id, status))
+
+
+class FakeReceiptStorage:
+    """Almacenamiento de comprobantes en memoria: rechaza los bytes ``INVALID_RECEIPT``."""
+
+    def __init__(self) -> None:
+        self.stored: dict[str, bytes] = {}
+        self.deleted: list[str] = []
+
+    def max_bytes(self) -> int:
+        return MAX_RECEIPT_BYTES
+
+    async def store(self, *, data: bytes, content_type: str, original_filename: str) -> str:
+        if data == INVALID_RECEIPT:
+            raise EvidenceValidationError("Tipo de archivo no permitido; use JPEG, PNG o WebP")
+        path = f"evidence/receipt-{len(self.stored) + 1}.png"
+        self.stored[path] = data
+        return path
+
+    async def delete(self, evidence_path: str) -> None:
+        self.deleted.append(evidence_path)
+        self.stored.pop(evidence_path, None)
+
+    async def open(self, evidence_path: str) -> bytes:
+        return self.stored[evidence_path]
+
+
+class FakeRegisterReceipt:
+    """Registro del adelanto del bot: guarda las llamadas y puede fallar a pedido."""
+
+    def __init__(self) -> None:
+        self.registered: list[tuple[UUID, str]] = []
+        self.error: Exception | None = None
+
+    async def execute(self, quote_id: UUID, evidence_path: str) -> None:
+        if self.error is not None:
+            raise self.error
+        self.registered.append((quote_id, evidence_path))
 
 
 class _LinkUnitOfWork:
@@ -215,6 +278,8 @@ class BotHarness:
         self.catalog = catalog or FakeCatalog()
         self.sessions = InMemoryConversationSessionAdapter()
         self.messaging = RecordingMessaging()
+        self.storage = FakeReceiptStorage()
+        self.register_receipt = FakeRegisterReceipt()
         self.clock = FixedClock()
         self.create_quote_override: Any = None
         self.links = InMemoryConversationLinkRepository()
@@ -236,6 +301,11 @@ class BotHarness:
                 publisher=self.publisher,
                 clock=self.clock,
             ),
+            receipts=PaymentReceiptHandler(
+                unit_of_work=self._unit_of_work,
+                messaging=cast("IMessagingPort", self.messaging),
+                storage=self.storage,
+            ),
             agent=ConversationAgent(
                 unit_of_work=self._unit_of_work,
                 model=model,
@@ -256,6 +326,7 @@ class BotHarness:
                 create_quote=self.create_quote_override or self.create_quote,
                 pay_advance=self.pay_advance,
                 enqueue_message=EnqueueMessage(repository, self.clock),
+                register_receipt=self.register_receipt,
                 catalog=self.catalog,
                 conversation_links=links,
             )
@@ -273,6 +344,7 @@ class BotHarness:
         status: ConversationStatus = ConversationStatus.BOT,
         private: bool = False,
         message_id: str | None = None,
+        attachments: Sequence[MessageAttachment] = (),
     ) -> str:
         """Envía un mensaje del cliente y devuelve lo que el bot respondió (``""`` si nada)."""
 
@@ -285,6 +357,7 @@ class BotHarness:
             sender_phone=PHONE,
             content=text,
             is_private=private,
+            details=MessageDetails(attachments=attachments),
         )
         self.last_outcome: GatewayEventOutcome = await self.use_case.execute(event)
         return "\n".join(self.sent[before:])
@@ -313,3 +386,26 @@ HAPPY_PATH = (
     "2",  # que cotice la movilidad
     "no",  # sin observaciones
 )
+
+
+def receipt_attachment(
+    attachment_id: int = 1,
+    *,
+    file_type: str = "image",
+    content_type: str | None = "image/png",
+    file_size: int | None = None,
+) -> MessageAttachment:
+    return MessageAttachment(
+        attachment_id=attachment_id,
+        file_type=file_type,
+        content_type=content_type,
+        file_size=file_size,
+    )
+
+
+def add_receipt_file(bot: BotHarness, attachment_id: int = 1, data: bytes = VALID_RECEIPT) -> None:
+    """Deja descargable el adjunto ``attachment_id`` de la conversación del bot."""
+
+    bot.messaging.attachments[attachment_id] = AttachmentContent(
+        data=data, content_type="image/png", filename="comprobante.png"
+    )

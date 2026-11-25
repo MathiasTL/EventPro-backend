@@ -112,9 +112,6 @@ class ConversationAgent:
         """
 
         text = message.content.strip()
-        if not text and session.payment_started:
-            await self._reply(message, texts.RECEIPT_RECEIVED)
-            return AgentTurnResult()
         log = get_logger("bot")
         deadline = clock_time.monotonic() + self._turn_budget_seconds
         system_prompt = prompts.build_system_prompt(texts.today_in_lima(self._clock.utcnow()))

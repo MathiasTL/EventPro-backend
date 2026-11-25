@@ -80,6 +80,7 @@ from app.application.use_cases.auth.refresh import RefreshUseCase
 from app.application.use_cases.bot.agent_engine import ConversationAgent
 from app.application.use_cases.bot.bot_handoff import BotHandoffRecorder
 from app.application.use_cases.bot.handle_incoming_message import HandleIncomingMessage
+from app.application.use_cases.bot.payment_receipt import PaymentReceiptHandler
 from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCase
 from app.application.use_cases.clients.find_clients import FindClientsUseCase
 from app.application.use_cases.clients.get_client import GetClientUseCase
@@ -134,6 +135,9 @@ from app.application.use_cases.payment.get_payment_evidence import GetPaymentEvi
 from app.application.use_cases.payment.list_payments import ListPaymentsUseCase
 from app.application.use_cases.payment.refund_payment import RefundPaymentUseCase
 from app.application.use_cases.payment.register_advance_payment import RegisterAdvancePaymentUseCase
+from app.application.use_cases.payment.register_payment_receipt import (
+    RegisterPaymentReceiptUseCase,
+)
 from app.application.use_cases.payment.verify_payment import VerifyPaymentUseCase
 from app.application.use_cases.quote.cancel_quote import CancelQuoteUseCase
 from app.application.use_cases.quote.confirm_manual_booking import ConfirmManualBookingUseCase
@@ -1227,13 +1231,22 @@ def get_bot_lock() -> ICacheLockPort:
 def build_bot_transaction(session: AsyncSession) -> BotTransaction:
     """Casos de uso del bot sobre la sesión de un turno (spec 08, sección 6, pregunta 5).
 
-    CreateQuote, PayAdvance y EnqueueMessage comparten sesión y commit de la unidad de trabajo.
+    CreateQuote, PayAdvance, RegisterPaymentReceipt y EnqueueMessage comparten sesión y commit
+    de la unidad de trabajo.
     """
 
     return BotTransaction(
         create_quote=build_create_quote_use_case(session),
         pay_advance=build_pay_advance_use_case(session),
         enqueue_message=get_enqueue_message_use_case(session),
+        register_receipt=RegisterPaymentReceiptUseCase(
+            get_quote_repository(session),
+            RegisterAdvancePaymentUseCase(
+                sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(
+                    session, commit_on_save=False
+                )
+            ),
+        ),
         catalog=get_catalog_read_port(session),
         conversation_links=sqlalchemy_conversation_link_repository.SqlAlchemyConversationLinkRepository(
             session
@@ -1282,6 +1295,11 @@ def get_handle_incoming_message_use_case() -> HandleIncomingMessage:
         messaging=get_messaging_port(),
         clock=get_clock_port(),
         lock=get_bot_lock(),
+        receipts=PaymentReceiptHandler(
+            unit_of_work=get_bot_unit_of_work(),
+            messaging=get_messaging_port(),
+            storage=get_evidence_storage(),
+        ),
         handoffs=BotHandoffRecorder(
             links=SqlAlchemyConversationLinkUnitOfWork(get_sessionmaker()),
             lookup=get_inbox_lookup(),

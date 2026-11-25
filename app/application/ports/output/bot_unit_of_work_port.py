@@ -1,15 +1,16 @@
 """Unidad de trabajo del bot de WhatsApp: una transacción que comparten sus casos de uso.
 
 Fuera de HTTP no hay una sesión por petición que confirme sola (spec 08, sección 2.4). El bot
-abre una unidad de trabajo por turno de conversación: ``CreateQuote``, ``PayAdvance`` y
-``EnqueueMessage`` leen y escriben con la misma sesión, de modo que la cotización y su
-resumen de WhatsApp se confirman juntos o ninguno queda.
+abre una unidad de trabajo por turno de conversación: ``CreateQuote``, ``PayAdvance``,
+``RegisterPaymentReceipt`` y ``EnqueueMessage`` leen y escriben con la misma sesión, de modo que
+la cotización y su resumen de WhatsApp se confirman juntos o ninguno queda.
 """
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 
+from app.application.ports.input.payment_receipt_port import IRegisterPaymentReceiptPort
 from app.application.ports.input.quote_create_port import ICreateQuotePort
 from app.application.ports.input.quote_lifecycle_port import IPayAdvancePort
 from app.application.ports.output.catalog_read_port import ICatalogReadPort
@@ -26,6 +27,7 @@ class BotTransaction:
     create_quote: ICreateQuotePort
     pay_advance: IPayAdvancePort
     enqueue_message: EnqueueMessage
+    register_receipt: IRegisterPaymentReceiptPort
     catalog: ICatalogReadPort
     # El vínculo con la cotización se confirma o revierte con ella (spec 09, 6.2).
     conversation_links: IConversationLinkRepositoryPort

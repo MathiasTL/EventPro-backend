@@ -48,7 +48,11 @@ _REASONS = {
     "error": HandoffReason.BOT_ERROR,
     "no_catalog": HandoffReason.BOT_ERROR,
     "llm_after_action": HandoffReason.BOT_ERROR,
+    "payment_receipt": HandoffReason.PAYMENT_RECEIPT,
 }
+
+
+_RECEIPT_NOTE = "Comprobante de pago recibido"
 
 
 def map_reason(reason: str) -> HandoffReason:
@@ -99,6 +103,12 @@ def stored_session_summary(stored: dict[str, Any] | None) -> str | None:
         return menu_summary(menu)
     agent = AgentSession.from_dict(stored)
     return agent_summary(agent) if agent is not None else None
+
+
+def receipt_summary(summary: str | None) -> str:
+    """Agrega al resumen de la derivación que el cliente envió su comprobante de pago."""
+
+    return f"{summary}. {_RECEIPT_NOTE}" if summary else _RECEIPT_NOTE
 
 
 def _summary(quote_id: str | None, details: str) -> str | None:
