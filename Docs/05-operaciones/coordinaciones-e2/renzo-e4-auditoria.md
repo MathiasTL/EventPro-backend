@@ -10,8 +10,8 @@ Seguir la [guía de integración E2](README.md). E4 adapta sus overrides a la se
 
 ## Entregables de Renzo
 
-- [ ] Proteger las rutas con los roles de la matriz RBAC, reutilizando dependencias E2; conservar rechazo de cuenta inactiva o rol degradado.
-- [ ] Auditar movilidad e intervalos con `OVERRIDE_MOBILITY` y `OVERRIDE_TRANSIT_INTERVAL`, actor, motivo y valores anteriores/nuevos.
+- [x] Proteger las rutas con los roles de la matriz RBAC, reutilizando dependencias E2; conservar rechazo de cuenta inactiva o rol degradado.
+- [x] Auditar movilidad e intervalos con `OVERRIDE_MOBILITY` y `OVERRIDE_TRANSIT_INTERVAL`, actor, motivo y valores anteriores/nuevos.
 - [ ] Vincular auditoría a la misma transacción cuando la operación requiera atomicidad. Un fallo de auditoría debe impedir confirmar el override.
 - [ ] Usar las acciones del vocabulario y el puerto de auditoría existentes. Coordinar con Diego las nuevas acciones, manteniendo código y migración coherentes.
 - [ ] No cambiar importes, cláusulas o evidencia del contrato firmado mediante un override. Canalizar cambios previos a firma por los casos de uso E2; una edición de notas E2 regenera PDF y rota el enlace.

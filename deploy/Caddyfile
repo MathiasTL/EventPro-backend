@@ -7,7 +7,8 @@
 # si no, usar enrutamiento por ruta en un solo dominio):
 #   app.<dominio>   web de EventPro (frontend)
 #   api.<dominio>   API de EventPro
-#   chat.<dominio>  Chatwoot, SOLO las rutas que necesita Meta
+#   chat.<dominio>  Chatwoot: rutas de Meta abiertas, administracion con autenticacion basica
+#   CHATWOOT_ADMIN_USER / CHATWOOT_ADMIN_PASSWORD_HASH  credenciales de esa autenticacion basica
 
 {
 	# Sin API de administracion expuesta.
@@ -55,9 +56,9 @@ api.{$EVENTPRO_DOMAIN} {
 	}
 }
 
-# --- Chatwoot (solo lo que necesita Meta) ------------------------------------
-# La administracion de Chatwoot NO se publica: se usa por el puerto local 127.0.0.1:3001 del
-# servidor (tunel SSH) o, en desarrollo, directamente en localhost.
+# --- Chatwoot -----------------------------------------------------------------
+# Rutas de Meta abiertas; la administracion requiere autenticacion basica + login de Chatwoot.
+# El puerto local 127.0.0.1:3001 del servidor sigue disponible por tunel SSH como respaldo.
 chat.{$EVENTPRO_DOMAIN} {
 	encode zstd gzip
 
@@ -81,9 +82,15 @@ chat.{$EVENTPRO_DOMAIN} {
 	# 	reverse_proxy chatwoot-rails:3000
 	# }
 
-	# Todo lo demas (panel de administracion, API de plataforma) queda fuera de internet.
+	# Todo lo demas (panel de administracion, API, ActionCable) se publica detras de una
+	# autenticacion basica de Caddy, que se suma al inicio de sesion de Chatwoot. El webhook y los
+	# medios quedan fuera de esta capa porque Meta no envia credenciales.
+	# Hash: docker run --rm caddy:2 caddy hash-password --plaintext '<contrasena>'
 	handle {
-		respond 404
+		basic_auth {
+			{$CHATWOOT_ADMIN_USER} {$CHATWOOT_ADMIN_PASSWORD_HASH}
+		}
+		reverse_proxy chatwoot-rails:3000
 	}
 
 	# Sin registro de acceso en este sitio: las rutas de medios llevan firmas en la URL.
