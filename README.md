@@ -176,8 +176,8 @@ Flujo: `main` (estable) ← `develop` (integración) ← ramas de trabajo con pr
 
 - [x] Fase Diseño / Definition of Ready (SRS + arquitectura + datos + API)
 - [x] Setup base Docker (FastAPI + Postgres + Redis)
-- [ ] Scaffold `app/` hexagonal + `main:app` + Alembic init
-- [ ] MVP WhatsApp (US-01→US-05) + RBAC + PDFs
+- [x] Scaffold `app/` hexagonal + `main:app` + Alembic init
+- [x] MVP WhatsApp (US-01→US-05) + RBAC + PDFs
 
 ## 🤝 Contribuir
 

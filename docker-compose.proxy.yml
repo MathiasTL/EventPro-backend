@@ -16,6 +16,10 @@ services:
     environment:
       EVENTPRO_DOMAIN: ${EVENTPRO_DOMAIN:?defina EVENTPRO_DOMAIN en .env (dominio base, p. ej. eventpro-demo.duckdns.org)}
       FRONTEND_UPSTREAM: ${FRONTEND_UPSTREAM:-frontend:3000}
+      # Autenticacion basica delante de la administracion de Chatwoot (ver deploy/Caddyfile).
+      # En .env, escapar cada `$` del hash bcrypt como `$$` para que Compose no lo interpole.
+      CHATWOOT_ADMIN_USER: ${CHATWOOT_ADMIN_USER:?defina CHATWOOT_ADMIN_USER en .env}
+      CHATWOOT_ADMIN_PASSWORD_HASH: ${CHATWOOT_ADMIN_PASSWORD_HASH:?defina CHATWOOT_ADMIN_PASSWORD_HASH en .env (caddy hash-password)}
     ports:
       - "80:80"
       - "443:443"

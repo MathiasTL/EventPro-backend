@@ -58,13 +58,13 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 
 **Entregables clave:**
 
-- [ ] Flujo conversacional completo del bot (saludo → selección → datos → resumen).
+- [x] Flujo conversacional completo del bot (saludo → selección → datos → resumen).
 - [ ] Respuesta del bot en menos de 1.5 s (RNF de rendimiento).
-- [ ] Vencimiento automático de cotizaciones con arq.
-- [ ] Modelo `Quote` documentado y compartido con el equipo en el Sprint 0.
-- [ ] Puerto `IMessagingPort` publicado en el Sprint 0 con una implementación falsa, para que E2 envíe el enlace de firma y el OTP sin esperar a Chatwoot.
+- [x] Vencimiento automático de cotizaciones con arq.
+- [x] Modelo `Quote` documentado y compartido con el equipo en el Sprint 0.
+- [x] Puerto `IMessagingPort` publicado en el Sprint 0 con una implementación falsa, para que E2 envíe el enlace de firma y el OTP sin esperar a Chatwoot.
 - [ ] Chatwoot operativo según [Docker e infraestructura local, sección 5](02-docker-e-infraestructura-local.md#5-chatwoot-primera-configuración) y webhook interno firmado.
-- [ ] Traspaso bot-humano y bandeja de conversaciones con actualización en tiempo real (US-27 a US-32).
+- [x] Traspaso bot-humano y bandeja de conversaciones con actualización en tiempo real (US-27 a US-32).
 
 > [!IMPORTANT]
 > **Piezas de E1 delegadas (contrato primero).** Para no saturar a Mathias, los casos de uso del ciclo de vida de la cotización y sus endpoints los construyen otras personas **en paralelo**, contra un contrato (puertos de entrada, DTOs, errores, fakes y suite de contrato) que Mathias fusiona primero. Detalle, archivos, criterios de aceptación y ramas en [`02-arquitectura/08-spec-e1-contrato-cotizacion.md`](../02-arquitectura/08-spec-e1-contrato-cotizacion.md).
@@ -100,13 +100,13 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 
 **Entregables clave:**
 
-- [ ] Esqueleto hexagonal en `app/` y esqueleto FSD en el repositorio hermano `../frontend` (Sprint 0, junto con David).
-- [ ] Pipeline de CI con ruff, mypy y pytest.
-- [ ] Dependencia reutilizable `require_role(...)` para proteger endpoints.
-- [ ] Servicio de auditoría que las demás épicas puedan invocar.
+- [x] Esqueleto hexagonal en `app/` y esqueleto FSD en el repositorio hermano `../frontend` (Sprint 0, junto con David).
+- [x] Pipeline de CI con ruff, mypy y pytest.
+- [x] Dependencia reutilizable `require_role(...)` para proteger endpoints.
+- [x] Servicio de auditoría que las demás épicas puedan invocar.
 - [ ] Cumplimiento de las políticas OWASP de la matriz de seguridad.
-- [ ] PDF firmado con PAdES y verificable.
-- [ ] Página pública de firma accesible solo con token válido y no reutilizable.
+- [x] PDF firmado con PAdES y verificable.
+- [x] Página pública de firma accesible solo con token válido y no reutilizable.
 
 > [!WARNING]
 > La parte de contratos es una de las más pesadas del proyecto. La firma PAdES y el flujo OTP deben prototiparse temprano para detectar problemas con el certificado o con WeasyPrint dentro de Docker, sin esperar a que cierre el Sprint 0.
@@ -136,11 +136,11 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 
 **Entregables clave:**
 
-- [ ] Seeds del catálogo listos en el Sprint 0 (los necesita Mathias para el bot).
-- [ ] Base de Alembic y convención de migraciones (Sprint 0, junto con Diego).
-- [ ] Puerto de lectura del catálogo consumible por E1.
-- [ ] Puerto de verificación de disponibilidad consumido por el cotizador (E1) y por la asignación de elencos (E6).
-- [ ] Prevención de doble reserva bajo concurrencia (pruebas con Testcontainers).
+- [x] Seeds del catálogo listos en el Sprint 0 (los necesita Mathias para el bot).
+- [x] Base de Alembic y convención de migraciones (Sprint 0, junto con Diego).
+- [x] Puerto de lectura del catálogo consumible por E1.
+- [x] Puerto de verificación de disponibilidad consumido por el cotizador (E1) y por la asignación de elencos (E6).
+- [x] Prevención de doble reserva bajo concurrencia (pruebas con Testcontainers).
 
 > [!NOTE]
 > Según la [especificación 08](../02-arquitectura/08-spec-e1-contrato-cotizacion.md), el autor de git del catálogo, de la disponibilidad y del flujo manual (Brenis) asume también piezas del cotizador de E1 (`/quotes`, vencimiento y migración del flujo manual). Este documento no afirma que Brenis y el dueño de E3 sean la misma persona.
@@ -168,7 +168,7 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 
 **Entregables clave:**
 
-- [ ] Todo *override* queda registrado en la auditoría (E2).
+- [x] Todo *override* queda registrado en la auditoría (E2).
 - [ ] Apoyo a David (E3) con las pruebas de concurrencia del motor de disponibilidad.
 - [ ] Apoyo a Nicolas (E6) con la lógica de cobro y evidencia de US-17.
 
@@ -196,7 +196,7 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 **Entregables clave:**
 
 - [ ] Caso de uso de registro de adelanto invocable desde el bot (E1) cuando el cliente envía la captura.
-- [ ] Almacenamiento seguro de comprobantes con validación de MIME real.
+- [x] Almacenamiento seguro de comprobantes con validación de MIME real.
 - [ ] Apoyo a Mathias (E1) con las pruebas de integración del flujo cotización → adelanto.
 
 > [!NOTE]
@@ -223,8 +223,8 @@ No todas las épicas pueden empezar al mismo tiempo con datos reales. Este es el
 **Entregables clave:**
 
 - [ ] Vista del operador usable en celular y restringida a sus propios eventos.
-- [ ] Bloqueo de inicio del show si el saldo no está cobrado.
-- [ ] Dashboard con datos consolidados de cotizaciones, pagos y eventos.
+- [x] Bloqueo de inicio del show si el saldo no está cobrado.
+- [x] Dashboard con datos consolidados de cotizaciones, pagos y eventos.
 
 > [!NOTE]
 > Nicolas también implementa la consulta de clientes de E1 (US-25: `FindClients`, `GetClient`, `GET /clients`, `GET /clients/{id}` y su frontend) contra el contrato de la [especificación 08](../02-arquitectura/08-spec-e1-contrato-cotizacion.md).

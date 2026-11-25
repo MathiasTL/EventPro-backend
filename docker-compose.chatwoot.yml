@@ -45,7 +45,8 @@ services:
         condition: service_healthy
     # Unico puerto publicado, solo en loopback: permite entrar a la administracion de Chatwoot
     # (configuracion inicial, bandejas, Agent Bot) y apuntar un tunel local (ngrok) en desarrollo.
-    # En el servidor se accede por tunel SSH; la administracion nunca se expone en internet.
+    # En el servidor la administracion se publica en chat.<dominio> detras de autenticacion basica
+    # (deploy/Caddyfile); este puerto queda como respaldo por tunel SSH.
     # El valor por defecto es 3001 para no chocar con el frontend de EventPro (3000).
     ports:
       - "127.0.0.1:${CHATWOOT_LOCAL_PORT:-3001}:3000"
