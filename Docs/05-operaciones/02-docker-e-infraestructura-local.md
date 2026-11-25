@@ -257,17 +257,20 @@ El proyecto es académico: el servidor debe costar US$0. Pasos:
    **Arranque parcial (solo Chatwoot y el proxy).** Es posible desplegar Chatwoot antes que el backend. Tras la sección 5.1, levantar únicamente Caddy:
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.chatwoot.yml -f docker-compose.proxy.yml up -d caddy
-   curl -s -o /dev/null -w '%{http_code}\n' https://chat.<EVENTPRO_DOMAIN>/   # esperado: 404
+   curl -s -o /dev/null -w '%{http_code}\n' https://chat.<EVENTPRO_DOMAIN>/   # esperado: 401
    ```
    * `docker-compose.proxy.yml` no funciona sin `docker-compose.yml`: redefine el servicio `api`, por lo que el archivo base debe incluirse aunque `api` no se inicie.
-   * El 404 en la raíz de `chat.` es correcto: Caddy solo publica el webhook de WhatsApp y los medios. Lo relevante es que responda por HTTPS con un certificado válido.
+   * Sin credenciales, la raíz de `chat.` responde 401 (autenticación básica de Caddy). Lo relevante es que responda por HTTPS con un certificado válido.
    * `app.` y `api.` responden 502 hasta que el frontend y el backend estén desplegados. Los errores que aparecen en el registro de Caddy por esas rutas son esperables.
    * No ejecutar `docker compose config` sin `--services` en una terminal compartida o grabada: imprime los valores de `chatwoot.env`, incluidos los secretos.
-8. **Administración de Chatwoot:** `chat.<EVENTPRO_DOMAIN>` solo publica el webhook de WhatsApp y los medios salientes, y el panel se alcanza por un túnel SSH al puerto local de la VM. Con `FORCE_SSL=false` no hay redirección a HTTPS, por lo que el túnel directo funciona:
+8. **Administración de Chatwoot:** el panel se abre en `https://chat.<EVENTPRO_DOMAIN>` con dos capas: primero la autenticación básica de Caddy y luego el inicio de sesión de Chatwoot. El webhook de WhatsApp y los medios salientes quedan fuera de la autenticación básica porque Meta no envía credenciales. Definir las credenciales en `.env` antes de levantar `caddy`:
    ```bash
-   ssh -L 3001:127.0.0.1:3001 <usuario>@<ip-del-servidor>
+   docker run --rm caddy:2 caddy hash-password --plaintext '<contrasena>'
+   # En .env, cada `$` del hash se escribe como `$$` para que Compose no lo interpole:
+   # CHATWOOT_ADMIN_USER=admin
+   # CHATWOOT_ADMIN_PASSWORD_HASH=$$2a$$14$$...
    ```
-   Con el túnel abierto, abrir `http://localhost:3001`. El puerto 3001 de la VM solo escucha en `127.0.0.1` y no se publica hacia internet.
+   Como respaldo, el panel sigue disponible por un túnel SSH al puerto local de la VM (`ssh -L 3001:127.0.0.1:3001 <usuario>@<ip-del-servidor>` y abrir `http://localhost:3001`). Mantener `FORCE_SSL=false`: Caddy ya fuerza HTTPS hacia internet y la API llama a Chatwoot por HTTP dentro de Docker.
 9. **Respaldos diarios de ambas bases (se conservan los últimos 7):** programar con `cron` un script que ejecute `pg_dump` de EventPro (`db`) y de Chatwoot (`chatwoot-db`):
    ```bash
    #!/usr/bin/env bash
