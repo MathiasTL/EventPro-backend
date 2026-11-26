@@ -403,3 +403,38 @@ def test_phone_normalization(phone):
         client_provides_transport=True,
     )
     assert payload.phone == "+51999999999"
+
+
+async def test_manual_contract_pdf_uses_configured_promoter_and_package_data():
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    from app.application.dtos.contract_dto import PromoterIdentity
+    from app.infrastructure.adapters.secondary.storage.booking_pdf import contract_pdf
+
+    promoter = PromoterIdentity(
+        legal_name="Promotora Configurada S.A.C.",
+        commercial_name="La Tremenda",
+        ruc="20999888777",
+        address="Av. Configurada 100, Lima",
+        city="Lima",
+        email="legal@configurada.pe",
+        phone="+51911222333",
+        clauses_version="1.0",
+    )
+    pdf_bytes = await contract_pdf(
+        booking(
+            service_category="SHOW",
+            package_description="Incluye animador y sonido.",
+            client_provides_mobility=True,
+        ),
+        "CTR-2026-0099",
+        promoter=promoter,
+    )
+
+    text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf_bytes)).pages)
+    assert "20999888777" in text
+    assert "Promotora Configurada S.A.C." in text
+    assert "Incluye animador y sonido." in text
+    assert "10000000001" not in text

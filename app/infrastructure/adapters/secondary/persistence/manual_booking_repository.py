@@ -123,8 +123,9 @@ class SqlAlchemyManualBookingStore:
               q.event_date, q.event_time,
               q.package_id, q.services_subtotal, q.total_amount, q.advance_amount,
               q.pending_balance, q.final_mobility_amount, q.status,
-              q.manual_request_hash, q.expires_at, q.observations,
+              q.manual_request_hash, q.expires_at, q.observations, q.client_provides_mobility,
               c.full_name, c.phone, c.dni, c.ruc, p.name AS package_name, p.duration_minutes,
+              p.service_category, p.description AS package_description,
               t.name AS theme_name, pay.id AS payment_id, pay.validation_status,
               pay.evidence_path, pay.amount AS paid_amount, pay.registered_by_user_id,
               e.id AS event_id, e.event_code, co.id AS contract_id,
@@ -209,6 +210,9 @@ class SqlAlchemyManualBookingStore:
                 f"{entry['name']} x {entry['quantity']}: S/ {entry['subtotal']:.2f}"
                 for entry in extras
             ),
+            service_category=row["service_category"],
+            package_description=row["package_description"],
+            client_provides_mobility=bool(row["client_provides_mobility"]),
         )
 
     async def _stage(
