@@ -9,6 +9,20 @@ from app.domain.entities.contract import Contract, ContractStatus
 
 
 @dataclass(frozen=True, kw_only=True)
+class PromoterIdentity:
+    """Identidad legal y de contacto del locador en los contratos generados."""
+
+    legal_name: str = "Promotora de Eventos EventPro"
+    commercial_name: str = "La Tremenda"
+    ruc: str = "10000000001"
+    address: str = "Lima Metropolitana, Perú"
+    city: str = "Lima"
+    email: str = "contacto@eventpro.pe"
+    phone: str = "+51 900 000 000"
+    clauses_version: str = "1.0"
+
+
+@dataclass(frozen=True, kw_only=True)
 class ContractData:
     event_id: UUID
     event_status: str
@@ -33,6 +47,12 @@ class ContractData:
     required_advance: Decimal
     observations: str | None
     event_started: bool = False
+    event_code: str | None = None
+    service_category: str | None = None
+    duration_minutes: int | None = None
+    package_description: str | None = None
+    client_provides_mobility: bool = False
+    advance_percent: int = 10
 
     @property
     def pending_balance(self) -> Decimal:

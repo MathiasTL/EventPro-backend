@@ -11,13 +11,17 @@ from PIL import Image, ImageDraw
 from pyhanko.pdf_utils.reader import PdfFileReader
 from pyhanko.sign.validation import async_validate_pdf_signature
 from pyhanko_certvalidator import ValidationContext
+from pypdf import PdfReader
 
 from app.application.use_cases.contract.sign_contract import SignatureError
+from app.domain.entities.contract import Contract
 from app.infrastructure.adapters.secondary.signature.pades_signature_adapter import (
     PadesSignatureAdapter,
     validate_signature_image,
 )
+from app.infrastructure.adapters.secondary.storage.contract_pdf import ReportLabContractPdf
 from app.infrastructure.adapters.secondary.storage.document_pdf import render_document
+from tests.contract_support import contract_data
 
 
 def signature_png():
@@ -85,3 +89,46 @@ async def test_real_pkcs12_seal_integrity_without_external_calls(tmp_path):
     )
     assert status.intact and status.valid
     assert reader.embedded_signatures[0].sig_object["/SubFilter"] == "/ETSI.CAdES.detached"
+
+
+async def test_real_pkcs12_seal_on_multipage_contract_pdf(tmp_path):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "EventPro multipage test")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    path = tmp_path / "multipage.p12"
+    path.write_bytes(
+        pkcs12.serialize_key_and_certificates(
+            b"test", key, cert, None, serialization.BestAvailableEncryption(b"test-password")
+        )
+    )
+    data = contract_data(event_code="EVT-MULTI-1", service_category="TENTS", duration_minutes=480)
+    contract = Contract(contract_number="CTR-2026-0500", event_id=data.event_id)
+    original = await ReportLabContractPdf().render(contract, data)
+    base_pages = len(PdfReader(BytesIO(original)).pages)
+    assert base_pages >= 2
+
+    sealed, _ = await PadesSignatureAdapter(str(path), "test-password").seal(
+        original, signature_png(), "José Pérez"
+    )
+    sealed_reader = PdfReader(BytesIO(sealed))
+    assert len(sealed_reader.pages) == base_pages + 1
+    assert "Constancia de firma electrónica" in sealed_reader.pages[-1].extract_text()
+
+    pades_reader = PdfFileReader(BytesIO(sealed))
+    assert len(pades_reader.embedded_signatures) == 1
+    status = await async_validate_pdf_signature(
+        pades_reader.embedded_signatures[0],
+        signer_validation_context=ValidationContext(allow_fetching=False),
+    )
+    assert status.intact and status.valid
