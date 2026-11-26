@@ -3,7 +3,7 @@
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.application.dtos.budget_dto import BudgetResult
-from app.application.dtos.contract_dto import ContractData
+from app.application.dtos.contract_dto import ContractData, PromoterIdentity
 from app.application.ports.output.manual_booking_port import ManualBooking
 from app.domain.entities.contract import Contract
 from app.domain.value_objects.time_window import TimeWindow
@@ -34,8 +34,13 @@ def render_pdf(result: BudgetResult, budget_id: UUID) -> bytes:
     )
 
 
-async def contract_pdf(booking: ManualBooking, number: str) -> bytes:
-    """Adapta el flujo previo a E2; sigue renderizando antes del candado de capacidad."""
+async def contract_pdf(
+    booking: ManualBooking, number: str, *, promoter: PromoterIdentity | None = None
+) -> bytes:
+    """Adapta el flujo previo a E2; sigue renderizando antes del candado de capacidad.
+
+    ``promoter`` lleva la identidad configurada; sin ella se usan los valores por defecto.
+    """
     event_id = uuid5(NAMESPACE_URL, f"eventpro:manual-event:{booking.quote_id}")
     window = TimeWindow.from_schedule(
         booking.event_date, booking.start_time, booking.duration_minutes
@@ -66,5 +71,8 @@ async def contract_pdf(booking: ManualBooking, number: str) -> bytes:
         observations=booking.observations,
         event_code="EVT-" + event_id.hex[:20].upper(),
         duration_minutes=booking.duration_minutes,
+        service_category=booking.service_category,
+        package_description=booking.package_description,
+        client_provides_mobility=booking.client_provides_mobility,
     )
-    return await ReportLabContractPdf().render(contract, data)
+    return await ReportLabContractPdf(promoter=promoter).render(contract, data)

@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Annotated
 
 import httpx
@@ -1028,7 +1028,7 @@ def get_confirm_manual_booking_use_case(
         catalog,
         availability,
         documents,
-        contract_pdf,
+        partial(contract_pdf, promoter=get_promoter_identity()),
         get_contract_use_case(session),
         SqlAlchemyContractRepository(session).next_number,
     )

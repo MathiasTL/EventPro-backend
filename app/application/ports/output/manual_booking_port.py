@@ -47,6 +47,9 @@ class ManualBooking:
     ruc: str | None = None
     observations: str | None = None
     extras: tuple[str, ...] = ()
+    service_category: str | None = None
+    package_description: str | None = None
+    client_provides_mobility: bool = False
 
 
 class IManualBookingStore(Protocol):
