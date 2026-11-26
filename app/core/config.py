@@ -121,6 +121,16 @@ class Settings(BaseSettings):
     signature_otp_max_attempts: int = Field(default=5, gt=0, le=10)
     signature_otp_proof_ttl_minutes: int = Field(default=15, gt=0, le=30)
 
+    # --- Identidad legal de la promotora para contratos PDF ---
+    promoter_legal_name: str = "Promotora de Eventos EventPro"
+    promoter_commercial_name: str = "La Tremenda"
+    promoter_ruc: str = "10000000001"
+    promoter_address: str = "Lima Metropolitana, Perú"
+    promoter_city: str = "Lima"
+    promoter_email: str = "contacto@eventpro.pe"
+    promoter_phone: str = "+51 900 000 000"
+    contract_clauses_version: str = "1.0"
+
     @field_validator("contract_frontend_url")
     @classmethod
     def _contract_frontend_url(cls, value: str) -> str:

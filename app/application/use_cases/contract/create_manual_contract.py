@@ -151,6 +151,10 @@ class CreateManualContract:
                     advance=advance,
                     required_advance=advance,
                     observations=request.observations,
+                    event_code="EVT-" + event_id.hex[:20].upper(),
+                    duration_minutes=budget.duration_minutes,
+                    client_provides_mobility=request.budget.client_provides_transport,
+                    advance_percent=int(self._percent * 100),
                 ),
             )
         # Mismo candado PostgreSQL de disponibilidad usado por las demás confirmaciones.

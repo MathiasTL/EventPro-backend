@@ -58,6 +58,10 @@ async def main() -> None:
             "DOCUMENTO DE DEMOSTRACIÓN. No representa una reserva ni un pago real.\n"
             "No reproducir reggaetón. Coordinar el ingreso sorpresa al minuto 45."
         ),
+        event_code="EVT-DEMO-2026-0001",
+        service_category="SHOW",
+        duration_minutes=90,
+        package_description="Show animado con bailarines, vestuario temático y música.",
     )
     output = ROOT / "output" / "pdf" / "contrato-ejemplo-diego.pdf"
     output.parent.mkdir(parents=True, exist_ok=True)

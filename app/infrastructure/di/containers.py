@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Annotated
 
 import httpx
@@ -8,6 +8,7 @@ from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.dtos.contract_dto import PromoterIdentity
 from app.application.dtos.quote_dto import (
     BankTransferInstructionDTO,
     PaymentInstructionsDTO,
@@ -1027,9 +1028,23 @@ def get_confirm_manual_booking_use_case(
         catalog,
         availability,
         documents,
-        contract_pdf,
+        partial(contract_pdf, promoter=get_promoter_identity()),
         get_contract_use_case(session),
         SqlAlchemyContractRepository(session).next_number,
+    )
+
+
+def get_promoter_identity() -> PromoterIdentity:
+    settings = get_settings()
+    return PromoterIdentity(
+        legal_name=settings.promoter_legal_name,
+        commercial_name=settings.promoter_commercial_name,
+        ruc=settings.promoter_ruc,
+        address=settings.promoter_address,
+        city=settings.promoter_city,
+        email=settings.promoter_email,
+        phone=settings.promoter_phone,
+        clauses_version=settings.contract_clauses_version,
     )
 
 
@@ -1040,7 +1055,7 @@ def get_contract_use_case(
     return ManageContracts(
         SqlAlchemyContractRepository(session),
         PostgresBookingDocuments(session),
-        ReportLabContractPdf(),
+        ReportLabContractPdf(promoter=get_promoter_identity()),
         get_enqueue_message_use_case(session),
         get_clock_port(),
         frontend_url=settings.contract_frontend_url,
