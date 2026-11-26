@@ -126,6 +126,6 @@ Los puntos de conexión y tareas están en la [guía de coordinación E2](coordi
 1. Pruebas confirmadas por Diego desde terminal. Conservar los comandos documentados para regresiones posteriores; el agente no vuelve a ejecutar pruebas por indicación expresa.
 2. Configurar certificado PKCS#12, dominio del enlace y worker/gateway; verificar la entrega de OTP y PDF con Mathias, incluida la plantilla fuera de ventana.
 3. Revisar el PR de backend y coordinar migraciones E2 `0007` y `0008`, despliegue y alineación del backlog de Jira con la asignación a Diego.
-4. Coordinar con Christian la creación de eventos del flujo conversacional y con Nicolas la copia inicial de observaciones. La contingencia manual ya crea el evento y sus notas; la firma ya implementa `SCHEDULED`.
+4. Coordinar con Christian la creación de eventos del flujo conversacional y con Nicolas la copia inicial de observaciones. La contingencia manual ya crea el evento y sus notas; la verificación de un adelanto conversacional sin `event_id` también lo crea (con reservas y copia de observaciones); la firma ya implementa `SCHEDULED`.
 
 El frontend queda fuera de esta continuación por indicación de Diego; sus tareas se conservan como referencia, sin tratarlas como trabajo de backend pendiente.
