@@ -86,6 +86,7 @@ class VerifyPaymentDTO:
     payment_id: UUID
     validation_status: PaymentValidationStatus
     rejection_reason: str | None
+    event_id: UUID | None = None
 
 
 @dataclass(frozen=True)
