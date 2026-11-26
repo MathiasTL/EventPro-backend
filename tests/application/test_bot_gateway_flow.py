@@ -79,7 +79,7 @@ async def test_the_bot_answers_a_real_webhook_body_with_the_greeting() -> None:
 
     assert outcome is GatewayEventOutcome.APPLIED
     (greeting,) = bot.sent
-    assert greeting.startswith("Hola, te damos la bienvenida a EventPro")
+    assert greeting.startswith("¡Hola! 👋 Te saludamos de La Tremenda")
     (message,) = bot.outbox.messages.values()
     assert message.recipient == PHONE
 
