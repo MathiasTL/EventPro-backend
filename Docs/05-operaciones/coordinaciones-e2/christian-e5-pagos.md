@@ -19,11 +19,11 @@ await issuer.issue_for_event(event_id, verified_by_user_id)
 # La unidad transaccional confirma pago, documentos, contrato y outbox juntos.
 ```
 
-Usar los casos de uso y proveedores ya conectados en `VerifyPaymentUseCase`, `ApproveOverbookedPaymentUseCase` y `containers.py`. El pseudocódigo describe el contrato, no ordena agregar una segunda llamada a los flujos que ya emiten. `PATCH /payments/{id}/verify` exige `event_id` cuando verifica con la integración E2 activa.
+Usar los casos de uso y proveedores ya conectados en `VerifyPaymentUseCase`, `ApproveOverbookedPaymentUseCase` y `containers.py`. El pseudocódigo describe el contrato, no ordena agregar una segunda llamada a los flujos que ya emiten. `PATCH /payments/{id}/verify` acepta `event_id` opcional: si se omite en un `ADVANCE` del flujo conversacional, `EnsureQuoteEvent` crea el evento (con reservas y copia de observaciones) y convierte la cotización en la misma transacción; si se envía, debe existir y pertenecer a la cotización.
 
 ## Entregables de Christian
 
-- [ ] Completar o demostrar la creación del evento y sus reservas del flujo conversacional, compartiendo la transacción de verificación/emisión y los bloqueos de disponibilidad.
+- [x] Completar o demostrar la creación del evento y sus reservas del flujo conversacional, compartiendo la transacción de verificación/emisión y los bloqueos de disponibilidad.
 - [ ] Mantener `commit_on_save=False` para el repositorio de pagos participante; no quitar el emisor del proveedor de producción para evitar errores de integración.
 - [ ] Adaptar entradas propias a UUID/estados/importes E2; rechazar evento de otra cotización y adelanto insuficiente.
 - [ ] Conservar el flujo de aprobación/rechazo de sobrecupo; no marcar un contrato como firmado para saltarse la firma.

@@ -32,15 +32,14 @@ from app.domain.value_objects.liquidation import Liquidation
 from app.domain.value_objects.mobility import MobilityResult, MobilityScenario
 from app.domain.value_objects.money import Money
 from app.domain.value_objects.time_window import TimeWindow
+from app.infrastructure.adapters.secondary.persistence.event_provisioning import (
+    add_event_with_reservations,
+)
 from app.infrastructure.adapters.secondary.persistence.mappers.payment_mapper import (
     payment_to_domain,
     payment_to_model,
 )
 from app.infrastructure.adapters.secondary.persistence.models.audit_log import AuditLog
-from app.infrastructure.adapters.secondary.persistence.models.event_model import EventModel
-from app.infrastructure.adapters.secondary.persistence.models.event_resource_models import (
-    InventoryReservationModel,
-)
 from app.infrastructure.adapters.secondary.persistence.models.payment_model import PaymentModel
 from app.infrastructure.adapters.secondary.persistence.repositories import (
     sqlalchemy_event_occupancy,
@@ -325,35 +324,21 @@ class SqlAlchemyManualBookingStore:
         *,
         draft: bool = False,
     ) -> ManualBooking:
-        self._session.add(
-            EventModel(
-                id=event_id,
-                event_code="EVT-" + event_id.hex[:20].upper(),
-                quote_id=booking.quote_id,
-                event_date=booking.event_date,
-                start_time=booking.start_time,
-                end_time=window.end.time(),
-                address=booking.address,
-                district=booking.district,
-                total_services_amount=booking.total_amount - booking.mobility_amount,
-                total_mobility_amount=booking.mobility_amount,
-                final_total_amount=booking.total_amount,
-                advance_paid=booking.advance_amount,
-                status="AWAITING_SIGNATURE",
-                client_observations=booking.observations,
-            )
+        await add_event_with_reservations(
+            self._session,
+            event_id=event_id,
+            quote_id=booking.quote_id,
+            event_date=booking.event_date,
+            start_time=booking.start_time,
+            address=booking.address,
+            district=booking.district,
+            total_amount=booking.total_amount,
+            mobility_amount=booking.mobility_amount,
+            advance_amount=booking.advance_amount,
+            observations=booking.observations,
+            window=window,
+            requirements=requirements,
         )
-        await self._session.flush()
-        for requirement in requirements:
-            self._session.add(
-                InventoryReservationModel(
-                    event_id=event_id,
-                    inventory_item_id=requirement.inventory_item_id,
-                    quantity=requirement.quantity,
-                    starts_at=window.start,
-                    ends_at=window.end,
-                )
-            )
         model = await self._session.scalar(
             select(PaymentModel).where(PaymentModel.id == booking.payment_id).with_for_update()
         )

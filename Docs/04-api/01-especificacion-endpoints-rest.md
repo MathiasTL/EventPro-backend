@@ -729,11 +729,13 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
 * **Descripción:** El encargado aprueba o rechaza el comprobante de un adelanto (RF-12, PC-06). Al aprobar se ejecuta la revalidación autoritativa y atómica de disponibilidad con bloqueo Redis (RN-09); si el cupo está lleno o se supera el umbral, el pago pasa a `REQUIRES_MANUAL_APPROVAL` y se resuelve con `POST /overrides/payments/{id}/approve-simultaneous`. El rechazo por comprobante inválido o ilegible se permite desde `PENDING_VERIFICATION` y también desde `REQUIRES_MANUAL_APPROVAL`; el reintento del cliente crea un nuevo pago.
 * **Valores de `status` aceptados:** `VERIFIED` o `REJECTED`. Solo aplica a pagos `ADVANCE` en `PENDING_VERIFICATION` (ambos valores) o `REQUIRES_MANUAL_APPROVAL` (solo `REJECTED`; la aprobación de un pago en este estado es la acción `APPROVE` del endpoint de overrides).
 * **Seguridad:** Requiere rol `ENCARGADO` o `SUPERADMIN`.
+* **Creación del evento (flujo conversacional):** `event_id` es opcional. Si se omite al verificar un `ADVANCE` cuya cotización está `PAYMENT_STARTED` y aún no tiene evento, el backend crea en la misma transacción el evento `AWAITING_SIGNATURE` a partir de la cotización (fecha, hora, dirección, distrito, paquete, temática, importes con movilidad, copia literal de `quotes.observations` en `events.client_observations` y reservas de inventario del paquete), convierte la cotización a `CONVERTED`, marca el pago `VERIFIED` con ese evento y emite el contrato como en el flujo con `event_id`. Si la cotización ya tiene un evento, se reutiliza (no se duplican evento ni contrato). Si no hay cupo (inventario insuficiente o umbral de simultaneidad superado), no se crea nada: el pago pasa a `REQUIRES_MANUAL_APPROVAL`. Si se envía `event_id`, se conserva el comportamiento anterior (el evento debe existir, pertenecer a la cotización y estar en `AWAITING_SIGNATURE`; la cotización no se convierte). Para conceptos distintos de `ADVANCE`, `event_id` se sigue exigiendo.
 * **Request Body:**
   ```json
   {
     "status": "VERIFIED",
-    "rejection_reason": null
+    "rejection_reason": null,
+    "event_id": null
   }
   ```
   Para rechazar: `{"status": "REJECTED", "rejection_reason": "La captura está cortada y no se ve el monto."}` (`rejection_reason` obligatorio).
@@ -742,11 +744,11 @@ El canal de WhatsApp se opera a través de Chatwoot, un gateway de mensajería a
   {
     "payment_id": "pay-11a2...",
     "validation_status": "VERIFIED",
-    "event_created_id": "evt-77a8...",
-    "contract_status": "ISSUED"
+    "rejection_reason": null,
+    "event_id": "7b0f6c1e-..."
   }
   ```
-  Si la revalidación autoritativa detecta cupo lleno, `validation_status` es `REQUIRES_MANUAL_APPROVAL`, `event_created_id` y `contract_status` son `null` y se incluye `"reason": "CONFLICT"` o `"reason": "THRESHOLD_EXCEEDED"`. Con `REJECTED`, `validation_status` es `REJECTED` y se notifica al cliente por WhatsApp con el motivo y la instrucción de reintento.
+  `event_id` es el evento vinculado al pago (creado o reutilizado). Si no hay cupo, `validation_status` es `REQUIRES_MANUAL_APPROVAL` y `event_id` es `null`. Con `REJECTED`, `validation_status` es `REJECTED` y se notifica al cliente por WhatsApp con el motivo y la instrucción de reintento.
 * **Errores:** `409` (`invalid-payment-state`, el pago ya no está en un estado que admita la acción), `422` (`validation-error`).
 
 #### `PATCH /payments/{id}/audit`
@@ -1257,6 +1259,7 @@ Los usuarios `OPERADOR` solo ven y operan los eventos que tienen asignado su ele
 * **Descripción:** Resolución manual de un pago en estado `REQUIRES_MANUAL_APPROVAL`, ya sea por superar el umbral `SIMULTANEOUS_SHOWS_THRESHOLD` (3 por defecto) o por cupo lleno al validar (RF-20, RN-04, RN-09, PC-03). La aprobación es un estado del pago, no del evento. Registra `APPROVE_OVERBOOKED_PAYMENT` o `REJECT_OVERBOOKED_PAYMENT` en `audit_logs`. El rechazo por comprobante inválido se hace con `PATCH /payments/{id}/verify`, no con este endpoint.
 * **Seguridad:** Roles `ENCARGADO` o `SUPERADMIN`.
 * **Request Body:** `{"action": "APPROVE", "notes": "Se contrató elenco adicional freelance."}` o `{"action": "REJECT", "notes": "Sin elenco de respaldo."}`
+* **`event_id` opcional (`APPROVE`):** si se omite en un `ADVANCE` cuya cotización aún no tiene evento (flujo conversacional), el backend crea en la misma transacción el evento `AWAITING_SIGNATURE` con sus reservas de inventario y la copia de `quotes.observations`, sin revalidar el cupo (la aprobación es el sobrecupo autorizado), convierte la cotización a `CONVERTED`, verifica el pago y emite el contrato. Si la cotización ya tiene evento, se reutiliza. Si se envía `event_id`, se conserva el comportamiento anterior.
 * **Response `200 OK`:** con `APPROVE`: `{"payment_id": "...", "validation_status": "VERIFIED", "event_created_id": "evt-77a8..."}`; con `REJECT`: `{"payment_id": "...", "validation_status": "REFUND_PENDING"}`
 * **Errores:** `409` (`invalid-payment-state`, el pago no está en `REQUIRES_MANUAL_APPROVAL`).
 
