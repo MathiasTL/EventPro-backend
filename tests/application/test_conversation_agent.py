@@ -106,7 +106,7 @@ async def test_a_client_quotes_and_pays_the_advance_through_tool_calls() -> None
 
     created = await bot.say("sí, confirmo todo")
     summary, follow_up = created.split("\n", 1)[0], created.rsplit("\n", 1)[-1]
-    assert summary == "Este es el resumen de tu cotización:"
+    assert summary == "Este es el resumen de tu cotización 📝:"
     assert "Paquete: Decoración Premium" in created
     assert "Temática: Selva" in created
     assert "Extras: Fotografía" in created
@@ -152,6 +152,32 @@ def test_the_system_prompt_is_neutral_spanish_without_voseo() -> None:
     assert VOSEO.search(prompt) is None
     assert "nunca inventes" in prompt.lower()
     assert "Lima y Callao" in prompt
+
+
+def test_the_system_prompt_speaks_as_la_tremenda_and_never_as_eventpro() -> None:
+    from datetime import date
+
+    prompt = agent_prompt.build_system_prompt(date(2026, 10, 9))
+
+    assert "La Tremenda" in prompt
+    assert "EventPro" not in prompt.replace("nunca menciones EventPro", "")
+
+
+def test_the_greeting_is_branded_as_la_tremenda() -> None:
+    assert "La Tremenda" in texts.GREETING
+    assert "EventPro" not in texts.GREETING
+    assert "asistente virtual" not in texts.GREETING
+    assert "asesor" not in texts.GREETING.lower()
+
+
+def test_the_system_prompt_forbids_presenting_as_an_assistant_and_shows_the_catalog_first() -> None:
+    from datetime import date
+
+    prompt = agent_prompt.build_system_prompt(date(2026, 10, 9))
+
+    assert "Nunca te presentes como asistente virtual" in prompt
+    assert "llama a list_catalog en ese mismo turno" in prompt
+    assert "¿Qué te gustaría para tu evento?" in prompt
 
 
 # --- Errores de contrato devueltos al modelo -------------------------------------------------
@@ -469,7 +495,7 @@ async def test_a_model_failure_falls_back_to_the_menu_and_logs_only_the_reason(
     with capture_logs() as logs:
         reply = await bot.say("quiero una cotización con datos privados 999")
 
-    assert reply.startswith("Hola, te damos la bienvenida a EventPro")
+    assert reply.startswith("¡Hola! 👋 Te saludamos de La Tremenda")
     fallback = [log for log in logs if log["event"] == "bot_llm_fallback"]
     assert len(fallback) == 1
     assert fallback[0]["reason"] == reason
@@ -505,7 +531,7 @@ async def test_a_slow_model_exceeds_the_turn_budget_and_falls_back() -> None:
     with capture_logs() as logs:
         reply = await bot.say("hola")
 
-    assert reply.startswith("Hola, te damos la bienvenida")
+    assert reply.startswith("¡Hola! 👋 Te saludamos de La Tremenda")
     assert [log["reason"] for log in logs if log["event"] == "bot_llm_fallback"] == ["timeout"]
 
 
@@ -515,7 +541,7 @@ async def test_an_empty_model_reply_counts_as_a_failure() -> None:
     with capture_logs() as logs:
         reply = await bot.say("hola")
 
-    assert reply.startswith("Hola, te damos la bienvenida")
+    assert reply.startswith("¡Hola! 👋 Te saludamos de La Tremenda")
     assert [log["reason"] for log in logs if log["event"] == "bot_llm_fallback"] == ["bad_response"]
 
 

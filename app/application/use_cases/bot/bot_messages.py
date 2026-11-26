@@ -12,14 +12,10 @@ from app.application.use_cases.bot.bot_session import BotSession, BotStep, MenuO
 
 LIMA = timezone(timedelta(hours=-5), "America/Lima")
 
-GREETING = (
-    "Hola, te damos la bienvenida a EventPro. Soy el asistente virtual y te ayudaré a cotizar "
-    'tu evento. En cualquier momento puedes escribir "menú" para empezar de nuevo o '
-    '"asesor" para hablar con un encargado.'
-)
+GREETING = "¡Hola! 👋 Te saludamos de La Tremenda 🎉 Con gusto te ayudamos a cotizar tu evento."
 NOT_UNDERSTOOD = "No entendí tu respuesta."
 HANDOFF_REQUESTED = (
-    "Con gusto. Un encargado continuará esta conversación en breve; gracias por tu paciencia."
+    "Con gusto 🙌 Un encargado continuará esta conversación en breve; gracias por tu paciencia."
 )
 HANDOFF_NOT_UNDERSTOOD = (
     "No logro entender tus respuestas, así que te comunico con un encargado que te ayudará "
@@ -37,12 +33,12 @@ QUOTE_UNAVAILABLE = (
 )
 INVALID_DATA = "Algunos datos de tu solicitud no son válidos. Revisemos la fecha de tu evento."
 ALREADY_PAID = (
-    "Ya iniciaste el pago de tu adelanto. Cuando lo realices, envía aquí la captura del "
+    "💳 Ya iniciaste el pago de tu adelanto. Cuando lo realices, envía aquí la captura del "
     'comprobante y un encargado lo validará. Escribe "menú" para cotizar otro evento o '
     '"asesor" para hablar con un encargado.'
 )
 RECEIPT_REGISTERED = (
-    "Recibimos tu comprobante. Un encargado lo validará y te confirmará la reserva."
+    "🧾 Recibimos tu comprobante. Un encargado lo validará y te confirmará la reserva."
 )
 RECEIPT_UNREADABLE = (
     "No pudimos leer el archivo. Envía la captura del comprobante como imagen o PDF (máximo 5 MB)."
@@ -59,7 +55,7 @@ CATEGORY_LABELS = {
 }
 
 _QUESTIONS: dict[BotStep, str] = {
-    BotStep.CATEGORY: "¿Qué tipo de servicio te interesa?",
+    BotStep.CATEGORY: "🎊 ¿Qué tipo de servicio te interesa?",
     BotStep.PACKAGE: "Estos son nuestros paquetes. ¿Cuál prefieres?",
     BotStep.THEME: "¿Qué temática prefieres?",
     BotStep.EXTRAS: (
@@ -119,7 +115,7 @@ def prompt(session: BotSession) -> str:
     parts = [_QUESTIONS.get(session.step, "")]
     if session.step is BotStep.PACKAGE and session.category:
         label = CATEGORY_LABELS.get(session.category, session.category)
-        parts[0] = f"Estos son nuestros paquetes de {label}. ¿Cuál prefieres?"
+        parts[0] = f"🎁 Estos son nuestros paquetes de {label}. ¿Cuál prefieres?"
     if session.options:
         parts.append(menu(session.options))
     if session.step is BotStep.EXTRAS:
@@ -133,33 +129,33 @@ def quote_summary(session: BotSession, quote: CreatedQuoteDTO) -> str:
     event_date = date.fromisoformat(session.event_date or "")
     event_time = time.fromisoformat(session.event_time or "")
     lines = [
-        "Este es el resumen de tu cotización:",
+        "Este es el resumen de tu cotización 📝:",
         "",
-        f"Paquete: {session.package_name}",
+        f"🎉 Paquete: {session.package_name}",
     ]
     if session.theme_name:
-        lines.append(f"Temática: {session.theme_name}")
+        lines.append(f"🎨 Temática: {session.theme_name}")
     if session.extras:
-        lines.append("Extras: " + ", ".join(extra.title for extra in session.extras))
+        lines.append("➕ Extras: " + ", ".join(extra.title for extra in session.extras))
     lines += [
-        f"Fecha: {format_date(event_date)} a las {event_time.strftime('%H:%M')}",
-        f"Lugar: {session.address}, {session.district}",
+        f"📅 Fecha: {format_date(event_date)} a las {event_time.strftime('%H:%M')}",
+        f"📍 Lugar: {session.address}, {session.district}",
         "",
-        f"Servicios: {money(quote.services_subtotal)}",
+        f"💵 Servicios: {money(quote.services_subtotal)}",
     ]
     if session.provides_mobility:
-        lines.append("Movilidad: a tu cargo")
+        lines.append("🚚 Movilidad: a tu cargo")
     else:
-        lines.append(f"Movilidad: {money(quote.final_mobility_amount)}")
+        lines.append(f"🚚 Movilidad: {money(quote.final_mobility_amount)}")
     lines += [
-        f"Total: {money(quote.total_amount)}",
+        f"💰 Total: {money(quote.total_amount)}",
         "",
-        f"Adelanto para reservar: {money(quote.advance_amount)}",
-        f"Saldo de servicios, el día del evento: {money(quote.breakdown.services_balance_due)}",
-        f"Saldo de movilidad, el día del evento: {money(quote.breakdown.mobility_due)}",
+        f"✅ Adelanto para reservar: {money(quote.advance_amount)}",
+        f"🗓️ Saldo de servicios, el día del evento: {money(quote.breakdown.services_balance_due)}",
+        f"🚚 Saldo de movilidad, el día del evento: {money(quote.breakdown.mobility_due)}",
         "",
-        f"Esta cotización es válida hasta el {format_moment(quote.expires_at)} (24 horas).",
-        "Importante: tu fecha solo queda reservada cuando validemos el pago del adelanto.",
+        f"⏳ Esta cotización es válida hasta el {format_moment(quote.expires_at)} (24 horas).",
+        "⚠️ Importante: tu fecha solo queda reservada cuando validemos el pago del adelanto.",
     ]
     return "\n".join(lines)
 
@@ -170,15 +166,15 @@ def payment_instructions(result: PayAdvanceResultDTO) -> str:
     info = result.payment_instructions
     return "\n".join(
         [
-            f"Para reservar tu fecha, paga el adelanto de {money(result.advance_amount)} "
+            f"✅ Para reservar tu fecha, paga el adelanto de {money(result.advance_amount)} "
             f"hasta el {format_moment(result.payment_deadline)}.",
             "",
-            f"Yape: {info.yape.phone} a nombre de {info.yape.holder}",
-            f"Plin: {info.plin.phone} a nombre de {info.plin.holder}",
-            f"Transferencia {info.bank_transfer.bank}: cuenta {info.bank_transfer.account}, "
+            f"📱 Yape: {info.yape.phone} a nombre de {info.yape.holder}",
+            f"📱 Plin: {info.plin.phone} a nombre de {info.plin.holder}",
+            f"🏦 Transferencia {info.bank_transfer.bank}: cuenta {info.bank_transfer.account}, "
             f"CCI {info.bank_transfer.cci}, a nombre de {info.bank_transfer.holder}",
             "",
-            "Después de pagar, envía aquí la captura del comprobante. Un encargado lo validará "
+            "🧾 Después de pagar, envía aquí la captura del comprobante. Un encargado lo validará "
             "y te confirmará la reserva.",
         ]
     )

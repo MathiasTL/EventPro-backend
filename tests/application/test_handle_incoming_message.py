@@ -48,7 +48,7 @@ async def test_the_first_message_gets_a_greeting_and_the_real_categories() -> No
 
     reply = await bot.say("hola")
 
-    assert reply.startswith("Hola, te damos la bienvenida a EventPro")
+    assert reply.startswith("¡Hola! 👋 Te saludamos de La Tremenda")
     assert "1. Shows\n2. DJ\n3. Decoración" in reply
     assert "Carpas" not in reply  # ninguna oferta activa de esa categoría
     assert (await _session(bot)).step is BotStep.CATEGORY
@@ -111,6 +111,18 @@ async def test_only_text_messages_are_enqueued_to_the_client_phone() -> None:
 
     assert {m.recipient for m in bot.outbox.messages.values()} == {PHONE}
     assert {m.message_type.value for m in bot.outbox.messages.values()} == {"TEXT"}
+
+
+async def test_the_first_reply_is_the_greeting_followed_by_the_category_menu() -> None:
+    bot = BotHarness()
+
+    reply = await bot.say("hola")
+    print(reply)
+
+    assert len(bot.sent) == 1
+    assert reply.startswith(texts.GREETING + "\n\n")
+    assert "asesor" not in texts.GREETING.lower()
+    assert "1. " in reply
 
 
 async def test_no_bot_text_uses_voseo() -> None:
@@ -345,7 +357,7 @@ async def test_a_message_with_only_attachments_starts_the_conversation() -> None
 
     reply = await bot.say("")
 
-    assert "bienvenida" in reply
+    assert "La Tremenda" in reply
 
 
 # --- Reiniciar -----------------------------------------------------------------------------
@@ -358,7 +370,7 @@ async def test_restart_words_begin_again_from_any_step(word: str) -> None:
 
     reply = await bot.say(word)
 
-    assert "bienvenida" in reply
+    assert "La Tremenda" in reply
     session = await _session(bot)
     assert session.step is BotStep.CATEGORY
     assert session.package_id is None and session.event_date is None
