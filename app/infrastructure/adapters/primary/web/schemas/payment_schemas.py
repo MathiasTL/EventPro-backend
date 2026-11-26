@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.entities.payment import (
     PaymentAuditStatus,
@@ -59,7 +59,13 @@ class PaymentPageResponse(BaseModel):
 class PaymentVerifyRequest(BaseModel):
     status: Literal["VERIFIED", "REJECTED"]
     rejection_reason: str | None = None
-    event_id: UUID | None = None
+    event_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Opcional. Si se omite en un ADVANCE, el backend crea (o reutiliza) el evento "
+            "AWAITING_SIGNATURE de la cotización y la convierte."
+        ),
+    )
 
 
 class PaymentVerifyResponse(BaseModel):
@@ -68,6 +74,7 @@ class PaymentVerifyResponse(BaseModel):
     payment_id: UUID
     validation_status: PaymentValidationStatus
     rejection_reason: str | None
+    event_id: UUID | None = None
 
 
 class PaymentAuditRequest(BaseModel):

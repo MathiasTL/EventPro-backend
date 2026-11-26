@@ -86,6 +86,7 @@ from app.application.use_cases.catalog.manage_catalog import ManageCatalogUseCas
 from app.application.use_cases.clients.find_clients import FindClientsUseCase
 from app.application.use_cases.clients.get_client import GetClientUseCase
 from app.application.use_cases.contract.create_manual_contract import CreateManualContract
+from app.application.use_cases.contract.ensure_quote_event import EnsureQuoteEvent
 from app.application.use_cases.contract.manage_contracts import ManageContracts
 from app.application.use_cases.contract.sign_contract import SignContract
 from app.application.use_cases.crew.manage_crews import ManageCrewsUseCase
@@ -224,6 +225,9 @@ from app.infrastructure.adapters.secondary.persistence.manual_booking_repository
 )
 from app.infrastructure.adapters.secondary.persistence.manual_contract_repository import (
     SqlAlchemyManualContractStore,
+)
+from app.infrastructure.adapters.secondary.persistence.quote_event_store import (
+    SqlAlchemyQuoteEventStore,
 )
 from app.infrastructure.adapters.secondary.persistence.refresh_token_repository import (
     SQLAlchemyRefreshTokenRepository,
@@ -797,15 +801,6 @@ def get_register_advance_payment_use_case(
     return RegisterAdvancePaymentUseCase(get_payment_repository(session))
 
 
-def get_verify_payment_use_case(
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> VerifyPaymentUseCase:
-    return VerifyPaymentUseCase(
-        sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session, commit_on_save=False),
-        get_contract_use_case(session),
-    )
-
-
 def get_audit_payment_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AuditPaymentUseCase:
@@ -857,6 +852,21 @@ def get_catalog_read_port(
     return SqlAlchemyCatalogReadRepository(session)
 
 
+def get_verify_payment_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
+) -> VerifyPaymentUseCase:
+    return VerifyPaymentUseCase(
+        sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session, commit_on_save=False),
+        get_contract_use_case(session),
+        EnsureQuoteEvent(
+            SqlAlchemyQuoteEventStore(session),
+            get_catalog_read_port(session),
+            availability,
+        ),
+    )
+
+
 def get_catalog_admin_port(
     session: Annotated[AsyncSession, Depends(get_catalog_write_session, scope="function")],
 ) -> ICatalogAdminPort:
@@ -885,12 +895,16 @@ def get_manage_crews_use_case(
 
 def get_approve_overbooked_payment_use_case(
     session: Annotated[AsyncSession, Depends(get_session)],
+    availability: Annotated[IAvailabilityPort, Depends(get_availability_port)],
 ) -> ApproveOverbookedPaymentUseCase:
     return ApproveOverbookedPaymentUseCase(
         sqlalchemy_payment_repository.SqlAlchemyPaymentRepository(session, commit_on_save=False),
         AuditService(SQLAlchemyAuditLogAdapter(get_sessionmaker(), session=session)),
         sqlalchemy_event_repository.SqlAlchemyEventRepository(session),
         get_contract_use_case(session),
+        EnsureQuoteEvent(
+            SqlAlchemyQuoteEventStore(session), get_catalog_read_port(session), availability
+        ),
     )
 
 

@@ -175,3 +175,47 @@ def test_payment_not_awaiting_manual_approval_raises() -> None:
                 )
             )
         )
+
+
+def test_approve_without_event_id_creates_event_skipping_availability() -> None:
+    payment = _payment(PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL)
+    payments = AsyncMock()
+    payments.get_by_id.return_value = payment
+    created = uuid4()
+    provisioner = AsyncMock()
+    provisioner.ensure_event.return_value = created
+    contracts = AsyncMock()
+    use_case = ApproveOverbookedPaymentUseCase(
+        payments, AuditService(AsyncMock()), AsyncMock(), contracts, provisioner
+    )
+
+    result = asyncio.run(
+        use_case.execute(
+            ApproveOverbookedInput(
+                payment_id=payment.id,
+                decision=OverbookedDecision.APPROVE,
+                decided_by_user_id=uuid4(),
+            )
+        )
+    )
+
+    provisioner.ensure_event.assert_awaited_once_with(payment.quote_id, check_availability=False)
+    contracts.issue_for_event.assert_awaited_once()
+    assert contracts.issue_for_event.await_args.args[0] == created
+    assert payment.event_id == created and result.event_created_id == created
+    assert payment.validation_status is PaymentValidationStatus.VERIFIED
+
+
+def test_approve_without_event_id_and_without_provisioner_still_requires_it() -> None:
+    payment = _payment(PaymentValidationStatus.REQUIRES_MANUAL_APPROVAL)
+    use_case, _payments, _audit, _events = _use_case(payment)
+    with pytest.raises(ValidationError):
+        asyncio.run(
+            use_case.execute(
+                ApproveOverbookedInput(
+                    payment_id=payment.id,
+                    decision=OverbookedDecision.APPROVE,
+                    decided_by_user_id=uuid4(),
+                )
+            )
+        )
